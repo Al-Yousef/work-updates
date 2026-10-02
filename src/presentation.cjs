@@ -35,10 +35,11 @@ function shortSummary(value, limit = 160) {
 function taskSummary(task, approval) {
   if (task.error) {
     if (/active writer|already (?:running|loaded)/i.test(task.error))
-      return 'This chat is active elsewhere. Open it in Codex to continue.';
+      return 'Another Codex process owns this chat. Use Open chat to reply there.';
     if (/too long|timed? out|timeout/i.test(task.error))
-      return 'Codex did not respond in time. Retry to continue.';
-    if (/disconnect/i.test(task.error)) return 'Codex disconnected. Retry to continue this chat.';
+      return 'Codex has not confirmed the request. Open chat to check before retrying.';
+    if (/disconnect/i.test(task.error))
+      return 'The Codex connection closed. Open chat to check its progress.';
     return shortSummary(task.error);
   }
   if (task.status === 'queued') return shortSummary(task.prompt) || 'Queued and ready to start.';

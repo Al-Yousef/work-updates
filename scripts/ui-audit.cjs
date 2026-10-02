@@ -41,6 +41,11 @@ async function waitFor(page, fn) {
     );
     const runtime = JSON.parse(fs.readFileSync(path.join(dir, 'runtime.json')));
     check(
+      fs.existsSync(runtime.diagnostics.file) &&
+        fs.readFileSync(runtime.diagnostics.file, 'utf8').includes('app.started'),
+      'Native app writes its private startup diagnostic log',
+    );
+    check(
       runtime.tray.registered && !runtime.visible,
       'Native tray registers while the queue remains hidden',
     );

@@ -25,14 +25,23 @@ class Controller extends EventEmitter {
     client.on('created', ({ taskId, threadId }) => queue.patch(taskId, { threadId }));
     client.on('notification', (m) => this.event(m));
     client.on('request', (m) => this.request(m));
-    client.on('disconnected', () => {
+    client.on('disconnected', (details) => {
       for (const t of queue.state.tasks)
-        if (['working', 'starting', 'needs'].includes(t.status))
+        if (
+          ['working', 'starting', 'needs'].includes(t.status) &&
+          (!details?.threadIds || details.threadIds.includes(t.threadId))
+        )
           queue.patch(t.id, {
             status: 'blocked',
-            error: 'Codex disconnected. Retry to continue this chat.',
+            error:
+              details?.message ||
+              'Codex disconnected. Open chat to check its progress before retrying.',
           });
-      queue.approvals.clear();
+      for (const [id, request] of queue.approvals) {
+        const task = queue.state.tasks.find((t) => t.id === request.taskId);
+        if (!details?.threadIds || details.threadIds.includes(task?.threadId))
+          queue.approvals.delete(id);
+      }
       queue.save();
     });
   }

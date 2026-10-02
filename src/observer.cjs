@@ -36,16 +36,28 @@ function startObserver(root, options, onFeed) {
     ];
   }
   const child = spawn(binary, args, { windowsHide: true, stdio: 'ignore' });
+  options.log?.write('observer.started', { pid: child.pid, binary });
   let stopped = false,
     last = -1,
     lastHealth = -1;
-  child.on('error', () =>
+  child.on('error', (error) => {
+    options.log?.write('observer.error', {
+      pid: child.pid,
+      code: error.code,
+      message: error.message,
+    });
     onFeed(null, {
       ok: false,
       message: 'The chat watcher could not start. Check Codex and your Python runtime.',
-    }),
-  );
-  child.on('exit', () => {
+    });
+  });
+  child.on('exit', (code, signal) => {
+    options.log?.write('observer.exited', {
+      pid: child.pid,
+      exitCode: code,
+      signal,
+      intentional: stopped,
+    });
     if (!stopped)
       onFeed(null, {
         ok: false,

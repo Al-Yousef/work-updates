@@ -41,21 +41,107 @@ class Codex extends EventEmitter {
     this.loaded = new Set();
     this.proc = null;
     this.connecting = null;
+    this.ready = false;
+    this.lastFailure = null;
+  }
+  log(event, details) {
+    this.options.log?.write(event, details);
+  }
+  status() {
+    return {
+      connected: this.ready,
+      pid: this.proc?.pid || null,
+      pending: this.waiting.size,
+      loaded: this.loaded.size,
+      active: this.active.size,
+      lastFailure: this.lastFailure,
+    };
+  }
+  fail(connection, reason, details = {}) {
+    if (connection.closed) return;
+    connection.closed = true;
+    const error = new Error(
+      connection.intentional
+        ? 'Work Updates closed its Codex connection.'
+        : 'Codex disconnected. Open chat to check its progress before retrying.',
+    );
+    error.code = details.code || 'CODEX_DISCONNECTED';
+    const affected = new Set([...this.loaded, ...this.active.keys()]);
+    for (const [id, pending] of this.waiting) {
+      if (pending.proc !== connection.proc) continue;
+      if (pending.threadId) affected.add(pending.threadId);
+      clearTimeout(pending.timer);
+      this.waiting.delete(id);
+      pending.reject(error);
+    }
+    this.log('codex.connection.closed', {
+      pid: connection.proc.pid,
+      reason,
+      intentional: !!connection.intentional,
+      ...details,
+    });
+    if (this.connection === connection) {
+      this.ready = false;
+      this.proc = null;
+      this.loaded.clear();
+      this.active.clear();
+      if (!connection.intentional) {
+        this.lastFailure = { at: new Date().toISOString(), reason, ...details };
+        this.emit('disconnected', { threadIds: [...affected], message: error.message });
+      }
+    }
+    connection.reader.close();
+    // Retire only our own broken transport, so it cannot keep a writer lock
+    // after a replacement connection is created.
+    try {
+      if (connection.proc.exitCode == null) connection.proc.kill();
+    } catch (error) {
+      this.log('codex.process.cleanup_failed', {
+        pid: connection.proc.pid,
+        code: error.code,
+        message: error.message,
+      });
+    }
+  }
+  write(message, proc = this.proc) {
+    const connection = this.connection;
+    if (!proc || proc !== connection?.proc || connection.closed)
+      throw new Error('Install or open Codex, then try again.');
+    try {
+      proc.stdin.write(JSON.stringify(message) + '\n', (error) => {
+        if (error)
+          this.fail(connection, 'stdin write failed', { code: error.code, message: error.message });
+      });
+    } catch (error) {
+      this.fail(connection, 'stdin write failed', { code: error.code, message: error.message });
+      throw error;
+    }
   }
   async connect() {
     if (this.proc && this.ready) return;
     if (this.connecting) return this.connecting;
     this.connecting = (async () => {
-      const proc = spawn(findCodex(this.options.binary), ['app-server'], {
+      const binary = findCodex(this.options.binary);
+      const proc = (this.options.spawn || spawn)(binary, ['app-server'], {
         windowsHide: true,
         stdio: ['pipe', 'pipe', 'pipe'],
       });
       this.proc = proc;
       const rl = readline.createInterface({ input: proc.stdout });
       this.reader = rl;
+      const connection = { proc, reader: rl, closed: false, intentional: false };
+      this.connection = connection;
+      this.log('codex.process.start', { binary, pid: proc.pid });
       rl.on('line', (line) => {
+        if (connection.closed || this.connection !== connection) return;
+        let m;
         try {
-          const m = JSON.parse(line);
+          m = JSON.parse(line);
+        } catch {
+          this.log('codex.protocol.invalid', { pid: proc.pid, bytes: Buffer.byteLength(line) });
+          return;
+        }
+        try {
           if (m.method && m.id !== undefined) this.emit('request', m);
           else if (m.method) {
             if (m.method === 'turn/started') this.active.set(m.params.threadId, m.params.turn.id);
@@ -66,33 +152,77 @@ class Codex extends EventEmitter {
             if (pending) {
               this.waiting.delete(m.id);
               clearTimeout(pending.timer);
-              m.error ? pending.reject(new Error(m.error.message)) : pending.resolve(m.result);
+              this.log(m.error ? 'codex.rpc.error' : 'codex.rpc.completed', {
+                pid: proc.pid,
+                id: m.id,
+                method: pending.method,
+                threadId: pending.threadId,
+                elapsedMs: Date.now() - pending.startedAt,
+                code: m.error?.code,
+                message: m.error?.message,
+              });
+              if (m.error) {
+                const error = new Error(m.error.message);
+                error.code = m.error.code;
+                error.method = pending.method;
+                pending.reject(error);
+              } else pending.resolve(m.result);
             }
           }
-        } catch {}
-      });
-      proc.stderr.on('data', () => {}); // Server logs stay off the UI and out of release diagnostics.
-      const failed = () => {
-        this.ready = false;
-        this.proc = null;
-        this.loaded.clear();
-        this.active.clear();
-        for (const p of this.waiting.values()) {
-          clearTimeout(p.timer);
-          p.reject(new Error('Codex disconnected. Retry this task to continue.'));
+        } catch (error) {
+          this.log('codex.handler.error', { method: m.method, message: error.message });
         }
-        this.waiting.clear();
-        this.emit('disconnected');
-        rl.close();
-      };
-      proc.once('error', failed);
-      proc.once('exit', failed);
-      await this.call('initialize', {
-        clientInfo: { name: 'work_updates', title: 'Work Updates', version: '0.2.0' },
-        capabilities: { experimentalApi: true },
       });
-      this.notify('initialized', {});
-      this.ready = true;
+      // Bound each stderr line before storing it. Never record RPC payloads.
+      let stderr = '',
+        overflow = false;
+      const flush = () => {
+        if (stderr.trim())
+          this.log('codex.stderr', { pid: proc.pid, message: stderr, truncated: overflow });
+        stderr = '';
+        overflow = false;
+      };
+      proc.stderr.setEncoding('utf8');
+      proc.stderr.on('data', (chunk) => {
+        for (const part of chunk.split(/(?<=\n)/)) {
+          if (part.length > 8192 - stderr.length) overflow = true;
+          stderr += part.slice(0, Math.max(0, 8192 - stderr.length));
+          if (part.endsWith('\n')) flush();
+        }
+      });
+      proc.stderr.once('end', flush);
+      proc.once('error', (error) =>
+        this.fail(connection, 'process error', { code: error.code, message: error.message }),
+      );
+      proc.stdin.on('error', (error) =>
+        this.fail(connection, 'stdin error', { code: error.code, message: error.message }),
+      );
+      proc.once('exit', (code, signal) => {
+        this.log('codex.process.exit', { pid: proc.pid, exitCode: code, signal });
+        this.fail(connection, 'process exited', { exitCode: code, signal });
+      });
+      rl.once('close', () => this.fail(connection, 'stdout closed'));
+      try {
+        await this.call('initialize', {
+          clientInfo: {
+            name: 'work_updates',
+            title: 'Work Updates',
+            version: require('../package.json').version,
+          },
+          capabilities: { experimentalApi: true },
+        });
+        this.notify('initialized', {});
+        if (connection.closed) throw new Error('Codex disconnected during initialization.');
+        this.ready = true;
+        this.lastFailure = null;
+        this.log('codex.connection.ready', { pid: proc.pid });
+      } catch (error) {
+        this.fail(connection, 'initialization failed', {
+          code: error.code,
+          message: error.message,
+        });
+        throw error;
+      }
     })();
     try {
       await this.connecting;
@@ -103,14 +233,36 @@ class Codex extends EventEmitter {
   call(method, params) {
     return new Promise((resolve, reject) => {
       if (!this.proc) return reject(new Error('Install or open Codex, then try again.'));
+      const proc = this.proc;
       const id = ++this.sequence,
         timer = setTimeout(() => {
           this.waiting.delete(id);
-          reject(new Error('Codex took too long. Retry to continue.'));
-        }, 60000);
-      this.waiting.set(id, { resolve, reject, timer });
+          this.log('codex.rpc.timeout', {
+            pid: proc.pid,
+            id,
+            method,
+            threadId: params?.threadId,
+            timeoutMs: this.options.requestTimeoutMs || 60000,
+          });
+          const error = new Error(
+            'Codex took too long to confirm ' + method + '. Open chat to check before retrying.',
+          );
+          error.code = 'CODEX_TIMEOUT';
+          error.method = method;
+          reject(error);
+        }, this.options.requestTimeoutMs || 60000);
+      this.waiting.set(id, {
+        resolve,
+        reject,
+        timer,
+        proc,
+        method,
+        threadId: params?.threadId,
+        startedAt: Date.now(),
+      });
+      this.log('codex.rpc.started', { pid: proc.pid, id, method, threadId: params?.threadId });
       try {
-        this.proc.stdin.write(JSON.stringify({ id, method, params }) + '\n');
+        this.write({ id, method, params }, proc);
       } catch (error) {
         clearTimeout(timer);
         this.waiting.delete(id);
@@ -119,18 +271,16 @@ class Codex extends EventEmitter {
     });
   }
   notify(method, params) {
-    this.proc?.stdin.write(JSON.stringify({ method, params }) + '\n');
+    this.write({ method, params });
   }
   reply(id, result) {
-    this.proc?.stdin.write(JSON.stringify({ id, result }) + '\n');
+    this.write({ id, result });
   }
   reject(id) {
-    this.proc?.stdin.write(
-      JSON.stringify({
-        id,
-        error: { code: -32601, message: 'This request needs to be handled in Codex.' },
-      }) + '\n',
-    );
+    this.write({
+      id,
+      error: { code: -32601, message: 'This request needs to be handled in Codex.' },
+    });
   }
   async start(task, cwd) {
     await this.connect();
@@ -149,7 +299,9 @@ class Codex extends EventEmitter {
       this.emit('created', { taskId: task.id, threadId: id });
       await this.call('thread/name/set', { threadId: id, name: task.title });
     } else if (!this.loaded.has(id)) {
-      await this.call('thread/resume', { threadId: id });
+      const resumed = await this.call('thread/resume', { threadId: id });
+      if (resumed.thread?.id !== id)
+        throw new Error('Codex resumed an unexpected chat. No message was sent.');
       this.loaded.add(id);
     }
     const turn = await this.call('turn/start', {
@@ -179,8 +331,10 @@ class Codex extends EventEmitter {
       await this.call('turn/interrupt', { threadId, turnId: this.active.get(threadId) });
   }
   close() {
-    this.proc?.kill();
-    this.reader?.close();
+    const connection = this.connection;
+    if (!connection || connection.closed) return;
+    connection.intentional = true;
+    this.fail(connection, 'app shutdown');
   }
 }
 module.exports = { Codex, findCodex };

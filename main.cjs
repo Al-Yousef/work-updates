@@ -28,6 +28,7 @@ const { taskSource } = require('./src/task-source.cjs');
 const taskbar = require('./src/taskbar.cjs');
 const { dataDirectory, startsVisible } = require('./src/background.cjs');
 const { createTray } = require('./src/tray.cjs');
+const { DiagnosticLog } = require('./src/diagnostics.cjs');
 const args = process.argv;
 function argument(name) {
   const index = args.indexOf(name);
@@ -74,10 +75,12 @@ let launcherInfo = {
   bounds: null,
   message: '',
 };
+const diagnostics = new DiagnosticLog(path.join(dataDir, 'logs'));
+diagnostics.write('app.started', { version: app.getVersion(), pid: process.pid, demo });
 const queue = new Queue(dataDir);
 const client = demo
   ? new (require('./src/demo.cjs').DemoCodex)()
-  : new Codex({ binary: queue.state.settings.codexBinary });
+  : new Codex({ binary: queue.state.settings.codexBinary, log: diagnostics });
 const controller = new Controller(queue, client);
 const csp =
   "default-src 'self'; script-src 'self'; style-src 'self'; img-src 'self' data:; connect-src 'none'; base-uri 'none'; object-src 'none'; form-action 'none'; frame-ancestors 'none'";
@@ -589,6 +592,12 @@ app.whenReady().then(async () => {
       try {
         return { ok: true, value: await perform(method, input || {}) };
       } catch (error) {
+        diagnostics.write('app.command.failed', {
+          method,
+          taskId: error.taskId,
+          code: error.code,
+          message: error.message,
+        });
         return { ok: false, error: error.message, taskId: error.taskId };
       }
     });
@@ -604,6 +613,7 @@ app.whenReady().then(async () => {
     show,
     hide: () => windowController.hide(),
     create: () => perform('window', { action: 'new' }),
+    openLogs: () => shell.openPath(diagnostics.directory),
     quit: () => {
       quitting = true;
       app.quit();
@@ -625,7 +635,7 @@ app.whenReady().then(async () => {
       : undefined;
     observer = startObserver(
       path.join(dataDir, 'observer'),
-      { helper, helperScript },
+      { helper, helperScript, log: diagnostics },
       (feed, health) => {
         queue.setFeed(feed || queue.feed, health);
         previousObserved = incoming(
@@ -650,6 +660,8 @@ app.whenReady().then(async () => {
       cornerEnabled: !!queue.state.settings.corner,
       launcher: { ...launcherInfo, active: !!corner && !corner.isDestroyed() },
       tray: tray.status(),
+      codex: client.status?.() || null,
+      diagnostics: { file: diagnostics.file, error: diagnostics.error },
       updatedAt: now(),
     });
   runtime();
@@ -708,6 +720,7 @@ app.on('activate', () => window && show());
 app.on('window-all-closed', () => {});
 app.on('before-quit', () => {
   quitting = true;
+  diagnostics.write('app.stopping', { pid: process.pid });
   queue.save();
   observer?.close();
   client.close();

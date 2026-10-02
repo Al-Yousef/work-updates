@@ -27,6 +27,7 @@ function createTray({
   show,
   hide,
   create,
+  openLogs,
   quit,
 }) {
   function image() {
@@ -72,6 +73,7 @@ function createTray({
           { label: 'Hide queue', enabled: visible, click: hide },
           { label: 'New task', click: create },
           { type: 'separator' },
+          ...(openLogs ? [{ label: 'Open diagnostic logs', click: openLogs }] : []),
           { label: 'Quit Work Updates', click: quit },
         ]),
       );

@@ -20,6 +20,21 @@ function setup(t) {
   };
   return { q, client, c: new Controller(q, client) };
 }
+test('a lost connection blocks only its affected chats and preserves unrelated approvals', (t) => {
+  const { q, client } = setup(t);
+  const a = q.create({ title: 'First task', prompt: 'Work.' });
+  const b = q.create({ title: 'Other task', prompt: 'Work.' });
+  q.patch(a.id, { threadId: 'first', status: 'working' });
+  q.patch(b.id, { threadId: 'other', status: 'needs' });
+  q.approvals.set('one', { taskId: a.id });
+  q.approvals.set('two', { taskId: b.id });
+  client.emit('disconnected', { threadIds: ['first'], message: 'Specific connection failure' });
+  assert.equal(a.status, 'blocked');
+  assert.equal(a.error, 'Specific connection failure');
+  assert.equal(b.status, 'needs');
+  assert.equal(q.approvals.has('one'), false);
+  assert.equal(q.approvals.has('two'), true);
+});
 test('group reply uses the displayed source and concurrent retries cannot adopt it twice', async (t) => {
   const { q, client, c } = setup(t);
   const records = [

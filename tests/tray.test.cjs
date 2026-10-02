@@ -114,6 +114,7 @@ function fixture(platform = 'win32', demo = false) {
     show: () => actions.push('show'),
     hide: () => actions.push('hide'),
     create: () => actions.push('create'),
+    openLogs: () => actions.push('logs'),
     quit: () => actions.push('quit'),
   });
   return { manager, tray: instance, nativeTheme, actions };
@@ -132,9 +133,15 @@ test('native tray actions open idempotently, hide explicitly and remain stable o
   assert.equal(f.tray.menu.find((i) => i.label === 'Hide queue').enabled, true);
   f.manager.update({ windowMode: 'pinned', cards: [] });
   assert.equal(f.tray.menus, 2);
-  for (const label of ['Open queue', 'Hide queue', 'New task', 'Quit Work Updates'])
+  for (const label of [
+    'Open queue',
+    'Hide queue',
+    'New task',
+    'Open diagnostic logs',
+    'Quit Work Updates',
+  ])
     f.tray.menu.find((i) => i.label === label).click();
-  assert.deepEqual(f.actions.slice(3), ['show', 'hide', 'create', 'quit']);
+  assert.deepEqual(f.actions.slice(3), ['show', 'hide', 'create', 'logs', 'quit']);
   f.manager.destroy();
   assert.equal(f.tray.destroyed, true);
   assert.equal(f.nativeTheme.listenerCount('updated'), 0);
