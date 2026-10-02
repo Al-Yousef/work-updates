@@ -388,6 +388,18 @@ async function waitFor(page, fn) {
       }
       throw new Error('Native window did not reach ' + mode);
     };
+    await page.evaluate(() => {
+      window.hoverCards = [...document.querySelector('#queue').children];
+      window.hoverRedraws = 0;
+      window.hoverObserver = new MutationObserver(() => window.hoverRedraws++);
+      window.hoverObserver.observe(document.querySelector('#queue'), { childList: true });
+    });
+    await app.evaluate(({ BrowserWindow }) => {
+      globalThis.hoverShows = 0;
+      BrowserWindow.getAllWindows()
+        .find((w) => w.webContents.getURL().endsWith('/index.html'))
+        .on('show', () => globalThis.hoverShows++);
+    });
     await cursor(atCorner);
     await waitForMode('peek');
     await page.waitForTimeout(200);
@@ -415,6 +427,34 @@ async function waitFor(page, fn) {
     await cursor({ x: 100000, y: 100000 });
     await waitForMode('hidden');
     check(true, 'Leaving a native peek hides it');
+    for (let cycle = 0; cycle < 2; cycle++) {
+      await cursor(atCorner);
+      await waitForMode('peek');
+      const unchanged = (await page.evaluate(() => window.workUpdates.state())).value;
+      await app.evaluate(({ BrowserWindow }, state) => {
+        BrowserWindow.getAllWindows()
+          .find((w) => w.webContents.getURL().endsWith('/index.html'))
+          .webContents.send('work-updates:state', state);
+      }, unchanged);
+      await page.waitForTimeout(150);
+      await cursor({ x: 100000, y: 100000 });
+      await waitForMode('hidden');
+    }
+    check(
+      await page.evaluate(
+        () =>
+          window.hoverRedraws === 0 &&
+          window.hoverCards.every(
+            (card, index) => document.querySelector('#queue').children[index] === card,
+          ),
+      ),
+      'Repeated hover and identical watcher updates keep notification nodes intact',
+    );
+    check(
+      (await app.evaluate(() => globalThis.hoverShows)) === 3,
+      'Each sustained hover reveals the native queue exactly once',
+    );
+    await page.evaluate(() => window.hoverObserver.disconnect());
     await cursor(atCorner);
     await waitForMode('peek');
     await launcherPage.locator('#corner-toggle').click();

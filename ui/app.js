@@ -84,6 +84,7 @@ if ($('corner-toggle')) {
     mode = null,
     selected = null,
     returnFocus = null,
+    renderedQueueKey = null,
     pressed = false,
     swipeId = null;
   let taskDraft = { title: '', prompt: '', cwd: '' },
@@ -180,13 +181,13 @@ if ($('corner-toggle')) {
     $('demo-label').hidden = !state.demo;
     $('counts').textContent =
       view === 'updates' ? state.ready + ' ready · ' + state.working + ' working' : '';
-    $('view-menu').replaceChildren(
-      node(
-        'span',
-        view === 'done' ? 'Finished tasks' : view === 'queued' ? 'Queued tasks' : 'From your chats',
-      ),
-      node('span', '⌄', { class: 'chevron' }),
-    );
+    const heading =
+      view === 'done' ? 'Finished tasks' : view === 'queued' ? 'Queued tasks' : 'From your chats';
+    if ($('view-menu').firstElementChild?.textContent !== heading)
+      $('view-menu').replaceChildren(
+        node('span', heading),
+        node('span', '⌄', { class: 'chevron' }),
+      );
     let cards =
       view === 'done'
         ? state.done
@@ -200,108 +201,130 @@ if ($('corner-toggle')) {
       if (!browseAll && view === 'updates' && !showHidden)
         cards = cards.filter((c) => c.kind === 'local' || c.at >= (state.settings.queueSince || 0));
     }
-    const queue = $('queue'),
-      offset = queue.scrollTop,
-      focused = document.activeElement?.dataset.id;
-    queue.replaceChildren();
-    for (const card of showAll ? cards : cards.slice(0, 3)) {
-      const id = view === 'done' ? card.taskKey : card.id;
-      const wrap = node('div');
-      wrap.className = 'card-wrap' + (card.sources.length > 1 ? ' grouped' : '');
-      wrap.classList.toggle('swiped', swipeId === id);
-      const surface = node('div');
-      surface.className = 'card';
-      wrap.append(surface);
-      const replacement = node('button', '', { type: 'button' });
-      replacement.className = 'card-trigger';
-      replacement.dataset.id = id;
-      bindPress(
-        replacement,
-        () => showCard(id, false),
-        () => showCard(id, true),
-        view !== 'done' && card.status !== 'queued'
-          ? (dx) => {
-              swipeId = dx < 0 ? id : null;
-              wrap.classList.toggle('swiped', swipeId === id);
-              surface.querySelector('.swipe-actions').inert = swipeId !== id;
-            }
-          : null,
-      );
-      replacement.setAttribute('aria-label', card.title + ', ' + card.label);
-      const header = node('span', '', { class: 'card-header' });
-      const icon = node('img', '', { src: APP_ICON, alt: '', 'aria-hidden': 'true' });
-      icon.className = 'app-icon';
-      header.append(icon);
-      const copy = node('span');
-      copy.className = 'card-copy';
-      const meta = node('span');
-      meta.className = 'meta';
-      meta.textContent =
-        'Work Updates' + (card.sources.length > 1 ? ' · ' + card.sources.length + ' chats' : '');
-      const title = node('span', card.title, { class: 'card-title' });
-      const line = node('span', '', { class: 'notification-line' });
-      line.append(meta, node('span', ago(card.doneAt || card.at), { class: 'card-age' }));
-      copy.append(line, title);
-      const statuses = node('span', '', { class: 'card-statuses' });
-      const badge = node('span', card.label, { class: 'badge ' + card.status });
-      if (card.waitingOn?.kind === 'you') badge.classList.add('needs');
-      statuses.append(badge);
-      if (card.urgent) statuses.append(node('span', ' · Urgent', { class: 'badge urgent' }));
-      copy.append(statuses);
-      header.append(copy);
-      replacement.append(header);
-      surface.append(replacement);
-      if (view !== 'done' && card.status !== 'queued') {
-        const tray = node('div', '', { class: 'swipe-actions' });
-        tray.inert = swipeId !== id;
-        const dismiss = button(showHidden ? 'Restore' : 'Reviewed', () =>
-          runAction(card.id, showHidden ? 'restore' : 'reviewed'),
+    const visibleCards = showAll ? cards : cards.slice(0, 3);
+    const queueKey = JSON.stringify([
+      view,
+      showHidden,
+      swipeId,
+      visibleCards.map((card) => [
+        view === 'done' ? card.taskKey : card.id,
+        card.title,
+        card.label,
+        card.status,
+        card.waitingOn?.kind === 'you',
+        card.urgent,
+        card.sources.length,
+        ago(card.doneAt || card.at),
+      ]),
+    ]);
+    // Window mode and watcher heartbeats don't change the cards. Keep their
+    // decoded images and composited blur layers intact when a hover reveals us.
+    if (queueKey !== renderedQueueKey) {
+      const queue = $('queue'),
+        offset = queue.scrollTop,
+        focused = document.activeElement?.dataset.id;
+      const content = document.createDocumentFragment();
+      for (const card of visibleCards) {
+        const id = view === 'done' ? card.taskKey : card.id;
+        const wrap = node('div');
+        wrap.className = 'card-wrap' + (card.sources.length > 1 ? ' grouped' : '');
+        wrap.classList.toggle('swiped', swipeId === id);
+        const surface = node('div');
+        surface.className = 'card';
+        wrap.append(surface);
+        const replacement = node('button', '', { type: 'button' });
+        replacement.className = 'card-trigger';
+        replacement.dataset.id = id;
+        bindPress(
+          replacement,
+          () => showCard(id, false),
+          () => showCard(id, true),
+          view !== 'done' && card.status !== 'queued'
+            ? (dx) => {
+                swipeId = dx < 0 ? id : null;
+                wrap.classList.toggle('swiped', swipeId === id);
+                surface.querySelector('.swipe-actions').inert = swipeId !== id;
+              }
+            : null,
         );
-        dismiss.setAttribute(
-          'aria-label',
-          showHidden ? 'Restore notification' : 'Mark update reviewed',
-        );
-        tray.append(
-          button('Snooze 1h', () => runAction(card.id, 'snooze')),
-          dismiss,
-        );
-        surface.prepend(tray);
+        replacement.setAttribute('aria-label', card.title + ', ' + card.label);
+        const header = node('span', '', { class: 'card-header' });
+        const icon = node('img', '', { src: APP_ICON, alt: '', 'aria-hidden': 'true' });
+        icon.className = 'app-icon';
+        header.append(icon);
+        const copy = node('span');
+        copy.className = 'card-copy';
+        const meta = node('span');
+        meta.className = 'meta';
+        meta.textContent =
+          'Work Updates' + (card.sources.length > 1 ? ' · ' + card.sources.length + ' chats' : '');
+        const title = node('span', card.title, { class: 'card-title' });
+        const line = node('span', '', { class: 'notification-line' });
+        line.append(meta, node('span', ago(card.doneAt || card.at), { class: 'card-age' }));
+        copy.append(line, title);
+        const statuses = node('span', '', { class: 'card-statuses' });
+        const badge = node('span', card.label, { class: 'badge ' + card.status });
+        if (card.waitingOn?.kind === 'you') badge.classList.add('needs');
+        statuses.append(badge);
+        if (card.urgent) statuses.append(node('span', ' · Urgent', { class: 'badge urgent' }));
+        copy.append(statuses);
+        header.append(copy);
+        replacement.append(header);
+        surface.append(replacement);
+        if (view !== 'done' && card.status !== 'queued') {
+          const tray = node('div', '', { class: 'swipe-actions' });
+          tray.inert = swipeId !== id;
+          const dismiss = button(showHidden ? 'Restore' : 'Reviewed', () =>
+            runAction(card.id, showHidden ? 'restore' : 'reviewed'),
+          );
+          dismiss.setAttribute(
+            'aria-label',
+            showHidden ? 'Restore notification' : 'Mark update reviewed',
+          );
+          tray.append(
+            button('Snooze 1h', () => runAction(card.id, 'snooze')),
+            dismiss,
+          );
+          surface.prepend(tray);
+        }
+        content.append(wrap);
       }
-      queue.append(wrap);
+      if (!cards.length) {
+        const empty = node('div');
+        empty.className = 'empty';
+        empty.append(
+          node(
+            'h2',
+            view === 'done'
+              ? 'A place for finished tasks'
+              : view === 'queued'
+                ? 'Room for your next task'
+                : showHidden
+                  ? 'Nothing hidden'
+                  : 'A little breathing room',
+          ),
+          node(
+            'p',
+            view === 'done'
+              ? 'Tasks you mark Done stay here until you reopen them.'
+              : view === 'queued'
+                ? 'Add a task now. It will wait here until you start its chat.'
+                : showHidden
+                  ? 'Snoozed and reviewed updates appear here.'
+                  : 'New completions and tasks that need you will show up here.',
+          ),
+        );
+        if (view === 'queued') empty.append(button('＋ New task', () => showComposer(), 'primary'));
+        content.append(empty);
+      }
+      queue.replaceChildren(content);
+      renderedQueueKey = queueKey;
+      queue.scrollTop = offset;
+      if (focused)
+        queue
+          .querySelector('[data-id="' + CSS.escape(focused) + '"]')
+          ?.focus({ preventScroll: true });
     }
-    if (!cards.length) {
-      const empty = node('div');
-      empty.className = 'empty';
-      empty.append(
-        node(
-          'h2',
-          view === 'done'
-            ? 'A place for finished tasks'
-            : view === 'queued'
-              ? 'Room for your next task'
-              : showHidden
-                ? 'Nothing hidden'
-                : 'A little breathing room',
-        ),
-        node(
-          'p',
-          view === 'done'
-            ? 'Tasks you mark Done stay here until you reopen them.'
-            : view === 'queued'
-              ? 'Add a task now. It will wait here until you start its chat.'
-              : showHidden
-                ? 'Snoozed and reviewed updates appear here.'
-                : 'New completions and tasks that need you will show up here.',
-        ),
-      );
-      if (view === 'queued') empty.append(button('＋ New task', () => showComposer(), 'primary'));
-      queue.append(empty);
-    }
-    queue.scrollTop = offset;
-    if (focused)
-      queue
-        .querySelector('[data-id="' + CSS.escape(focused) + '"]')
-        ?.focus({ preventScroll: true });
     $('show-all').hidden = cards.length <= 3;
     $('show-all').textContent = showAll
       ? 'Show fewer'
