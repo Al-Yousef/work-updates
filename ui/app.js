@@ -242,7 +242,7 @@ if ($('corner-toggle')) {
         replacement.dataset.id = id;
         bindPress(
           replacement,
-          () => showCard(id, false),
+          () => showCard(id, true),
           () => showCard(id, true),
           view !== 'done' && card.status !== 'queued'
             ? (dx) => {
@@ -353,6 +353,7 @@ if ($('corner-toggle')) {
     $('panel').replaceChildren();
     $('panel').setAttribute('aria-label', title);
     $('scrim').hidden = false;
+    document.body.classList.add('panel-open');
     $('shell').inert = true;
     const top = node('div');
     top.className = 'panel-top';
@@ -374,6 +375,7 @@ if ($('corner-toggle')) {
     selected = null;
     swipeId = null;
     $('scrim').hidden = true;
+    document.body.classList.remove('panel-open');
     $('shell').inert = false;
     render();
     if (before?.isConnected) before.focus();

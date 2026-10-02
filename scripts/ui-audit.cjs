@@ -27,6 +27,46 @@ async function waitFor(page, fn) {
       timeout: 30000,
     });
     const page = await app.firstWindow();
+    const nativeHit = async (selector) => {
+      const bounds = await page.locator(selector).boundingBox();
+      const target = await app.evaluate(
+        ({ BrowserWindow, screen }, point) => {
+          const w = BrowserWindow.getAllWindows().find((w) =>
+            w.webContents.getURL().endsWith('/index.html'),
+          );
+          const origin = w.getBounds(),
+            handle = w.getNativeWindowHandle();
+          return {
+            point: screen.dipToScreenPoint({ x: origin.x + point.x, y: origin.y + point.y }),
+            handle: (handle.length === 8
+              ? handle.readBigUInt64LE()
+              : BigInt(handle.readUInt32LE())
+            ).toString(),
+          };
+        },
+        { x: Math.round(bounds.x + bounds.width / 2), y: Math.round(bounds.y + bounds.height / 2) },
+      );
+      return Number(
+        execFileSync(
+          'powershell.exe',
+          [
+            '-NoProfile',
+            '-NonInteractive',
+            '-ExecutionPolicy',
+            'Bypass',
+            '-File',
+            path.join(root, 'tests', 'native-control-hit.ps1'),
+            '-X',
+            String(target.point.x),
+            '-Y',
+            String(target.point.y),
+            '-Handle',
+            target.handle,
+          ],
+          { windowsHide: true, encoding: 'utf8', timeout: 12000 },
+        ).trim(),
+      );
+    };
     const chooseView = async (view) => {
       await page.getByRole('button', { name: 'Choose task view', exact: true }).click();
       await page.locator('[data-view=' + view + ']').click();
@@ -87,13 +127,30 @@ async function waitFor(page, fn) {
     await page.getByRole('button', { name: 'Review launch notes, Ready to review' }).click();
     check(
       (await page.getByRole('button', { name: 'Open chat ↗', exact: true }).count()) === 1,
-      'Click opens actions',
+      'Click includes quick actions with full task information',
     );
     check(
-      (await page.locator('#chat-input').count()) === 0,
-      'Details remain behind deliberate action',
+      (await page.locator('#chat-input').count()) === 1 &&
+        (await page.locator('#context-host').count()) === 1,
+      'Normal click opens details and conversation without a hold',
     );
     await page.screenshot({ path: path.join(output, 'actions.png') });
+    const close = page.getByRole('button', { name: 'Back to queue', exact: true });
+    const closeBounds = await close.boundingBox();
+    check(closeBounds.width >= 44 && closeBounds.height >= 44, 'Panel X has a 44px click target');
+    if (process.platform === 'win32')
+      check(
+        (await nativeHit('.panel-top button')) === 1,
+        'Windows treats panel X as a button, not a caption drag',
+      );
+    await close.click();
+    check(await page.locator('#scrim').isHidden(), 'Clicking panel X returns to queue');
+    await page.getByRole('button', { name: 'Review launch notes, Ready to review' }).focus();
+    await page.keyboard.press('Enter');
+    check(
+      (await page.locator('#chat-input').count()) === 1,
+      'Enter opens the full task information',
+    );
     await page.getByRole('button', { name: '✓ Mark done', exact: true }).click();
     await waitFor(page, () => document.querySelector('#scrim').hidden);
     check((await page.locator('.card-trigger').count()) === 2, 'Done removes update');

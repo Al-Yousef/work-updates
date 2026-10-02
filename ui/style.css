@@ -42,6 +42,7 @@ select {
   font: inherit;
 }
 button {
+  -webkit-app-region: no-drag;
   border: 0;
   border-radius: 12px;
   background: #ffffff16;
@@ -88,8 +89,9 @@ button.quiet:hover {
   background: #ffffff14;
 }
 button.icon {
-  min-width: 34px;
-  min-height: 34px;
+  min-width: 44px;
+  min-height: 44px;
+  flex-shrink: 0;
   padding: 4px;
   font-size: 20px;
   background: transparent;
@@ -141,6 +143,11 @@ button.icon:hover {
 .toolbar-actions {
   display: flex;
   gap: 3px;
+  -webkit-app-region: no-drag;
+}
+/* Native caption regions still intercept clicks through a DOM modal. */
+body.panel-open .toolbar,
+body.panel-open .clock-area {
   -webkit-app-region: no-drag;
 }
 .clock-area {
@@ -405,6 +412,7 @@ footer button {
   margin-top: 8px;
 }
 #scrim {
+  -webkit-app-region: no-drag;
   position: fixed;
   inset: 8px;
   border-radius: 28px;
