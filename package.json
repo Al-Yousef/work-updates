@@ -1,0 +1,89 @@
+{
+  "name": "work-updates",
+  "version": "0.2.0",
+  "description": "A calm desktop queue for Codex tasks, updates, and conversations.",
+  "author": "Al-Yousef",
+  "license": "MIT",
+  "main": "main.cjs",
+  "engines": {
+    "node": ">=22"
+  },
+  "scripts": {
+    "start": "electron .",
+    "dev": "electron . --dev",
+    "demo": "electron . --demo",
+    "test": "node --test tests/*.test.cjs",
+    "test:ui": "node scripts/ui-audit.cjs",
+    "audit:release": "node scripts/audit-release.cjs",
+    "build:helper": "python scripts/build-helper.py",
+    "dist:win": "electron-builder --win nsis zip --x64",
+    "dist:mac": "electron-builder --mac dmg zip",
+    "pack": "electron-builder --dir"
+  },
+  "dependencies": {
+    "selfsigned": "5.5.0"
+  },
+  "devDependencies": {
+    "electron": "44.5.1",
+    "electron-builder": "26.15.3",
+    "playwright": "1.63.0",
+    "prettier": "3.9.9"
+  },
+  "build": {
+    "appId": "io.workupdates.desktop",
+    "productName": "Work Updates",
+    "directories": {
+      "output": "dist"
+    },
+    "files": [
+      "main.cjs",
+      "preload.cjs",
+      "src/**",
+      "ui/**",
+      "assets/**",
+      "package.json",
+      "LICENSE"
+    ],
+    "extraResources": [
+      {
+        "from": "build/helper",
+        "to": "helper",
+        "filter": [
+          "**/*"
+        ]
+      }
+    ],
+    "asar": true,
+    "win": {
+      "target": [
+        "nsis",
+        "zip"
+      ],
+      "artifactName": "Work-Updates-${version}-Windows-${arch}.${ext}",
+      "icon": "assets/icon.png"
+    },
+    "nsis": {
+      "oneClick": false,
+      "perMachine": false,
+      "allowToChangeInstallationDirectory": true,
+      "createDesktopShortcut": false,
+      "createStartMenuShortcut": true,
+      "deleteAppDataOnUninstall": false
+    },
+    "mac": {
+      "category": "public.app-category.productivity",
+      "target": [
+        "dmg",
+        "zip"
+      ],
+      "artifactName": "Work-Updates-${version}-macOS-${arch}.${ext}",
+      "hardenedRuntime": true,
+      "icon": "assets/icon.png"
+    },
+    "publish": {
+      "provider": "github",
+      "owner": "Al-Yousef",
+      "repo": "work-updates"
+    }
+  }
+}

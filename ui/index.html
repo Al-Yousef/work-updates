@@ -1,0 +1,43 @@
+<!doctype html>
+<html lang="en">
+  <head>
+    <meta charset="utf-8" />
+    <meta name="viewport" content="width=device-width,initial-scale=1" />
+    <title>Work Updates</title>
+    <link rel="stylesheet" href="style.css" />
+  </head>
+  <body>
+    <main id="shell">
+      <header class="toolbar">
+        <span class="brand">Work Updates <span id="demo-label" hidden>· Demo</span></span>
+        <div class="toolbar-actions">
+          <button id="new-task" class="quiet" aria-label="New task">＋ New task</button
+          ><button id="settings" class="icon" aria-label="Settings">···</button
+          ><button id="hide" class="icon" aria-label="Hide to tray">×</button>
+        </div>
+      </header>
+      <section class="clock-area" aria-label="Local time">
+        <div id="date"></div>
+        <div id="clock"></div>
+      </section>
+      <div class="queue-heading"><span>From your chats</span><span id="counts"></span></div>
+      <nav class="tabs" aria-label="Task views">
+        <button data-view="updates" aria-current="page">Updates</button
+        ><button data-view="queued">Queued <span id="queued-count"></span></button
+        ><button data-view="done">Done</button>
+      </nav>
+      <section id="queue" aria-label="Task queue" tabindex="-1"></section>
+      <footer>
+        <button id="show-all" class="quiet" hidden>Show all</button
+        ><button id="undo" class="quiet" hidden>Undo</button>
+        <div id="connection" role="status">Connecting to local chats…</div>
+        <div class="gesture-hint">Click for actions · Hold or right-click for details</div>
+      </footer>
+    </main>
+    <div id="scrim" hidden>
+      <section id="panel" role="dialog" aria-modal="true" aria-label="Task actions"></section>
+    </div>
+    <div id="notice" role="status" hidden></div>
+    <script src="app.js"></script>
+  </body>
+</html>

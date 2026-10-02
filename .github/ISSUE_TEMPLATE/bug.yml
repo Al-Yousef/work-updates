@@ -1,0 +1,33 @@
+name: Bug report
+description: Report a reproducible desktop or interaction problem.
+body:
+  - type: markdown
+    attributes:
+      value: Please use demo mode for screenshots. Remove task titles, messages, account details, paths, and pairing codes. Do not upload app-data files or Codex logs.
+  - type: input
+    id: version
+    attributes:
+      label: App version and operating system
+      placeholder: e.g. 0.2.0 on Windows 11 / macOS
+    validations:
+      required: true
+  - type: textarea
+    id: steps
+    attributes:
+      label: Steps to reproduce
+      description: Use generic sample tasks.
+    validations:
+      required: true
+  - type: textarea
+    id: expected
+    attributes:
+      label: Expected and actual behavior
+    validations:
+      required: true
+  - type: checkboxes
+    id: privacy
+    attributes:
+      label: Privacy
+      options:
+        - label: I removed private chat contents, credentials, and pairing codes.
+          required: true

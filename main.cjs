@@ -1,0 +1,522 @@
+'use strict';
+const {
+  app,
+  BrowserWindow,
+  ipcMain,
+  protocol,
+  Tray,
+  Menu,
+  nativeImage,
+  Notification,
+  shell,
+  dialog,
+  screen,
+  globalShortcut,
+  clipboard,
+  safeStorage,
+} = require('electron');
+const fs = require('node:fs');
+const path = require('node:path');
+const os = require('node:os');
+const { Queue, read, atomic, now } = require('./src/queue.cjs');
+const { Codex } = require('./src/codex.cjs');
+const { Controller } = require('./src/controller.cjs');
+const { startObserver } = require('./src/observer.cjs');
+const args = process.argv;
+function argument(name) {
+  const index = args.indexOf(name);
+  return index >= 0 ? args[index + 1] : undefined;
+}
+const demo = args.includes('--demo');
+const dataDir = argument('--data-dir')
+  ? path.resolve(argument('--data-dir'))
+  : app.getPath('userData');
+fs.mkdirSync(dataDir, { recursive: true });
+app.setPath('userData', dataDir);
+app.setAppUserModelId('io.workupdates.desktop');
+protocol.registerSchemesAsPrivileged([
+  { scheme: 'work-updates', privileges: { standard: true, secure: true, supportFetchAPI: true } },
+]);
+if (!demo && !app.requestSingleInstanceLock()) {
+  app.quit();
+  process.exit(0);
+}
+let window,
+  tray,
+  corner,
+  observer,
+  hostPeer,
+  remotePeer,
+  remoteState,
+  quitting = false;
+const queue = new Queue(dataDir);
+const client = demo
+  ? new (require('./src/demo.cjs').DemoCodex)()
+  : new Codex({ binary: queue.state.settings.codexBinary });
+const controller = new Controller(queue, client);
+const csp =
+  "default-src 'self'; script-src 'self'; style-src 'self'; img-src 'self' data:; connect-src 'none'; base-uri 'none'; object-src 'none'; form-action 'none'; frame-ancestors 'none'";
+function snapshot() {
+  const state = remoteState || queue.snapshot();
+  return {
+    ...state,
+    settings: {
+      ...state.settings,
+      ...Object.fromEntries(
+        ['pin', 'corner', 'attention', 'shortcut'].map((k) => [k, queue.state.settings[k]]),
+      ),
+    },
+    addresses: require('./src/peer.cjs')
+      .interfaces()
+      .filter((a) => !a.startsWith('127.')),
+    demo,
+    platform: process.platform,
+    remote: !!remotePeer,
+    hosting: !!hostPeer?.server,
+    connection: remotePeer?.connected
+      ? 'Connected to desktop'
+      : remotePeer
+        ? 'Reconnecting to desktop'
+        : 'Local desktop',
+  };
+}
+function publish() {
+  const state = snapshot();
+  if (window && !window.isDestroyed()) window.webContents.send('work-updates:state', state);
+  hostPeer?.broadcast(queue.snapshot());
+}
+let publication;
+queue.on('change', () => {
+  if (!publication)
+    publication = setTimeout(() => {
+      publication = null;
+      publish();
+    }, 60);
+});
+const notified = new Set();
+function attention(event) {
+  if (
+    !queue.state.settings.attention ||
+    window?.isVisible() ||
+    !['needs', 'blocked'].includes(event.status) ||
+    notified.has(event.key)
+  )
+    return;
+  notified.add(event.key);
+  if (notified.size > 500) notified.delete(notified.values().next().value);
+  if (Notification.isSupported()) {
+    const notification = new Notification({
+      title: event.status === 'needs' ? 'A task needs you' : 'A task is blocked',
+      body: event.title,
+    });
+    notification.on('click', () => show());
+    notification.show();
+  }
+}
+controller.on('attention', attention);
+let previousObserved, previousRemote;
+function incoming(cards, previous) {
+  const next = new Map(cards.map((c) => [c.id, c.fingerprint + ':' + c.status]));
+  if (previous)
+    for (const card of cards)
+      if (
+        previous.get(card.id) !== next.get(card.id) &&
+        !card.done &&
+        !card.reviewed &&
+        !card.snoozed
+      )
+        attention({
+          key: card.id + ':' + next.get(card.id),
+          title: card.title,
+          status: card.status,
+        });
+  return next;
+}
+function show() {
+  if (window) {
+    window.show();
+    window.focus();
+  }
+}
+function toggle() {
+  if (window.isVisible()) window.hide();
+  else show();
+}
+app.on('second-instance', show);
+function icon() {
+  return nativeImage
+    .createFromPath(path.join(__dirname, 'assets', 'icon.png'))
+    .resize({ width: 32, height: 32 });
+}
+function cornerWindow() {
+  if (corner) {
+    corner.destroy();
+    corner = null;
+  }
+  if (!queue.state.settings.corner) return;
+  const area = screen.getPrimaryDisplay().workArea;
+  corner = new BrowserWindow({
+    width: 52,
+    height: 52,
+    x: area.x + 12,
+    y: area.y + area.height - 64,
+    frame: false,
+    transparent: true,
+    alwaysOnTop: true,
+    resizable: false,
+    skipTaskbar: true,
+    webPreferences: {
+      preload: path.join(__dirname, 'preload.cjs'),
+      contextIsolation: true,
+      nodeIntegration: false,
+      sandbox: true,
+    },
+  });
+  corner.loadURL('work-updates://app/corner.html');
+  corner.webContents.on('will-navigate', (e) => e.preventDefault());
+  corner.webContents.setWindowOpenHandler(() => ({ action: 'deny' }));
+}
+function configure() {
+  window.setAlwaysOnTop(queue.state.settings.pin !== false);
+  cornerWindow();
+  globalShortcut.unregisterAll();
+  const key = process.platform === 'darwin' ? 'Command+Option+Space' : 'Control+Alt+Space';
+  queue.state.settings.shortcut = globalShortcut.register(key, toggle)
+    ? key
+    : 'Shortcut unavailable';
+}
+async function perform(method, input = {}) {
+  if (
+    remotePeer &&
+    ['create', 'start', 'action', 'undo', 'send', 'stop', 'respond', 'details'].includes(method)
+  )
+    return remotePeer.command(method, input);
+  if (method === 'state') return snapshot();
+  if (method === 'create') {
+    if (input.cwd && !(queue.state.settings.projects || []).includes(input.cwd))
+      throw new Error('Choose a workspace with the folder picker.');
+    return queue.create(input);
+  }
+  if (method === 'start') return controller.start(input.id);
+  if (method === 'action') return queue.action(input.id, input.action);
+  if (method === 'undo') return queue.undoLast();
+  if (method === 'send') return controller.send(input.id, input.text, input.sourceId);
+  if (method === 'stop') return controller.stop(input.id);
+  if (method === 'respond') return controller.respond(input.id, input.decision, input.answers);
+  if (method === 'details') {
+    const card = queue.get(input.id);
+    observer?.request(card.sources.filter((s) => !s.contextLoaded).map((s) => s.id));
+    return card;
+  }
+  if (method === 'open') {
+    const card = remoteState
+      ? [...remoteState.done, ...remoteState.cards].find(
+          (c) => c.taskKey === input.id || c.id === input.id,
+        )
+      : queue.get(input.id);
+    const source = card?.sources.find((s) => s.id === (input.sourceId || card.sources[0]?.id));
+    if (!source || !/^[a-f0-9-]{36}$/i.test(source.id))
+      throw new Error('No source chat is available.');
+    if (demo) return {};
+    await shell.openExternal('codex://threads/' + source.id);
+    return {};
+  }
+  if (method === 'project') {
+    const result = await dialog.showOpenDialog(window, {
+      properties: ['openDirectory'],
+      title: 'Choose task workspace',
+    });
+    if (result.canceled) return {};
+    const cwd = result.filePaths[0];
+    queue.state.settings.projects = [...new Set([...(queue.state.settings.projects || []), cwd])];
+    queue.save();
+    return { cwd };
+  }
+  if (method === 'settings') {
+    for (const key of ['pin', 'corner', 'attention'])
+      if (typeof input[key] === 'boolean') queue.state.settings[key] = input[key];
+    queue.save();
+    configure();
+    return snapshot();
+  }
+  if (method === 'window') {
+    if (input.action === 'hide') window.hide();
+    else if (input.action === 'toggle') toggle();
+    else if (input.action === 'show') show();
+    else if (input.action === 'quit') {
+      quitting = true;
+      app.quit();
+    } else if (input.action === 'new') {
+      show();
+      window.webContents.send('work-updates:state', { ...snapshot(), openComposer: true });
+    }
+    return {};
+  }
+  if (method === 'updates') {
+    if (demo) return { message: 'Demo mode does not check releases.' };
+    const response = await fetch(
+      'https://api.github.com/repos/Al-Yousef/work-updates/releases/latest',
+      { headers: { Accept: 'application/vnd.github+json' } },
+    );
+    if (!response.ok) throw new Error('No published release is available yet.');
+    const release = await response.json();
+    if (!/^https:\/\/github\.com\/Al-Yousef\/work-updates\/releases\/tag\//.test(release.html_url))
+      throw new Error('Unexpected release URL.');
+    await shell.openExternal(release.html_url);
+    return { version: release.tag_name };
+  }
+  if (['pair', 'connect', 'disconnect', 'revoke'].includes(method)) {
+    return connectionAction(method, input);
+  }
+  throw new Error('Unknown app action.');
+}
+async function connectionAction(method, input) {
+  const { HostPeer, RemotePeer } = require('./src/peer.cjs');
+  if (method === 'disconnect') {
+    remotePeer?.close();
+    remotePeer = null;
+    remoteState = null;
+    fs.rmSync(path.join(dataDir, 'paired-remote.enc'), { force: true });
+    publish();
+    return {};
+  }
+  if (method === 'revoke') {
+    hostPeer?.revoke();
+    hostPeer = null;
+    publish();
+    return { message: 'Pairing revoked. Other devices can no longer access this desktop.' };
+  }
+  if (method === 'pair') {
+    if (!safeStorage.isEncryptionAvailable())
+      throw new Error('Enable your operating system keychain before pairing.');
+    hostPeer ??= new HostPeer({
+      directory: dataDir,
+      encrypt: (v) => safeStorage.encryptString(v),
+      decrypt: (v) => safeStorage.decryptString(v),
+      state: () => queue.snapshot(),
+      command: perform,
+    });
+    if (remotePeer) throw new Error('Disconnect the companion before hosting another desktop.');
+    const code = await hostPeer.start(input.host);
+    clipboard.writeText(code);
+    publish();
+    return { message: 'Pairing code copied. Paste it into Work Updates on your Mac.' };
+  }
+  if (method === 'connect') {
+    if (hostPeer?.server)
+      throw new Error('Revoke hosted pairing before connecting to another desktop.');
+    if (!safeStorage.isEncryptionAvailable())
+      throw new Error('Enable your operating system keychain before pairing.');
+    remotePeer?.close();
+    const peer = new RemotePeer(input.code);
+    remotePeer = peer;
+    remoteState = null;
+    previousRemote = null;
+    peer.on('state', (value) => {
+      remoteState = value;
+      previousRemote = incoming(value.cards, previousRemote);
+      publish();
+    });
+    peer.on('connection', () => publish());
+    try {
+      await peer.connect();
+      fs.writeFileSync(
+        path.join(dataDir, 'paired-remote.enc'),
+        safeStorage.encryptString(input.code),
+        { mode: 0o600 },
+      );
+    } catch (error) {
+      if (input.restore) {
+        peer.reconnect();
+      } else {
+        peer.close();
+        remotePeer = null;
+        remoteState = null;
+        publish();
+        throw error;
+      }
+    }
+    publish();
+    return { message: 'Connected to your desktop.' };
+  }
+}
+app.whenReady().then(async () => {
+  protocol.handle('work-updates', (request) => {
+    const url = new URL(request.url);
+    const files = {
+      '/index.html': ['index.html', 'text/html'],
+      '/corner.html': ['corner.html', 'text/html'],
+      '/app.js': ['app.js', 'text/javascript'],
+      '/style.css': ['style.css', 'text/css'],
+    };
+    const entry = files[url.pathname];
+    if (url.hostname !== 'app' || !entry) return new Response('Not found', { status: 404 });
+    return new Response(fs.readFileSync(path.join(__dirname, 'ui', entry[0])), {
+      headers: {
+        'Content-Type': entry[1],
+        'Content-Security-Policy': csp,
+        'X-Content-Type-Options': 'nosniff',
+        'Cache-Control': 'no-store',
+      },
+    });
+  });
+  const saved = queue.state.settings.bounds || {},
+    area = screen.getPrimaryDisplay().workArea;
+  window = new BrowserWindow({
+    width: 484,
+    height: Math.min(780, area.height - 32),
+    minWidth: 390,
+    minHeight: 590,
+    x: Math.max(area.x, Math.min(saved.x ?? area.x + area.width - 508, area.x + area.width - 484)),
+    y: Math.max(area.y, Math.min(saved.y ?? area.y + 24, area.y + area.height - 590)),
+    frame: false,
+    transparent: true,
+    show: !args.includes('--hidden'),
+    backgroundColor: '#00000000',
+    title: 'Work Updates',
+    icon: path.join(__dirname, 'assets', 'icon.png'),
+    webPreferences: {
+      preload: path.join(__dirname, 'preload.cjs'),
+      contextIsolation: true,
+      nodeIntegration: false,
+      sandbox: true,
+    },
+  });
+  window.webContents.setWindowOpenHandler(() => ({ action: 'deny' }));
+  window.webContents.on('will-navigate', (e) => e.preventDefault());
+  window.on('close', (e) => {
+    if (!quitting) {
+      e.preventDefault();
+      window.hide();
+    }
+  });
+  window.on('move', () => {
+    queue.state.settings.bounds = window.getBounds();
+  });
+  for (const method of [
+    'state',
+    'create',
+    'start',
+    'action',
+    'undo',
+    'send',
+    'stop',
+    'respond',
+    'details',
+    'open',
+    'project',
+    'settings',
+    'window',
+    'pair',
+    'connect',
+    'disconnect',
+    'revoke',
+    'updates',
+  ])
+    ipcMain.handle('work-updates:' + method, async (event, input) => {
+      if (!event.senderFrame?.url.startsWith('work-updates://app/'))
+        return { ok: false, error: 'Unknown app frame.' };
+      try {
+        return { ok: true, value: await perform(method, input || {}) };
+      } catch (error) {
+        return { ok: false, error: error.message };
+      }
+    });
+  tray = new Tray(icon());
+  tray.setToolTip('Work Updates');
+  tray.setContextMenu(
+    Menu.buildFromTemplate([
+      { label: 'Show queue', click: show },
+      { label: 'New task', click: () => perform('window', { action: 'new' }) },
+      { type: 'separator' },
+      {
+        label: 'Quit Work Updates',
+        click: () => {
+          quitting = true;
+          app.quit();
+        },
+      },
+    ]),
+  );
+  tray.on('click', toggle);
+  if (argument('--legacy-root')) queue.importLegacy(path.resolve(argument('--legacy-root')));
+  if (demo) queue.setFeed(require('./src/demo.cjs').feed());
+  else {
+    const helper = app.isPackaged
+      ? path.join(
+          process.resourcesPath,
+          'helper',
+          process.platform === 'win32' ? 'collector.exe' : 'collector',
+        )
+      : undefined;
+    observer = startObserver(path.join(dataDir, 'observer'), { helper }, (feed, health) => {
+      queue.setFeed(feed || queue.feed, health);
+      previousObserved = incoming(
+        queue.cards().filter((c) => c.kind === 'observed'),
+        previousObserved,
+      );
+    });
+  }
+  configure();
+  await window.loadURL('work-updates://app/index.html');
+  if (!demo && safeStorage.isEncryptionAvailable()) {
+    const { HostPeer } = require('./src/peer.cjs');
+    hostPeer = new HostPeer({
+      directory: dataDir,
+      encrypt: (v) => safeStorage.encryptString(v),
+      decrypt: (v) => safeStorage.decryptString(v),
+      state: () => queue.snapshot(),
+      command: perform,
+    });
+    if (hostPeer.saved())
+      hostPeer
+        .restore()
+        .then(publish)
+        .catch(() => {});
+    try {
+      const code = safeStorage.decryptString(
+        fs.readFileSync(path.join(dataDir, 'paired-remote.enc')),
+      );
+      connectionAction('connect', { code, restore: true }).catch(() => {});
+    } catch {}
+  }
+  if (args.includes('--dev')) {
+    let refresh;
+    fs.watch(path.join(__dirname, 'ui'), () => {
+      clearTimeout(refresh);
+      refresh = setTimeout(() => window.webContents.reload(), 250);
+    });
+  }
+  if (argument('--snapshot'))
+    setTimeout(async () => {
+      const image = await window.webContents.capturePage();
+      fs.writeFileSync(path.resolve(argument('--snapshot')), image.toPNG());
+    }, 4500);
+  if (args.includes('--smoke'))
+    setTimeout(async () => {
+      try {
+        await window.webContents.executeJavaScript('document.getElementById("new-task").click()');
+        const ok = await window.webContents.executeJavaScript(
+          'document.querySelector("#task-prompt") !== null',
+        );
+        if (!ok) throw new Error('Composer did not open');
+        process.stdout.write('Desktop smoke check passed\n');
+        quitting = true;
+        app.exit(0);
+      } catch {
+        app.exit(1);
+      }
+    }, 1300);
+});
+app.on('activate', () => window && show());
+app.on('window-all-closed', () => {});
+app.on('before-quit', () => {
+  quitting = true;
+  queue.save();
+  observer?.close();
+  client.close();
+  hostPeer?.close();
+  remotePeer?.close();
+  globalShortcut.unregisterAll();
+  tray?.destroy();
+});
