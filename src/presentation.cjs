@@ -33,7 +33,14 @@ function shortSummary(value, limit = 160) {
         .trimEnd() + '…';
 }
 function taskSummary(task, approval) {
-  if (task.error) return shortSummary(task.error);
+  if (task.error) {
+    if (/active writer|already (?:running|loaded)/i.test(task.error))
+      return 'This chat is active elsewhere. Open it in Codex to continue.';
+    if (/too long|timed? out|timeout/i.test(task.error))
+      return 'Codex did not respond in time. Retry to continue.';
+    if (/disconnect/i.test(task.error)) return 'Codex disconnected. Retry to continue this chat.';
+    return shortSummary(task.error);
+  }
   if (task.status === 'queued') return shortSummary(task.prompt) || 'Queued and ready to start.';
   if (task.status === 'starting') return 'Starting this chat.';
   if (approval)

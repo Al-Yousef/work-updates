@@ -176,7 +176,14 @@ test('an app-owned summary does not report an old completion while a new reply i
   q.message(task.id, 'assistant', '**Current check:** The build is still running.');
   assert.equal(q.get(task.id).summary, 'Current check: The build is still running.');
   q.patch(task.id, { status: 'blocked', error: 'The chat disconnected. Retry to continue.' });
-  assert.equal(q.get(task.id).summary, 'The chat disconnected. Retry to continue.');
+  assert.equal(q.get(task.id).summary, 'Codex disconnected. Retry to continue this chat.');
+  q.patch(task.id, {
+    error: 'thread 10000000-0000-4000-8000-000000000001 already has an active writer',
+  });
+  assert.equal(
+    q.get(task.id).summary,
+    'This chat is active elsewhere. Open it in Codex to continue.',
+  );
 });
 test('a stale task identity cannot complete or open the new task in the same chat', (t) => {
   const q = model(t),
