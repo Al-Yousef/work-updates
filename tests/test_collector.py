@@ -164,14 +164,29 @@ class FeedTests(unittest.TestCase):
         self.assertEqual(switched['taskTitle'],'Update Sample shop prices')
         self.assertEqual(switched['fingerprint'],first['fingerprint'])
         with path.open('a',encoding='utf-8') as f:f.write(json.dumps(self.user('What should we do about that other thing?'))+'\n')
-        self.assertEqual(collector.collect(self.config)['threads'][0]['taskTitle'],'')
+        self.assertEqual(collector.collect(self.config)['threads'][0]['taskTitle'],'Update Sample shop prices')
 
     def test_task_title_falls_back_instead_of_guessing_or_copying_large_prose(self):
-        for request in ['Fix it please','Move the thing where it was','Check everything','I think the design is okay','Check my chat with him','Check brother man','Check what they said','Build '+('a complex feature '*20),'Access https://example.com/password=secret']:
+        for request in ['Fix it please','Move the thing where it was','Check everything','I think the design is okay','Check brother man','Check what they said','Access https://example.com/password=secret']:
             self.assertEqual(collector.task_title(request),'',request)
         self.assertEqual(collector.task_title('## My request: Please review the launch documents.'),'Review the launch documents')
         self.assertEqual(collector.task_title('<environment_context>Fix a private system issue</environment_context>\nPlease fix Sample quest labels.'),'Fix Sample quest labels')
         self.assertEqual(collector.task_title('wait where did they send my new delivery receipt?'),'Locate new delivery receipt delivery')
+        self.assertEqual(collector.task_title('The x button does not work and the notification needs fixing'), 'The x button does not work and the notification needs fixing')
+        self.assertEqual(collector.task_title('Check my chat with him'), 'Check my chat with him')
+        self.assertLessEqual(len(collector.task_title('Build '+('a complex feature '*20))), 101)
+
+    def test_confirmations_and_reported_progress_preserve_the_task(self):
+        for request in ['Go for it then', 'Okay, perfect', 'It works now', 'Looks good',
+                        "Called him he's gonna review it today he said"]:
+            self.assertIsNone(collector.task_title(request), request)
+        path = self.add('one', 'Planning chat', [self.user('Review the project proposal')])
+        for request in ['Go for it then', "Called him he's gonna review it today he said"]:
+            with path.open('a', encoding='utf-8') as f:
+                f.write(json.dumps(self.user(request)) + '\n')
+            self.assertEqual(collector.collect(self.config)['threads'][0]['taskTitle'], 'Review the project proposal')
+        self.assertEqual(collector.task_title('Called him, can you check the project proposal?'),
+                         'Called him, can you check the project proposal')
 
     def test_task_title_reads_indexed_user_message_when_tail_is_large(self):
         h=sqlite3.connect(self.home/'thread_history_1.sqlite')

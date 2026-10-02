@@ -7,7 +7,7 @@ const APP_ICON =
   );
 async function call(method, data) {
   const result = await api[method](data);
-  if (!result.ok) throw new Error(result.error);
+  if (!result.ok) throw Object.assign(new Error(result.error), { taskId: result.taskId });
   return result.value;
 }
 const $ = (id) => document.getElementById(id);
@@ -61,12 +61,11 @@ function clock() {
   });
 }
 if ($('corner-toggle')) {
-  const weather = document.body.classList.contains('weather-hotspot');
-  if (!weather) $('corner-toggle').replaceChildren(node('img', '', { src: APP_ICON, alt: '' }));
+  $('corner-toggle').replaceChildren(node('img', '', { src: APP_ICON, alt: '' }));
   $('corner-toggle').addEventListener('click', () => call('window', { action: 'corner' }));
   $('corner-toggle').addEventListener('contextmenu', (event) => {
     event.preventDefault();
-    if (!weather) call('window', { action: 'new' });
+    call('window', { action: 'new' });
   });
   api.subscribe((value) => {
     $('corner-toggle').setAttribute(
@@ -88,6 +87,9 @@ if ($('corner-toggle')) {
     showAll = false,
     mode = null,
     selected = null,
+    selectedTaskKey = null,
+    selectedSourceId = null,
+    selectedCardSnapshot = null,
     returnFocus = null,
     renderedQueueKey = null,
     pressed = false,
@@ -101,8 +103,15 @@ if ($('corner-toggle')) {
     lastContext = '',
     showHidden = false,
     browseAll = false;
+  const pendingSends = new Set();
+  const selectedSource = (card = currentCard()) =>
+    card?.sources.find((s) => s.id === selectedSourceId);
   const currentCard = () =>
-    state?.done.find((c) => c.taskKey === selected) || state?.cards.find((c) => c.id === selected);
+    (selectedCardSnapshot?.id === selected && pendingSends.has(selectedSourceId || selected)
+      ? selectedCardSnapshot
+      : null) ||
+    state?.done.find((c) => c.taskKey === selected) ||
+    state?.cards.find((c) => c.id === selected);
   function bindPress(element, click, hold, swipe) {
     let timer,
       held = false,
@@ -242,8 +251,8 @@ if ($('corner-toggle')) {
         replacement.dataset.id = id;
         bindPress(
           replacement,
-          () => showCard(id, true),
-          () => showCard(id, true),
+          () => showCard(id, true, card.taskKey),
+          () => showCard(id, true, card.taskKey),
           view !== 'done' && card.status !== 'queued'
             ? (dx) => {
                 swipeId = dx < 0 ? id : null;
@@ -373,6 +382,9 @@ if ($('corner-toggle')) {
     const before = returnFocus;
     mode = null;
     selected = null;
+    selectedTaskKey = null;
+    selectedSourceId = null;
+    selectedCardSnapshot = null;
     swipeId = null;
     $('scrim').hidden = true;
     document.body.classList.remove('panel-open');
@@ -385,7 +397,11 @@ if ($('corner-toggle')) {
   }
   async function runAction(id, action) {
     try {
-      const next = await call('action', { id, action });
+      const next = await call('action', {
+        id,
+        action,
+        taskKey: mode === 'details' ? selectedTaskKey : undefined,
+      });
       state = { ...state, ...next, settings: state.settings };
       swipeId = null;
       if (mode) closePanel();
@@ -421,7 +437,15 @@ if ($('corner-toggle')) {
     select.id = 'source-chat';
     for (const source of card.sources)
       select.append(node('option', source.title, { value: source.id }));
-    select.addEventListener('change', updateSendState);
+    select.value = selectedSourceId;
+    select.addEventListener('change', () => {
+      const input = $('chat-input');
+      if (input) messageDrafts.set(selected + ':' + selectedSourceId, input.value);
+      selectedSourceId = select.value;
+      if (input) input.value = messageDrafts.get(selected + ':' + selectedSourceId) || '';
+      lastContext = '';
+      updateDetails();
+    });
     return select;
   }
   function primaryActions(card, host) {
@@ -462,14 +486,10 @@ if ($('corner-toggle')) {
             'primary',
           ),
         );
-      const done = button('✓ Mark done', () => runAction(card.id, 'done'), 'done-action');
-      done.disabled = ['working', 'starting', 'needs'].includes(card.status);
-      if (done.disabled) done.title = 'Finish or stop the current pass first';
-      actions.append(done);
       const secondary = node('div');
       secondary.className = 'secondary-row';
       if (card.status !== 'queued')
-        secondary.append(button('Reviewed ✓', () => runAction(card.id, 'reviewed')));
+        secondary.append(button('Reviewed', () => runAction(card.id, 'reviewed')));
       secondary.append(button('Snooze 1h', () => runAction(card.id, 'snooze')));
       actions.append(secondary);
       if (card.kind === 'local' && ['working', 'needs'].includes(card.status))
@@ -494,20 +514,29 @@ if ($('corner-toggle')) {
     try {
       await call('open', {
         id: card.done ? card.taskKey : card.id,
-        sourceId: $('source-chat')?.value,
+        taskKey: selectedTaskKey,
+        sourceId: selectedSourceId,
       });
       closePanel();
     } catch (error) {
       notice(error.message, true);
     }
   }
-  function showCard(id, details) {
+  function showCard(id, details, expectedTaskKey) {
     const origin = document
       .querySelector('[data-id="' + CSS.escape(id) + '"]')
       ?.getBoundingClientRect();
-    selected = id;
-    const card = currentCard();
+    const card = state?.done.find((c) => c.taskKey === id) || state?.cards.find((c) => c.id === id);
     if (!card) return;
+    if (expectedTaskKey && card.taskKey !== expectedTaskKey) {
+      notice('This task changed. Open its latest update.');
+      render();
+      return;
+    }
+    selectedCardSnapshot = card;
+    selected = id;
+    selectedTaskKey = card.taskKey;
+    selectedSourceId = card.primarySourceId || card.sources[0]?.id || null;
     openPanel(details ? 'details' : 'actions', card.label + ' · ' + ago(card.at));
     selected = id;
     const panel = $('panel');
@@ -536,8 +565,11 @@ if ($('corner-toggle')) {
           'aria-label': 'Chat message',
           rows: '2',
         });
-        input.value = messageDrafts.get(id) || '';
-        input.addEventListener('input', () => messageDrafts.set(selected, input.value));
+        input.value = messageDrafts.get(id + ':' + selectedSourceId) || '';
+        input.addEventListener('input', () => {
+          messageDrafts.set(id + ':' + selectedSourceId, input.value);
+          updateSendState();
+        });
         const send = button('Send', () => row.requestSubmit(), 'primary');
         send.id = 'send-message';
         row.append(input, send);
@@ -545,29 +577,58 @@ if ($('corner-toggle')) {
           event.preventDefault();
           const text = input.value;
           if (!text.trim()) return;
+          const requestId = selected,
+            taskKey = selectedTaskKey,
+            sourceId = selectedSourceId;
+          if (pendingSends.has(sourceId || requestId)) return;
+          pendingSends.add(sourceId || requestId);
           send.disabled = true;
           try {
             const result = await call('send', {
-              id: selected,
+              id: requestId,
+              taskKey,
               text,
-              sourceId: $('source-chat')?.value,
+              sourceId,
             });
-            messageDrafts.delete(selected);
+            messageDrafts.delete(requestId + ':' + sourceId);
             input.value = '';
-            if (result?.taskId && result.taskId !== selected) showCard(result.taskId, true);
+            if (result?.taskId && result.taskId !== requestId) state = await call('state');
+            if (
+              mode === 'details' &&
+              selected === requestId &&
+              result?.taskId &&
+              result.taskId !== requestId
+            )
+              showCard(result.taskId, true);
           } catch (error) {
+            if (error.taskId && mode === 'details' && selected === requestId) {
+              state = await call('state');
+              messageDrafts.set(error.taskId + ':' + sourceId, text);
+              if (mode === 'details' && selected === requestId) showCard(error.taskId, true);
+            }
             notice(error.message, true);
           } finally {
+            pendingSends.delete(sourceId || requestId);
             updateSendState();
           }
         });
         input.addEventListener('keydown', (event) => {
-          if (event.key === 'Enter' && (event.ctrlKey || event.metaKey)) {
+          if (
+            event.key === 'Enter' &&
+            !event.isComposing &&
+            event.keyCode !== 229 &&
+            (!event.shiftKey || event.ctrlKey || event.metaKey)
+          ) {
             event.preventDefault();
-            row.requestSubmit();
+            if (!send.disabled) row.requestSubmit();
           }
         });
         panel.append(row);
+        panel.append(
+          node('p', 'Enter to send · Shift+Enter for a new line', {
+            class: 'field-note chat-keyboard-hint',
+          }),
+        );
       }
       const error = node('div');
       error.id = 'task-error';
@@ -659,6 +720,9 @@ if ($('corner-toggle')) {
         priority,
         node('p', 'Waiting on you stays first, followed by urgent tasks.', { class: 'field-note' }),
       );
+      const complete = button('Complete task', () => runAction(id, 'done'), 'detail-link');
+      complete.id = 'complete-task';
+      panel.append(complete);
     }
     if (!details) panel.append(button('Details & chat', () => showCard(id, true), 'detail-link'));
     const preview = node('section', '', { class: 'notification-preview' });
@@ -681,7 +745,8 @@ if ($('corner-toggle')) {
       if (
         child === picker ||
         ['approval-host', 'context-host', 'messages', 'task-error'].includes(child.id) ||
-        (child.classList.contains('compose-row') && child.querySelector('#chat-input'))
+        (child.classList.contains('compose-row') && child.querySelector('#chat-input')) ||
+        child.classList.contains('chat-keyboard-hint')
       )
         preview.append(child);
     }
@@ -720,17 +785,16 @@ if ($('corner-toggle')) {
       input = $('chat-input'),
       send = $('send-message');
     if (!card || !input) return;
-    const source = card.sources.find(
-      (s) => s.id === ($('source-chat')?.value || card.sources[0]?.id),
-    );
+    const source = selectedSource(card);
     const unavailable =
       (state.remote && !state.connected) ||
       card.done ||
       !card.sources.length ||
+      pendingSends.has(selectedSourceId || selected) ||
       (card.kind === 'observed' && source?.lifecycle === 'working') ||
       state.approvals.some((r) => r.taskId === card.id);
     input.disabled = unavailable;
-    send.disabled = unavailable;
+    send.disabled = unavailable || !input.value.trim();
     input.placeholder =
       card.status === 'queued'
         ? 'Start this task to chat…'
@@ -742,10 +806,23 @@ if ($('corner-toggle')) {
     if (mode !== 'details') return;
     const card = currentCard();
     if (!card) return;
-    $('panel').querySelector('.panel-title').textContent = card.title;
+    if (card.taskKey !== selectedTaskKey || (selectedSourceId && !selectedSource(card))) {
+      closePanel();
+      notice('This task changed. Open its latest update.');
+      return;
+    }
+    const source = selectedSource(card);
+    $('panel').querySelector('.panel-title').textContent = source?.taskTitle || card.title;
     $('panel-status').textContent = card.label + (card.urgent ? ' · Urgent' : '');
     $('notification-age').textContent = ago(card.doneAt || card.at);
-    $('task-error').textContent = card.error || '';
+    if ($('task-error')) $('task-error').textContent = card.error || '';
+    const complete = $('complete-task');
+    if (complete) {
+      complete.disabled = ['working', 'starting', 'needs'].includes(card.status);
+      complete.title = complete.disabled
+        ? 'Finish or stop the current pass first'
+        : 'Finish the task and move it to Done';
+    }
     const list = $('messages'),
       messages = card.messages || [],
       signature = JSON.stringify(messages);
@@ -763,12 +840,12 @@ if ($('corner-toggle')) {
     }
     const context = $('context-host'),
       contextSignature = JSON.stringify(
-        card.sources.map((s) => [s.id, s.title, s.body, s.contextLoaded]),
+        source && [source.id, source.title, source.body, source.contextLoaded],
       );
     if (card.kind === 'observed' && contextSignature !== lastContext) {
       const offsets = [...context.querySelectorAll('.body-text')].map((e) => e.scrollTop);
       context.replaceChildren(node('div', 'Latest recorded update', { class: 'eyebrow' }));
-      for (const source of card.sources) {
+      for (const source of card.sources.filter((s) => s.id === selectedSourceId)) {
         context.append(
           node('div', 'Chat · ' + source.title, { class: 'source-name' }),
           node(

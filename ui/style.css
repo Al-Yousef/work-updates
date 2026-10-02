@@ -790,29 +790,6 @@ textarea#task-prompt {
 .corner button:hover {
   background: #437aa6;
 }
-.weather-hotspot {
-  padding: 0;
-  width: 100vw;
-  height: 100vh;
-}
-.weather-hotspot button,
-.weather-hotspot button:hover,
-.weather-hotspot button:active {
-  display: block;
-  width: 100%;
-  height: 100%;
-  min-height: 0;
-  padding: 0;
-  border: 0;
-  border-radius: 0;
-  box-shadow: none;
-  outline: none;
-  cursor: default;
-  opacity: 1;
-  transition: none;
-  /* One alpha step keeps Windows hit testing enabled without drawing a launcher. */
-  background: #00000001;
-}
 .composer-actions {
   position: sticky;
   bottom: -1px;

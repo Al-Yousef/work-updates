@@ -23,6 +23,7 @@ const { Codex } = require('./src/codex.cjs');
 const { Controller } = require('./src/controller.cjs');
 const { startObserver } = require('./src/observer.cjs');
 const { WindowController } = require('./src/window-controller.cjs');
+const { taskSource } = require('./src/task-source.cjs');
 const taskbar = require('./src/taskbar.cjs');
 const args = process.argv;
 function argument(name) {
@@ -97,7 +98,8 @@ function snapshot() {
 function publish() {
   const state = snapshot();
   if (window && !window.isDestroyed()) window.webContents.send('work-updates:state', state);
-  if (corner && !corner.isDestroyed()) corner.webContents.send('work-updates:state', state);
+  if (corner && !corner.isDestroyed())
+    corner.webContents.send('work-updates:state', { windowMode: state.windowMode });
   hostPeer?.broadcast(queue.snapshot());
 }
 let publication;
@@ -300,14 +302,15 @@ async function perform(method, input = {}) {
     return queue.create(input);
   }
   if (method === 'start') return controller.start(input.id);
-  if (method === 'action') return queue.action(input.id, input.action);
+  if (method === 'action') return queue.action(input.id, input.action, input.taskKey);
   if (method === 'undo') return queue.undoLast();
   if (method === 'group') return queue.group(input);
   if (method === 'refresh') {
     observer?.request([]);
     return {};
   }
-  if (method === 'send') return controller.send(input.id, input.text, input.sourceId);
+  if (method === 'send')
+    return controller.send(input.id, input.text, input.sourceId, input.taskKey);
   if (method === 'stop') return controller.stop(input.id);
   if (method === 'respond') return controller.respond(input.id, input.decision, input.answers);
   if (method === 'details') {
@@ -320,13 +323,15 @@ async function perform(method, input = {}) {
       ? [...remoteState.done, ...remoteState.cards].find(
           (c) => c.taskKey === input.id || c.id === input.id,
         )
-      : queue.get(input.id);
-    const source = card?.sources.find((s) => s.id === (input.sourceId || card.sources[0]?.id));
+      : queue.get(input.id, input.taskKey);
+    if (input.taskKey && card?.taskKey !== input.taskKey)
+      throw new Error('This task changed. Reopen its update.');
+    const source = taskSource(card, input.sourceId);
     if (!source || !/^[a-f0-9-]{36}$/i.test(source.id))
       throw new Error('No source chat is available.');
-    if (demo) return {};
+    if (demo) return { sourceId: source.id };
     await shell.openExternal('codex://threads/' + source.id);
-    return {};
+    return { sourceId: source.id };
   }
   if (method === 'project') {
     const result = await dialog.showOpenDialog(window, {
@@ -456,6 +461,8 @@ app.whenReady().then(async () => {
       '/index.html': ['index.html', 'text/html'],
       '/corner.html': ['corner.html', 'text/html'],
       '/weather.html': ['weather.html', 'text/html'],
+      '/weather.js': ['weather.js', 'text/javascript'],
+      '/weather.css': ['weather.css', 'text/css'],
       '/app.js': ['app.js', 'text/javascript'],
       '/style.css': ['style.css', 'text/css'],
     };
@@ -573,7 +580,7 @@ app.whenReady().then(async () => {
       try {
         return { ok: true, value: await perform(method, input || {}) };
       } catch (error) {
-        return { ok: false, error: error.message };
+        return { ok: false, error: error.message, taskId: error.taskId };
       }
     });
   tray = new Tray(icon());
@@ -603,13 +610,20 @@ app.whenReady().then(async () => {
           process.platform === 'win32' ? 'collector.exe' : 'collector',
         )
       : undefined;
-    observer = startObserver(path.join(dataDir, 'observer'), { helper }, (feed, health) => {
-      queue.setFeed(feed || queue.feed, health);
-      previousObserved = incoming(
-        queue.cards().filter((c) => c.kind === 'observed'),
-        previousObserved,
-      );
-    });
+    const helperScript = app.isPackaged
+      ? path.join(process.resourcesPath, 'helper', 'collector.py')
+      : undefined;
+    observer = startObserver(
+      path.join(dataDir, 'observer'),
+      { helper, helperScript },
+      (feed, health) => {
+        queue.setFeed(feed || queue.feed, health);
+        previousObserved = incoming(
+          queue.cards().filter((c) => c.kind === 'observed'),
+          previousObserved,
+        );
+      },
+    );
   }
   configure();
   for (const event of ['display-added', 'display-removed', 'display-metrics-changed'])

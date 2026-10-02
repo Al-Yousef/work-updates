@@ -1,0 +1,20 @@
+# Reliability pass - October 2, 2026
+
+The queue must show a current task and route every action to its attached chat.
+
+| Report                                  | Cause to address                                                                                              | Required evidence                                                                                                        |
+| --------------------------------------- | ------------------------------------------------------------------------------------------------------------- | ------------------------------------------------------------------------------------------------------------------------ |
+| A card opens an unexpected chat         | Group display source is chosen by attention; actions default to the first unsorted source                     | Display, context, Open chat and reply share an explicit source id; switching sources changes all four                    |
+| Task labels are chat names              | Most natural requests fail a narrow verb parser                                                               | Use a bounded excerpt of the actual request; chat name appears separately; confirmations preserve the current request    |
+| Enter does not send                     | Textarea only handles Ctrl/Cmd+Enter                                                                          | Enter sends once; Shift+Enter adds a line; IME composition never sends; refresh cannot re-enable a pending send          |
+| Two completion checkmarks               | Review and task completion have equal visual emphasis                                                         | Reviewed is the normal notification action; Complete task is in Task settings, with no duplicate checkmark               |
+| Weather hover blips                     | Invisible launcher uses the entire app renderer and shared styles; native ordering is reasserted continuously | Minimal constant-alpha launcher; no renderer animation or state-dependent paint; repeated native hover and conceal tests |
+| A reply creates another owner of a chat | Observed chat adoption creates a new task before the send is locked                                           | Reuse an existing thread attachment and lock the thread before adopting or sending; reject a stale task/source           |
+
+Use the existing Apple notification references in DESIGN.md. Preserve the portrait shape and leftward reveal/dismissal. Completion remains reversible and does not archive chats.
+
+Do not replace a live installation during an app-owned pass. Test candidates with synthetic state, verify the installed source and collector, then exercise native controls. Published screenshots contain synthetic tasks only.
+
+Verification on Windows: 36 Node tests, 14 collector tests and 87 installed UI checks passed. Actual Windows mouse and keyboard input verified normal click, Enter sending exactly once with the conversation staying open, the panel X returning to the queue, and the window X concealing the app. The live weather target opened a peek, retained it on click and concealed it on the next click. The watcher reported healthy and watched all 1,511 local chats. Archive and collector hashes matched staged source; installation preserved private queue data and the existing executable files.
+
+Task titles are bounded request excerpts. This pass does not add model calls or claim semantic understanding of arbitrary conversation. Confirmations and reported conversations preserve the previous substantive request. A missing readable request says Current task unavailable rather than silently copying a chat name. The launcher has a separate renderer with constant pixels and no hover treatment. Native hit interception, repeated reveal/conceal, node stability and transparent concealed pixels are checked; a tiny transient Windows compositor flash cannot be ruled out by still screenshots. macOS native behavior and Windows header dragging remain outside this pass's verified results.

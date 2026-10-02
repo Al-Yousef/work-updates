@@ -99,7 +99,7 @@ class Queue extends EventEmitter {
           b.updatedAt - a.updatedAt,
       )[0];
       const state = this.cardState(id);
-      const taskTitle = display.taskTitle || name;
+      const taskTitle = display.taskTitle || 'Current task unavailable';
       const key = id + ':' + hash(taskTitle.toLowerCase());
       const fp = [...sources]
         .sort((a, b) => a.id.localeCompare(b.id))
@@ -120,6 +120,7 @@ class Queue extends EventEmitter {
         taskKey: key,
         title: taskTitle,
         chatName: name,
+        primarySourceId: display.id,
         kind: 'observed',
         manual: state.manual || 'auto',
         status,
@@ -133,6 +134,7 @@ class Queue extends EventEmitter {
         sources: sources.map((s) => ({
           id: s.id,
           title: s.title,
+          taskTitle: s.taskTitle || '',
           body: s.body || '',
           contextLoaded: !!s.contextLoaded,
           cwd: s.cwd || '',
@@ -155,9 +157,13 @@ class Queue extends EventEmitter {
     }
     for (const chat of this.feed.threads)
       if (!used.has(chat.id)) result.push(make(chat.id, chat.title, [chat]));
-    for (const task of this.state.tasks)
+    for (const task of this.state.tasks) {
+      const observed = this.feed.threads.find((s) => s.id === task.threadId);
       result.push({
         ...task,
+        title: observed?.taskTitle || task.title,
+        chatName: observed?.title || task.title,
+        primarySourceId: task.threadId,
         kind: 'local',
         taskKey: task.id,
         ...inferAttention(
@@ -184,7 +190,8 @@ class Queue extends EventEmitter {
           ? [
               {
                 id: task.threadId,
-                title: task.title,
+                title: observed?.title || task.title,
+                taskTitle: observed?.taskTitle || task.title,
                 body: task.messages?.filter((m) => m.role === 'assistant').at(-1)?.text || '',
                 contextLoaded: true,
                 cwd: task.cwd,
@@ -197,6 +204,7 @@ class Queue extends EventEmitter {
         snoozed: task.snoozedUntil > now(),
         done: task.status === 'done',
       });
+    }
     return result.sort((a, b) => priorityRank(a) - priorityRank(b) || b.at - a.at);
   }
   snapshot() {
@@ -216,9 +224,11 @@ class Queue extends EventEmitter {
       approvals: [...this.approvals.values()].map(({ reply, ...safe }) => safe),
     };
   }
-  get(id) {
-    const card = this.state.done[id] || this.cards().find((c) => c.id === id);
+  get(id, expectedTaskKey) {
+    const card = this.state.done[id] || this.cards().find((c) => c.id === id || c.taskKey === id);
     if (!card) throw new Error('This task is no longer in the queue.');
+    if (expectedTaskKey && card.taskKey !== expectedTaskKey)
+      throw new Error('This task changed. Return to the queue and open its latest update.');
     return card;
   }
   create(input) {
@@ -242,8 +252,8 @@ class Queue extends EventEmitter {
     this.save();
     return task;
   }
-  action(id, action) {
-    const card = this.get(id);
+  action(id, action, expectedTaskKey) {
+    const card = this.get(id, expectedTaskKey);
     id = card.id;
     const task = this.state.tasks.find((t) => t.id === id);
     if (action === 'done' && ['working', 'starting', 'needs'].includes(card.status))

@@ -6,11 +6,11 @@ A small native desktop queue for work spread across Codex chats. See what needs 
 
 ## Use it
 
-- **Click a card** for full details and a compact conversation, with Open chat, Mark done, Reviewed and Snooze 1h below.
+- **Click a card** for current task information and a compact conversation, with Open chat, Reviewed and Snooze 1h below. Enter sends; Shift+Enter starts a new line. Task settings contains Complete task.
 - **Hold or right-click** opens the same details. Enter, Space and Shift+F10 also work; no hold is required.
 - **New task** saves a title and prompt in Queued. Start chat creates one dedicated Codex conversation. Queue & start chat is also available.
 - **From your chats ⌄** switches between Updates, Queued and Done. The main surface stays a simple lock-screen notification stack.
-- **Done** closes the actual task. Reviewed only acknowledges an update. Undo and Reopen are available; neither action archives the source chat.
+- **Complete task** moves the actual task to Done. Reviewed acknowledges the current update. Undo and Reopen are available; neither action archives the source chat.
 - **Launch in the background** when the weather shortcut is enabled. Opening the app again leaves the hidden queue ready for hover. The X hides the queue while chat monitoring continues; Show queue in the tray or the keyboard shortcut opens it explicitly.
 - **Weather shortcut on Windows** uses the existing bottom-left taskbar weather area. Hover to slide the queue in from the left without taking keyboard focus; click there or in the queue to keep it open. Drag the top to move it, and click the weather area again to slide it back out to the left. A temporary peek closes when you leave it; a retained window remembers where you moved it. Reduced motion uses immediate reveal and dismissal. Enable Open queue from the weather area in Settings. The weather remains visible; no extra W button appears. macOS keeps the optional bottom-left launcher.
 - **Swipe left** on a notification to reveal Snooze 1h and Reviewed. Neither runs until you choose it.

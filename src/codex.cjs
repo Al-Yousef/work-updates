@@ -161,7 +161,9 @@ class Codex extends EventEmitter {
   async send(threadId, value) {
     await this.connect();
     if (!this.loaded.has(threadId)) {
-      await this.call('thread/resume', { threadId });
+      const resumed = await this.call('thread/resume', { threadId });
+      if (resumed.thread?.id !== threadId)
+        throw new Error('Codex resumed an unexpected chat. No message was sent.');
       this.loaded.add(threadId);
     }
     if (this.active.has(threadId))

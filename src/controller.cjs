@@ -4,6 +4,7 @@ const path = require('node:path');
 const { EventEmitter } = require('node:events');
 const { now, text } = require('./queue.cjs');
 const { inferAttention } = require('./attention.cjs');
+const { taskSource } = require('./task-source.cjs');
 function statusFromText(value) {
   if (inferAttention(value).waitingOn.kind === 'you') return 'needs';
   if (/\b(remaining blocker|still blocked|blocked by|blocked until|blocked on)\b/i.test(value))
@@ -59,27 +60,30 @@ class Controller extends EventEmitter {
       q.busy.delete(id);
     }
   }
-  async send(id, input, sourceId) {
+  async send(id, input, sourceId, expectedTaskKey) {
     const q = this.queue,
-      card = q.get(id),
+      card = q.get(id, expectedTaskKey),
       value = text(input, 12000);
     if (!value) throw new Error('Write a message first.');
     if (card.done) throw new Error('Reopen this task before sending another message.');
-    let task = q.state.tasks.find((t) => t.id === id);
+    const source = card.sources.length ? taskSource(card, sourceId) : null;
+    const lock = source?.id || id;
+    if (q.busy.has(lock)) throw new Error('A message is already being sent.');
+    let task = q.state.tasks.find((t) => t.id === id || t.threadId === source?.id);
     if (task && !task.threadId) throw new Error('Start this task before sending a message.');
     if ([...q.approvals.values()].some((r) => r.taskId === id))
       throw new Error('Answer the pending request before sending another message.');
     if (!task) {
-      const source = card.sources.find((s) => s.id === (sourceId || card.sources[0]?.id));
       if (!source) throw new Error('Choose a source chat.');
       if (source.lifecycle === 'working')
         throw new Error('This chat is working in Codex. Open it there to steer the current pass.');
       task = q.create({ title: card.title, prompt: value, cwd: source.cwd });
-      q.patch(task.id, { threadId: source.id });
+      q.patch(task.id, { threadId: source.id, adopted: true });
       if (source.body) q.message(task.id, 'assistant', source.body);
     }
     if (q.busy.has(task.id)) throw new Error('A message is already being sent.');
     q.busy.add(task.id);
+    q.busy.add(lock);
     q.message(task.id, 'user', value);
     q.patch(task.id, { status: 'working', error: '', reviewedVersion: '' });
     try {
@@ -87,9 +91,11 @@ class Controller extends EventEmitter {
       return { taskId: task.id };
     } catch (error) {
       q.patch(task.id, { status: 'blocked', error: error.message });
+      error.taskId = task.id;
       throw error;
     } finally {
       q.busy.delete(task.id);
+      q.busy.delete(lock);
     }
   }
   async stop(id) {
@@ -112,8 +118,9 @@ class Controller extends EventEmitter {
     else if (method === 'turn/completed') {
       const latest = task.messages.filter((m) => m.role === 'assistant').at(-1)?.text || '';
       const status = p.turn.status === 'completed' ? statusFromText(latest) : 'blocked';
+      const done = task.status === 'done';
       q.patch(task.id, {
-        status,
+        status: done ? 'done' : status,
         ...inferAttention(latest, status),
         notificationVersion: p.turn.id,
         completedAt: now(),
@@ -124,12 +131,13 @@ class Controller extends EventEmitter {
       for (const [id, request] of q.approvals)
         if (request.taskId === task.id) q.approvals.delete(id);
       q.save();
-      this.emit('attention', {
-        key: p.turn.id,
-        status,
-        title: task.title,
-        ...inferAttention(latest, status),
-      });
+      if (!done)
+        this.emit('attention', {
+          key: p.turn.id,
+          status,
+          title: task.title,
+          ...inferAttention(latest, status),
+        });
     } else if (method === 'serverRequest/resolved') {
       q.approvals.delete(String(p.requestId));
       q.save();

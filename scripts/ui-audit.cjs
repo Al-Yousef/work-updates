@@ -151,7 +151,17 @@ async function waitFor(page, fn) {
       (await page.locator('#chat-input').count()) === 1,
       'Enter opens the full task information',
     );
-    await page.getByRole('button', { name: '✓ Mark done', exact: true }).click();
+    check(
+      (await page.locator('#complete-task').count()) === 1 &&
+        !(await page.locator('#complete-task').isVisible()),
+      'Completion is tucked into Task settings',
+    );
+    check(
+      (await page.getByRole('button', { name: 'Reviewed', exact: true }).count()) === 1,
+      'Notification has one Reviewed action without a duplicate tick',
+    );
+    await page.locator('.task-options summary').click();
+    await page.getByRole('button', { name: 'Complete task', exact: true }).click();
     await waitFor(page, () => document.querySelector('#scrim').hidden);
     check((await page.locator('.card-trigger').count()) === 2, 'Done removes update');
     await page.getByRole('button', { name: 'Undo', exact: true }).click();
@@ -218,20 +228,41 @@ async function waitFor(page, fn) {
     );
     check(true, 'Queued task starts a dedicated demo chat');
     await page.locator('#chat-input').fill('Confirm the follow-up message.');
-    await page.getByRole('button', { name: 'Send', exact: true }).click();
+    await page.locator('#chat-input').press('Shift+Enter');
+    check(
+      (await page.locator('#chat-input').inputValue()).endsWith('\n'),
+      'Shift+Enter adds a line',
+    );
+    await page.locator('#chat-input').evaluate((el) =>
+      el.dispatchEvent(
+        new KeyboardEvent('keydown', {
+          key: 'Enter',
+          isComposing: true,
+          bubbles: true,
+          cancelable: true,
+        }),
+      ),
+    );
+    check(
+      (await page.locator('.message.user').count()) === 1,
+      'IME composition does not send a message',
+    );
+    await page.locator('#chat-input').press('Enter');
+    await page.locator('#chat-input').press('Enter');
     await waitFor(
       page,
       () =>
         document.querySelectorAll('.message.user').length === 2 &&
         document.querySelector('#panel-status').textContent.includes('Ready to review'),
     );
-    check(true, 'Mini chat receives follow-up completion');
+    check(true, 'Enter sends exactly one follow-up and receives completion');
     await page.keyboard.press('Escape');
     await chooseView('updates');
     await page
       .getByRole('button', { name: 'Check the compact task queue, Ready to review' })
       .click();
-    await page.getByRole('button', { name: '✓ Mark done', exact: true }).click();
+    await page.locator('.task-options summary').click();
+    await page.getByRole('button', { name: 'Complete task', exact: true }).click();
     await chooseView('done');
     await page.locator('.card-trigger').first().click();
     await page.getByRole('button', { name: 'Reopen task', exact: true }).click();
@@ -287,10 +318,50 @@ async function waitFor(page, fn) {
     await page.getByRole('button', { name: 'Create a group', exact: true }).click();
     await page.locator('#group-title').fill('Launch review');
     await page.getByLabel('Launch planning', { exact: true }).check();
-    await page.getByLabel('Desktop app', { exact: true }).check();
+    await page.getByLabel('Interface review', { exact: true }).check();
     await page.getByRole('button', { name: 'Save group', exact: true }).click();
     await page.locator('.grouped').waitFor();
     check(true, 'Grouping produces a connected notification stack');
+    await page.locator('.grouped .card-trigger').click();
+    const groupSource = page.locator('#source-chat');
+    const attentionSource = '10000000-0000-4000-8000-000000000003';
+    check(
+      (await groupSource.inputValue()) === attentionSource,
+      'Group defaults to the source behind its visible task',
+    );
+    check(
+      (await page.locator('#context-host .source-name').count()) === 1 &&
+        (await page.locator('#context-host').innerText()).includes('Interface review'),
+      'Details shows only the selected source context',
+    );
+    const selectedRoute = await page.evaluate(async (sourceId) => {
+      const state = (await window.workUpdates.state()).value,
+        card = state.cards.find((c) => c.sources.length > 1);
+      return (await window.workUpdates.open({ id: card.id, taskKey: card.taskKey, sourceId }))
+        .value;
+    }, attentionSource);
+    check(
+      selectedRoute.sourceId === attentionSource,
+      'Open chat routes to the displayed source id',
+    );
+    const launchSource = '10000000-0000-4000-8000-000000000001';
+    await groupSource.selectOption(launchSource);
+    check(
+      (await page.locator('.panel-title').innerText()) === 'Review launch notes',
+      'Switching source switches the task information',
+    );
+    await page.locator('#chat-input').fill('Keep this draft in launch planning.');
+    await groupSource.selectOption(attentionSource);
+    check(
+      (await page.locator('#chat-input').inputValue()) === '',
+      'Reply drafts do not leak between grouped chats',
+    );
+    await groupSource.selectOption(launchSource);
+    check(
+      (await page.locator('#chat-input').inputValue()).includes('launch planning'),
+      'Switching back restores only that chat draft',
+    );
+    await page.keyboard.press('Escape');
     await page.getByRole('button', { name: 'Settings', exact: true }).click();
     await page.getByRole('button', { name: 'Manage chat groups', exact: true }).click();
     await page.getByRole('button', { name: 'Launch review · 2 chats', exact: true }).click();
@@ -312,6 +383,9 @@ async function waitFor(page, fn) {
       'Review the desktop notification behavior with every local Codex chat and a much longer task title';
     const longFixture = structuredClone(baseline);
     longFixture.cards[0].title = longTitle;
+    longFixture.cards[0].sources.find(
+      (s) => s.id === longFixture.cards[0].primarySourceId,
+    ).taskTitle = longTitle;
     longFixture.cards[0].label = 'Waiting on the desktop application review team';
     await pushFixture(longFixture);
     await page
@@ -791,6 +865,34 @@ async function waitFor(page, fn) {
     }
     await page.evaluate(() => window.workUpdates.settings({ corner: false }));
     check((await app.windows()).length === 1, 'Disabling the launcher removes its native control');
+    await page.locator('.grouped .card-trigger').click();
+    const replySource = await page.locator('#source-chat').inputValue();
+    await app.evaluate(({ app }) => {
+      const { DemoCodex } = process
+        .getBuiltinModule('module')
+        .createRequire(app.getAppPath() + '/main.cjs')('./src/demo.cjs');
+      const original = DemoCodex.prototype.send;
+      DemoCodex.prototype.send = function (id, text) {
+        globalThis.auditReplySource = id;
+        return original.call(this, id, text);
+      };
+    });
+    await page.locator('#chat-input').fill('Verify the selected chat receives this sample reply.');
+    await page.locator('#chat-input').press('Enter');
+    await waitFor(
+      page,
+      () =>
+        document.querySelectorAll('.message.user').length === 1 &&
+        document.querySelector('#panel-status').textContent.includes('Ready to review'),
+    );
+    check(
+      await page.locator('#scrim').isVisible(),
+      'Reply adoption keeps task information open after Enter',
+    );
+    check(
+      (await app.evaluate(() => globalThis.auditReplySource)) === replySource,
+      'The group reply reaches the same selected chat id',
+    );
     check(errors.length === 0, 'No renderer exceptions');
     process.stdout.write(
       'Native desktop UI: ' + checks + ' checks passed. Synthetic screenshots: artifacts/ui\n',

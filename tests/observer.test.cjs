@@ -21,7 +21,12 @@ test('watcher reports health changes even when no new feed can be written', asyn
     );
     watcher = startObserver(
       path.join(dir, 'observer'),
-      { codexHome: home, python: process.env.WORK_UPDATES_PYTHON || 'python' },
+      {
+        codexHome: home,
+        python: process.env.WORK_UPDATES_PYTHON || 'python',
+        helper: path.join(dir, 'do-not-launch.exe'),
+        helperScript: path.resolve(__dirname, '../bridge/collector.py'),
+      },
       (feed, health) => {
         if (!health.ok && health.at) {
           clearTimeout(timer);

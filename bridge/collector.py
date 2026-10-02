@@ -15,7 +15,7 @@ MAX_TAIL = 4 * 1024 * 1024
 MAX_LINE = 256 * 1024
 TAIL_CACHE = {}
 SOURCE_CACHE = {}
-TASK_TITLE_VERSION = 3
+TASK_TITLE_VERSION = 5
 TASK_VERBS = r'(?:fix|update|build|add|remove|check|review|compare|test|verify|find|locate|search|research|apply|access|request|implement|move|rename|investigate|organize|create|design|publish|rewrite|draft|send|upload|download|install|develop|plan|finish|complete|adjust|change|improve|resolve|repair|rebuild)'
 NEEDS_PATTERN = r'\b(need your|needs your|waiting on you|waiting for you|(?:requires?|awaiting|waiting for|blocked on|blocked by|blocked until) your\b|please (send|provide|upload|confirm))\b'
 
@@ -158,20 +158,26 @@ def summarize(body, status):
 def request_text(text):
     # Ambient app context is not the user's task. Never turn it into a title.
     text = re.sub(r'<([\w-]+)\b[^>]*>[\s\S]*?</\1>', '', text)
+    if re.search(r'(?im)^\s*#{1,6}\s*my request:\s*', text):
+        text = re.split(r'(?im)^\s*#{1,6}\s*my request:\s*', text)[-1]
     text = re.sub(r'(?im)^\s*#{1,6}\s*my request:\s*', '', text)
     return plain(text).strip()
 
 
 def continuation(text):
-    return bool(re.fullmatch(r"(?:yes|yeah|yep|yup|ok|okay|sure|bet|perfect|great|thanks|thank you|go|go ahead|go for it|do it|let'?s go|let'?s do it|continue|keep going|proceed|please)[\s,!.]*"
-                             r"(?:(?:yes|yeah|ok|okay|sure|bet|perfect|thanks|go for it|please)[\s,!.]*)*", text, re.I))
+    value = re.sub(r'\s+(?:then|now|please)[\s,!.]*$', '', text, flags=re.I)
+    return bool(re.fullmatch(r"(?:yes|yeah|yep|yup|ok|okay|sure|bet|perfect|great|thanks|thank you|go|go ahead|go for it|do it|let'?s go|let'?s do it|continue|keep going|proceed|please|looks good|sounds good|it works|works|still works)[\s,!.]*"
+                             r"(?:(?:yes|yeah|ok|okay|sure|bet|perfect|thanks|go for it|please)[\s,!.]*)*", value, re.I))
 
 
 def task_title(text):
-    """Use a short, explicit request; ambiguous prose falls back to the chat name."""
+    """A literal excerpt of the current request; never an invented summary."""
     value = request_text(text)
     if not value or continuation(value):
         return None  # Approval/progress chatter keeps the current task.
+    if (re.match(r"^(?:i )?(?:called|messaged|emailed|texted|spoke to|talked to) (?:him|her|them)\b", value, re.I)
+            and not re.search(r"\?|\b(?:can|could|would|will) you\b|\bi (?:want|need)\b", value, re.I)):
+        return None  # A reported conversation is context for the existing task.
     if (re.match(r'^(?:perfect|great|thanks)\b', value, re.I) and not re.search(r'\b' + TASK_VERBS + r'\b', value, re.I)
             or len(re.findall(r'\d', value)) >= 5 and not re.search(r'\b' + TASK_VERBS + r'\b', value, re.I)):
         return None  # Approval chatter and numeric task data are not new objectives.
@@ -185,21 +191,17 @@ def task_title(text):
         value = 'Locate ' + locate[1] + ' delivery'
     elif compare:
         value = 'Compare ' + re.sub(r'^the\s+', '', compare[1], flags=re.I)
-    if not re.match(r'^' + TASK_VERBS + r'\s+', value, re.I):
-        return ''
     value = re.split(r'\s+(?:because|so (?:i|we|you|it|they)|in order to)\b', value, maxsplit=1, flags=re.I)[0]
     value = re.split(r',\s+(?:' + TASK_VERBS + r'|put|when|so)\b', value, maxsplit=1, flags=re.I)[0]
     value = re.sub(r'\s+(?:and (?:whatnot|everything)|please|right now|rn|i guess|tho)$', '', value, flags=re.I)
     value = re.sub(r'\b(?:[A-Z]{4,}|ALL|FOR|THE|AND)\b', lambda m: m[0].lower(), value)
     value = re.sub(r'\s+', ' ', value).strip(' .?!,')
-    subject = value.split(' ', 1)[1]
-    # Do not guess the referent, expose pasted code/URLs, or crop an oversized prompt.
-    if (len(value) > 80 or len(value.split()) > 14 or len(subject.split()) < 2
-            or re.match(r'^(?:it|this|that|these|those|them|him|her|something|everything|anything|what|who|which|when|where|how|why|a way|the thing)\b', subject, re.I)
-            or re.search(r'\b(?:him|her|them|it|this|that)\b', subject, re.I)
-            or subject.lower() in ('the design', 'the app', 'the task', 'the changes', 'all of them', 'brother man')
-            or re.search(r'https?://|[<>{}\\]|\b(?:password|secret|token)\s*[:=]', value)):
+    if (len(value.split()) < 3 or
+            re.search(r'https?://|[<>{}\\]|\b(?:password|secret|token)\s*[:=]', value) or
+            re.fullmatch(r'(?:fix it|move the thing where it was|check everything|check brother man|check what they said|i think the design is okay|what should we do about that other thing)', value, re.I)):
         return ''
+    if len(value) > 100:
+        value = value[:100].rsplit(' ', 1)[0].rstrip(' ,;:') + '…'
     return value[0].upper() + value[1:]
 
 
@@ -222,7 +224,7 @@ def current_task(history, id, path, previous=''):
             continue
         seen.add(text)
         title = task_title(text)
-        if title is not None:
+        if title:
             return title
     return previous
 
@@ -356,7 +358,7 @@ def collect(config):
         for id in list(SOURCE_CACHE):
             if id not in live_ids:
                 del SOURCE_CACHE[id]
-        return {'schemaVersion': 2, 'collectedAt': now, 'scope': 'Local Codex chats',
+        return {'schemaVersion': 2, 'collectorVersion': TASK_TITLE_VERSION, 'collectedAt': now, 'scope': 'Local Codex chats',
                 'threads': result, 'monitoredCount': len(result), 'warnings': warnings}
     finally:
         state.close()

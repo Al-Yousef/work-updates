@@ -5,6 +5,7 @@ const fs = require('node:fs');
 const os = require('node:os');
 const path = require('node:path');
 const { Queue, now } = require('../src/queue.cjs');
+const { taskSource } = require('../src/task-source.cjs');
 test('owners and urgency survive reload without changing completion fingerprints', (t) => {
   const q = model(t);
   q.action('sample-chat', 'owner:Reviewer');
@@ -34,6 +35,9 @@ test('a grouped chat surfaces its waiting-on-you source before a newer finished 
   assert.equal(card.title, 'Approve the draft');
   assert.equal(card.waitingOn.kind, 'you');
   assert.equal(card.label, 'Waiting on you · blocked');
+  assert.equal(taskSource(card).id, 'needs-chat');
+  assert.equal(taskSource(card, 'sample-chat').id, 'sample-chat');
+  assert.throws(() => taskSource(card, 'unrelated-chat'));
 });
 test('groups preserve source chats, can be edited and undone without losing queued tasks', (t) => {
   const q = model(t);
@@ -138,6 +142,14 @@ test('titles change without changing the observed chat link or review fingerprin
   assert.equal(c.sources[0].id, 'sample-chat');
   assert.equal(c.sources[0].title, 'Launch planning');
   assert.equal(c.reviewed, true);
+});
+test('a stale task identity cannot complete or open the new task in the same chat', (t) => {
+  const q = model(t),
+    before = q.get('sample-chat');
+  q.feed.threads[0].taskTitle = 'Prepare a different release';
+  assert.throws(() => q.get(before.id, before.taskKey), /task changed/);
+  assert.throws(() => q.action(before.id, 'done', before.taskKey), /task changed/);
+  assert.equal(q.snapshot().done.length, 0);
 });
 test('queue creation rejects blank and oversized prompts', (t) => {
   const q = model(t);

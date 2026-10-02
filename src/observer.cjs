@@ -9,26 +9,26 @@ function startObserver(root, options, onFeed) {
   fs.mkdirSync(root, { recursive: true });
   atomic(path.join(root, 'config.json'), { codexHome: home, pollSeconds: 3, ignoredThreadIds: [] });
   let binary, args;
-  if (options.helper) {
+  const bundled = path.join(
+    os.homedir(),
+    '.cache',
+    'codex-runtimes',
+    'codex-primary-runtime',
+    'dependencies',
+    'python',
+    process.platform === 'win32' ? 'python.exe' : 'bin/python3',
+  );
+  const python = options.python || (fs.existsSync(bundled) ? bundled : null);
+  const source = options.helperScript && fs.existsSync(options.helperScript) && python;
+  if (options.helper && !source) {
     binary = options.helper;
     args = ['--root', root, '--parent-pid', String(process.pid)];
   } else {
-    const bundled = path.join(
-      os.homedir(),
-      '.cache',
-      'codex-runtimes',
-      'codex-primary-runtime',
-      'dependencies',
-      'python',
-      process.platform === 'win32' ? 'python.exe' : 'bin/python3',
-    );
-    binary =
-      options.python ||
-      (fs.existsSync(bundled) ? bundled : process.platform === 'win32' ? 'python' : 'python3');
+    binary = python || (process.platform === 'win32' ? 'python' : 'python3');
     args = [
       '-X',
       'utf8',
-      path.join(__dirname, '..', 'bridge', 'collector.py'),
+      source ? options.helperScript : path.join(__dirname, '..', 'bridge', 'collector.py'),
       '--root',
       root,
       '--parent-pid',

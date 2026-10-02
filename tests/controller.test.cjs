@@ -20,6 +20,53 @@ function setup(t) {
   };
   return { q, client, c: new Controller(q, client) };
 }
+test('group reply uses the displayed source and concurrent retries cannot adopt it twice', async (t) => {
+  const { q, client, c } = setup(t);
+  const records = [
+    {
+      id: 'first-chat',
+      title: 'Older chat',
+      taskTitle: 'Review release draft',
+      body: 'Ready.',
+      status: 'ready',
+      fingerprint: 'one',
+      updatedAt: 2,
+    },
+    {
+      id: 'needs-chat',
+      title: 'Decision chat',
+      taskTitle: 'Approve release notes',
+      body: 'Need your approval.',
+      status: 'needs',
+      fingerprint: 'two',
+      updatedAt: 1,
+    },
+  ];
+  q.setFeed({ threads: records });
+  q.group({ title: 'Release', ids: records.map((r) => r.id) });
+  const card = q.cards()[0];
+  let release,
+    sends = 0;
+  client.send = async (id) => {
+    assert.equal(id, 'needs-chat');
+    sends++;
+    await new Promise((r) => {
+      release = r;
+    });
+  };
+  const pending = c.send(card.id, 'Use the verified draft', undefined, card.taskKey);
+  await assert.rejects(c.send(card.id, 'Second click', undefined, card.taskKey));
+  assert.equal(q.state.tasks.length, 1);
+  release();
+  await pending;
+  assert.equal(sends, 1);
+  const task = q.state.tasks[0];
+  client.send = async (id) => {
+    assert.equal(id, 'needs-chat');
+  };
+  await c.send(task.id, 'A later follow-up', 'needs-chat');
+  assert.equal(q.state.tasks.length, 1);
+});
 test('a failed start keeps its created chat for retry and concurrent clicks create only one chat', async (t) => {
   const { q, client, c } = setup(t);
   let starts = 0;
@@ -60,6 +107,20 @@ test('streamed commentary is quiet and actual completion creates a review notifi
   assert.equal(task.status, 'ready');
   assert.equal(task.notificationVersion, 'completed-pass');
   assert.equal(attention, 1);
+});
+test('a delayed completion does not reopen a task the user completed', (t) => {
+  const { q, client, c } = setup(t),
+    task = q.create({ title: 'Verify a completed task', prompt: 'Check a sample.' });
+  q.patch(task.id, { threadId: 'owned-chat', status: 'ready' });
+  q.action(task.id, 'done');
+  let attention = 0;
+  c.on('attention', () => attention++);
+  client.emit('notification', {
+    method: 'turn/completed',
+    params: { threadId: 'owned-chat', turn: { id: 'late', status: 'completed' } },
+  });
+  assert.equal(q.get(task.id).status, 'done');
+  assert.equal(attention, 0);
 });
 test('approval requests remain pending until a human answers, and unknown requests fail closed', (t) => {
   const { q, client, c } = setup(t),
