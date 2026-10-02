@@ -3,6 +3,7 @@ const fs = require('node:fs');
 const path = require('node:path');
 const crypto = require('node:crypto');
 const { EventEmitter } = require('node:events');
+const { inferAttention, statusLabel, priorityRank } = require('./attention.cjs');
 const now = () => Math.floor(Date.now() / 1000);
 const hash = (value) => crypto.createHash('sha256').update(value).digest('hex').slice(0, 24);
 const labels = {
@@ -91,11 +92,12 @@ class Queue extends EventEmitter {
     const used = new Set(this.state.tasks.map((t) => t.threadId).filter(Boolean));
     const result = [];
     const make = (id, name, sources) => {
-      const display =
-        [...sources]
-          .filter((s) => s.readyForReview)
-          .sort((a, b) => b.completedAt - a.completedAt)[0] ||
-        [...sources].sort((a, b) => b.updatedAt - a.updatedAt)[0];
+      const display = [...sources].sort(
+        (a, b) =>
+          priorityRank({ ...a, ...inferAttention(a.body, a.status) }) -
+            priorityRank({ ...b, ...inferAttention(b.body, b.status) }) ||
+          b.updatedAt - a.updatedAt,
+      )[0];
       const state = this.cardState(id);
       const taskTitle = display.taskTitle || name;
       const key = id + ':' + hash(taskTitle.toLowerCase());
@@ -104,6 +106,15 @@ class Queue extends EventEmitter {
         .map((s) => s.id + ':' + s.fingerprint)
         .join('|');
       const status = state.manual && state.manual !== 'auto' ? state.manual : display.status;
+      const inferred = inferAttention(display.body, status);
+      const waitingOn =
+        state.manual && state.manual !== 'auto'
+          ? status === 'needs'
+            ? { kind: 'you', name: '' }
+            : state.waitingOn || { kind: 'unknown', name: '' }
+          : inferred.waitingOn;
+      const urgent =
+        state.priority === 'urgent' || (state.priority !== 'normal' && inferred.urgent);
       return {
         id,
         taskKey: key,
@@ -112,7 +123,10 @@ class Queue extends EventEmitter {
         kind: 'observed',
         manual: state.manual || 'auto',
         status,
-        label: labels[status] || display.label || 'Updated',
+        waitingOn,
+        urgent,
+        priority: state.priority || 'auto',
+        label: statusLabel(status, waitingOn),
         at: display.notificationAt || display.updatedAt,
         fingerprint: fp,
         readyForReview: display.readyForReview,
@@ -146,7 +160,25 @@ class Queue extends EventEmitter {
         ...task,
         kind: 'local',
         taskKey: task.id,
-        label: labels[task.status] || 'Queued',
+        ...inferAttention(
+          task.messages?.filter((m) => m.role === 'assistant').at(-1)?.text,
+          task.status,
+        ),
+        urgent:
+          this.cardState(task.id).priority === 'urgent' ||
+          (this.cardState(task.id).priority !== 'normal' &&
+            inferAttention(
+              task.messages?.filter((m) => m.role === 'assistant').at(-1)?.text,
+              task.status,
+            ).urgent),
+        priority: this.cardState(task.id).priority || 'auto',
+        label: statusLabel(
+          task.status,
+          inferAttention(
+            task.messages?.filter((m) => m.role === 'assistant').at(-1)?.text,
+            task.status,
+          ).waitingOn,
+        ),
         at: task.updatedAt || task.createdAt,
         sources: task.threadId
           ? [
@@ -165,27 +197,7 @@ class Queue extends EventEmitter {
         snoozed: task.snoozedUntil > now(),
         done: task.status === 'done',
       });
-    return result.sort(
-      (a, b) =>
-        (a.status === 'needs'
-          ? 0
-          : a.readyForReview
-            ? 1
-            : a.status === 'queued'
-              ? 2
-              : a.status === 'working'
-                ? 3
-                : 4) -
-          (b.status === 'needs'
-            ? 0
-            : b.readyForReview
-              ? 1
-              : b.status === 'queued'
-                ? 2
-                : b.status === 'working'
-                  ? 3
-                  : 4) || b.at - a.at,
-    );
+    return result.sort((a, b) => priorityRank(a) - priorityRank(b) || b.at - a.at);
   }
   snapshot() {
     const cards = this.cards();
@@ -250,11 +262,29 @@ class Queue extends EventEmitter {
       key: card.taskKey,
       done: this.state.done[card.taskKey] ? structuredClone(this.state.done[card.taskKey]) : null,
     };
-    if (action.startsWith('status:')) {
+    if (action.startsWith('priority:')) {
+      const priority = action.slice(9);
+      if (!['auto', 'urgent', 'normal'].includes(priority))
+        throw new Error('Choose a supported priority.');
+      this.state.cards[id] = { ...this.cardState(id), priority };
+    } else if (action.startsWith('owner:')) {
+      if (task) throw new Error('The current chat controls its waiting status.');
+      const owner = text(action.slice(6), 80);
+      if (!owner) throw new Error('Name the person or team you are waiting on.');
+      this.state.cards[id] = {
+        ...this.cardState(id),
+        manual: 'waiting',
+        waitingOn: { kind: 'other', name: owner },
+      };
+    } else if (action.startsWith('status:')) {
       const manual = action.slice(7);
       if (task || !['auto', 'needs', 'waiting', 'blocked', 'working'].includes(manual))
         throw new Error('Choose a supported chat status.');
-      this.state.cards[id] = { ...this.cardState(id), manual };
+      this.state.cards[id] = {
+        ...this.cardState(id),
+        manual,
+        waitingOn: manual === 'needs' ? { kind: 'you', name: '' } : { kind: 'unknown', name: '' },
+      };
     } else if (action === 'done') {
       this.state.done[card.taskKey] = {
         ...card,

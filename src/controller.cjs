@@ -3,13 +3,11 @@ const fs = require('node:fs');
 const path = require('node:path');
 const { EventEmitter } = require('node:events');
 const { now, text } = require('./queue.cjs');
+const { inferAttention } = require('./attention.cjs');
 function statusFromText(value) {
+  if (inferAttention(value).waitingOn.kind === 'you') return 'needs';
   if (/\b(remaining blocker|still blocked|blocked by|blocked until|blocked on)\b/i.test(value))
     return 'blocked';
-  if (
-    /\b(need your|needs your|waiting on you|waiting for you|awaiting your approval)\b/i.test(value)
-  )
-    return 'needs';
   if (
     /\b(awaiting|waiting for|waiting on)\b/i.test(value) &&
     !/\b(not|no longer) (awaiting|waiting)\b/i.test(value)
@@ -116,6 +114,7 @@ class Controller extends EventEmitter {
       const status = p.turn.status === 'completed' ? statusFromText(latest) : 'blocked';
       q.patch(task.id, {
         status,
+        ...inferAttention(latest, status),
         notificationVersion: p.turn.id,
         completedAt: now(),
         error:
@@ -125,7 +124,12 @@ class Controller extends EventEmitter {
       for (const [id, request] of q.approvals)
         if (request.taskId === task.id) q.approvals.delete(id);
       q.save();
-      this.emit('attention', { key: p.turn.id, status, title: task.title });
+      this.emit('attention', {
+        key: p.turn.id,
+        status,
+        title: task.title,
+        ...inferAttention(latest, status),
+      });
     } else if (method === 'serverRequest/resolved') {
       q.approvals.delete(String(p.requestId));
       q.save();

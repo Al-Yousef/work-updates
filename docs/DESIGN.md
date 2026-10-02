@@ -25,6 +25,10 @@ New tasks have a title, prompt, and optional workspace. **Queue task** saves a d
 
 Use the approved dark lock-screen composition: blue-gray wash, large clock, 23px rounded notifications, muted green identity icon, and restrained status colors. Use 8px spacing increments, 44px main targets, a visible keyboard focus ring, text contrast, and reduced-motion support. Card text wraps to two lines; full text is always available in details. Panels have a consistent width and retain the background queue's positions while open. Success uses a short undo notice, not an interrupting dialog.
 
+Keep the original 484×720 composition: quiet Desktop overlay toolbar, large date and clock, three translucent rounded notifications and a subtle stack underneath. No persistent tabs or dashboard panels. A small heading menu opens Updates, Queued and Done; the plus button opens the composer. Settings and task context remain in sheets.
+
+Waiting on you always sorts first, then urgent items, then other actionable blockers and review items. Ordinary working items and external waits follow. Waiting cards must identify the owner. Extract only explicit names or roles from the latest recorded response; unknown owners are labeled as unclear. Details support a named waiting owner and Automatic/Urgent/Normal priority. Group cards surface their highest-attention source, keeping every source conversation attached. Ownership and urgency changes never alter completion fingerprints or replay reviewed history.
+
 ## Required states
 
 Loading; empty queue; queued draft; starting; active; ready to review; waiting; blocked; approval required; failed launch with retry; sync paused with last successful data; snoozed; reviewed; done; restored; disconnected companion; connected companion. Each visible control must have a verified outcome.

@@ -62,6 +62,8 @@ class FeedTests(unittest.TestCase):
         self.assertEqual(result['label'], 'Ready to review')
 
     def test_explicit_blockers_and_waiting(self):
+        self.assertEqual(collector.determine_status('Still blocked on your decision.', 'final_answer', 'updated', 0)[0], 'needs')
+        self.assertEqual(collector.determine_status('Blocked on the reviewer confirmation.', 'final_answer', 'updated', 0)[0], 'blocked')
         self.assertEqual(collector.determine_status('The remaining blocker is the permit.', 'final_answer', 'updated', 0)[0], 'blocked')
         self.assertEqual(collector.determine_status('Awaiting the reviewer confirmation.', 'final_answer', 'updated', 0)[0], 'waiting')
         self.assertEqual(collector.determine_status('Not waiting for a reply.', 'final_answer', 'updated', 0)[0], 'updated')

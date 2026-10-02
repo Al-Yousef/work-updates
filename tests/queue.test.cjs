@@ -5,6 +5,36 @@ const fs = require('node:fs');
 const os = require('node:os');
 const path = require('node:path');
 const { Queue, now } = require('../src/queue.cjs');
+test('owners and urgency survive reload without changing completion fingerprints', (t) => {
+  const q = model(t);
+  q.action('sample-chat', 'owner:Reviewer');
+  q.action('sample-chat', 'priority:urgent');
+  const fresh = new Queue(q.directory);
+  fresh.setFeed(q.feed);
+  assert.equal(fresh.get('sample-chat').label, 'Waiting on Reviewer');
+  assert.equal(fresh.get('sample-chat').urgent, true);
+  assert.equal(fresh.get('sample-chat').fingerprint, 'sample-chat:pass-one');
+  fresh.action('sample-chat', 'status:needs');
+  assert.equal(fresh.get('sample-chat').label, 'Waiting on you');
+  fresh.action('sample-chat', 'status:auto');
+  assert.equal(fresh.get('sample-chat').label, 'Ready to review');
+});
+test('a grouped chat surfaces its waiting-on-you source before a newer finished source', (t) => {
+  const q = model(t);
+  q.feed.threads.push({
+    ...q.feed.threads[0],
+    id: 'needs-chat',
+    taskTitle: 'Approve the draft',
+    body: 'Still blocked on your approval.',
+    status: 'blocked',
+    updatedAt: now() - 30,
+  });
+  q.group({ title: 'Launch', ids: ['sample-chat', 'needs-chat'] });
+  const card = q.cards()[0];
+  assert.equal(card.title, 'Approve the draft');
+  assert.equal(card.waitingOn.kind, 'you');
+  assert.equal(card.label, 'Waiting on you · blocked');
+});
 test('groups preserve source chats, can be edited and undone without losing queued tasks', (t) => {
   const q = model(t);
   q.feed.threads.push({

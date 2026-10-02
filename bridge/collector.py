@@ -17,7 +17,7 @@ TAIL_CACHE = {}
 SOURCE_CACHE = {}
 TASK_TITLE_VERSION = 3
 TASK_VERBS = r'(?:fix|update|build|add|remove|check|review|compare|test|verify|find|locate|search|research|apply|access|request|implement|move|rename|investigate|organize|create|design|publish|rewrite|draft|send|upload|download|install|develop|plan|finish|complete|adjust|change|improve|resolve|repair|rebuild)'
-NEEDS_PATTERN = r'\b(need your|needs your|waiting on you|waiting for you|(?:requires?|awaiting|waiting for) your approval|please (send|provide|upload|confirm))\b'
+NEEDS_PATTERN = r'\b(need your|needs your|waiting on you|waiting for you|(?:requires?|awaiting|waiting for|blocked on|blocked by|blocked until) your\b|please (send|provide|upload|confirm))\b'
 
 
 def timestamp(value):
@@ -127,10 +127,10 @@ def determine_status(text, phase, activity, age):
         return 'updated', 'Updated'
     # Explicit phrases only. These describe what the chat reported, not an independent audit.
     head = text[:1800].lower()
+    if re.search(NEEDS_PATTERN, head):
+        return 'needs', 'Waiting on you'
     if re.search(r'\b(remaining blocker|still blocked|blocked by|blocked until|blocked on)\b', head):
         return 'blocked', 'Blocked'
-    if re.search(NEEDS_PATTERN, head):
-        return 'needs', 'Needs you'
     if not re.search(r'\b(no longer|not|isn.t) (awaiting|waiting)\b', head) and re.search(r'\b(awaiting|waiting for|waiting on)\b', head):
         return 'waiting', 'Waiting'
     return 'updated', 'Updated'

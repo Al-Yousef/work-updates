@@ -147,12 +147,15 @@ if ($('corner-toggle')) {
   function render() {
     if (!state || mode || pressed) return;
     $('demo-label').hidden = !state.demo;
-    $('counts').textContent = state.ready + ' to review · ' + state.working + ' working';
-    $('queued-count').textContent = state.queued ? state.queued : '';
-    for (const tab of document.querySelectorAll('[data-view]')) {
-      if (tab.dataset.view === view) tab.setAttribute('aria-current', 'page');
-      else tab.removeAttribute('aria-current');
-    }
+    $('counts').textContent =
+      view === 'updates' ? state.ready + ' ready · ' + state.working + ' working' : '';
+    $('view-menu').replaceChildren(
+      node(
+        'span',
+        view === 'done' ? 'Finished tasks' : view === 'queued' ? 'Queued tasks' : 'From your chats',
+      ),
+      node('span', '⌄', { class: 'chevron' }),
+    );
     let cards =
       view === 'done'
         ? state.done
@@ -206,7 +209,9 @@ if ($('corner-toggle')) {
       title.className = 'card-title';
       const badge = node('span', card.label);
       badge.className = 'badge ' + card.status;
+      if (card.waitingOn?.kind === 'you') badge.classList.add('needs');
       copy.append(meta, title, badge);
+      if (card.urgent) copy.append(node('span', 'Urgent', { class: 'badge urgent' }));
       replacement.append(copy);
       surface.append(replacement);
       if (view !== 'done' && card.status !== 'queued') {
@@ -222,6 +227,7 @@ if ($('corner-toggle')) {
       }
       queue.append(wrap);
     }
+    if (!showAll && cards.length >= 3) queue.lastElementChild?.classList.add('stack-end');
     if (!cards.length) {
       const empty = node('div');
       empty.className = 'empty';
@@ -500,8 +506,8 @@ if ($('corner-toggle')) {
       status.id = 'manual-status';
       for (const [value, label] of [
         ['auto', 'Automatic'],
-        ['needs', 'Needs you'],
-        ['waiting', 'Waiting'],
+        ['needs', 'Waiting on you'],
+        ['waiting', 'Waiting · set who below'],
         ['blocked', 'Blocked'],
         ['working', 'Working'],
       ])
@@ -521,9 +527,61 @@ if ($('corner-toggle')) {
         node('label', 'Your status', { class: 'field-label', for: 'manual-status' }),
         status,
       );
+      const ownerRow = node('form', '', { class: 'compose-row' });
+      const owner = node('input', '', {
+        id: 'waiting-owner',
+        placeholder: 'Person or team',
+        'aria-label': 'Who are you waiting on?',
+        maxlength: '80',
+      });
+      owner.value = card.waitingOn?.kind === 'other' ? card.waitingOn.name : '';
+      const ownerSave = button('Set', () => {}, '');
+      ownerSave.type = 'submit';
+      ownerRow.append(owner, ownerSave);
+      ownerRow.addEventListener('submit', async (event) => {
+        event.preventDefault();
+        try {
+          const next = await call('action', { id: card.id, action: 'owner:' + owner.value.trim() });
+          state = { ...state, ...next, settings: state.settings };
+          status.value = 'waiting';
+          updateDetails();
+          notice('Waiting owner saved · Undo is available');
+        } catch (error) {
+          notice(error.message, true);
+        }
+      });
+      panel.append(
+        node('label', 'Waiting on someone else?', { class: 'field-label', for: 'waiting-owner' }),
+        ownerRow,
+      );
       const group = state.groups?.find((g) => g.id === card.id);
       if (group)
         panel.append(button('Edit chat group', () => groupEditor(group.id), 'detail-link'));
+    }
+    if (details && !card.done) {
+      const priority = node('select', '', { id: 'task-priority', 'aria-label': 'Priority' });
+      for (const [value, label] of [
+        ['auto', 'Automatic'],
+        ['urgent', 'Urgent'],
+        ['normal', 'Normal'],
+      ])
+        priority.append(node('option', label, { value }));
+      priority.value = card.priority || 'auto';
+      priority.addEventListener('change', async () => {
+        try {
+          const next = await call('action', { id: card.id, action: 'priority:' + priority.value });
+          state = { ...state, ...next, settings: state.settings };
+          updateDetails();
+          notice('Priority updated · Undo is available');
+        } catch (error) {
+          notice(error.message, true);
+        }
+      });
+      panel.append(
+        node('label', 'Priority', { class: 'field-label', for: 'task-priority' }),
+        priority,
+        node('p', 'Waiting on you stays first, followed by urgent tasks.', { class: 'field-note' }),
+      );
     }
     if (!details) panel.append(button('Details & chat', () => showCard(id, true), 'detail-link'));
     else {
@@ -1123,12 +1181,30 @@ if ($('corner-toggle')) {
     showAll = !showAll;
     render();
   });
-  for (const tab of document.querySelectorAll('[data-view]'))
-    tab.addEventListener('click', () => {
-      view = tab.dataset.view;
-      showAll = false;
-      render();
-    });
+  $('view-menu').addEventListener('click', () => {
+    const panel = openPanel('views', 'Your queue');
+    panel.append(node('h2', 'Choose a view', { class: 'panel-title' }));
+    for (const [key, label] of [
+      ['updates', 'Updates'],
+      ['queued', 'Queued'],
+      ['done', 'Done'],
+    ]) {
+      const choice = button(
+        label + (key === 'queued' && state.queued ? ' · ' + state.queued : ''),
+        () => {
+          view = key;
+          showAll = false;
+          showHidden = false;
+          closePanel();
+        },
+        'view-choice',
+      );
+      choice.dataset.view = key;
+      if (view === key) choice.setAttribute('aria-current', 'page');
+      panel.append(choice);
+    }
+    panel.append(button('＋ New task', () => showComposer(), 'view-choice'));
+  });
   api.subscribe((value) => {
     state = value;
     if (value.openComposer) showComposer();

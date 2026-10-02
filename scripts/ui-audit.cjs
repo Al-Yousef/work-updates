@@ -26,6 +26,10 @@ async function waitFor(page, fn) {
       timeout: 30000,
     });
     const page = await app.firstWindow();
+    const chooseView = async (view) => {
+      await page.getByRole('button', { name: 'Choose task view', exact: true }).click();
+      await page.locator('[data-view=' + view + ']').click();
+    };
     const nativeScreenshot = page.screenshot.bind(page);
     page.screenshot = async (options) => {
       await page.waitForTimeout(200);
@@ -35,6 +39,21 @@ async function waitFor(page, fn) {
     page.on('pageerror', (error) => errors.push(error.message));
     await page.locator('.card-trigger').first().waitFor();
     check((await page.locator('.card-trigger').count()) === 3, 'Synthetic queue loads');
+    check((await page.locator('.tabs').count()) === 0, 'Lock-screen surface has no tab bar');
+    check(
+      (await page.locator('.card-trigger').first().getAttribute('aria-label')).includes(
+        'Waiting on you',
+      ),
+      'Waiting on you appears first',
+    );
+    check(
+      (await page.locator('.card-trigger').nth(1).locator('.urgent').count()) === 1,
+      'Urgent task follows waiting on you',
+    );
+    check(
+      (await page.locator('.card-trigger').nth(2).innerText()).includes('Waiting on reviewer'),
+      'External wait identifies the owner',
+    );
     check(
       (await page.evaluate(() => typeof require)) === 'undefined',
       'Renderer has no Node access',
@@ -93,7 +112,7 @@ async function waitFor(page, fn) {
     );
     await page.screenshot({ path: path.join(output, 'composer.png') });
     await page.getByRole('button', { name: 'Queue task', exact: true }).click();
-    await page.locator('[data-view=queued]').click();
+    await chooseView('queued');
     await page.locator('.card-trigger').first().click();
     await page.getByRole('button', { name: 'Start chat', exact: true }).click();
     await waitFor(page, () =>
@@ -110,16 +129,16 @@ async function waitFor(page, fn) {
     );
     check(true, 'Mini chat receives follow-up completion');
     await page.keyboard.press('Escape');
-    await page.getByRole('button', { name: 'Updates', exact: true }).click();
+    await chooseView('updates');
     await page
       .getByRole('button', { name: 'Check the compact task queue, Ready to review' })
       .click();
     await page.getByRole('button', { name: '✓ Mark done', exact: true }).click();
-    await page.getByRole('button', { name: 'Done', exact: true }).click();
+    await chooseView('done');
     await page.locator('.card-trigger').first().click();
     await page.getByRole('button', { name: 'Reopen task', exact: true }).click();
     check(true, 'Done list reopens local task');
-    await page.getByRole('button', { name: 'Updates', exact: true }).click();
+    await chooseView('updates');
     await app.evaluate(({ BrowserWindow }) => BrowserWindow.getAllWindows()[0].setSize(390, 590));
     await page.emulateMedia({ reducedMotion: 'reduce' });
     await page.screenshot({ path: path.join(output, 'compact.png') });
@@ -136,7 +155,7 @@ async function waitFor(page, fn) {
     );
     await page.keyboard.press('Escape');
     await page.evaluate(() => (document.body.style.zoom = '1'));
-    await app.evaluate(({ BrowserWindow }) => BrowserWindow.getAllWindows()[0].setSize(484, 780));
+    await app.evaluate(({ BrowserWindow }) => BrowserWindow.getAllWindows()[0].setSize(484, 720));
     await page
       .getByRole('button', { name: 'Review launch notes, Ready to review' })
       .click({ button: 'right' });
@@ -147,6 +166,17 @@ async function waitFor(page, fn) {
     check(
       (await page.locator('#chat-input').count()) === 1,
       'Manual status keeps the conversation open',
+    );
+    await page.locator('#waiting-owner').fill('Design team');
+    await page.getByRole('button', { name: 'Set', exact: true }).click();
+    await waitFor(page, () =>
+      document.querySelector('#panel-status').textContent.includes('Waiting on Design team'),
+    );
+    check(true, 'Waiting owner is displayed after saving');
+    await page.locator('#task-priority').selectOption('urgent');
+    check(
+      (await page.locator('#chat-input').count()) === 1,
+      'Priority editing preserves mini chat',
     );
     await page.locator('#manual-status').selectOption('auto');
     await waitFor(page, () =>

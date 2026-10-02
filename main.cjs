@@ -100,7 +100,13 @@ function attention(event) {
   if (
     !queue.state.settings.attention ||
     window?.isVisible() ||
-    !['needs', 'blocked'].includes(event.status) ||
+    !['needs', 'blocked', 'waiting', 'ready'].includes(event.status) ||
+    !(
+      event.status === 'needs' ||
+      event.urgent ||
+      (event.status === 'blocked' && event.waitingOn?.kind !== 'other') ||
+      event.waitingOn?.kind === 'you'
+    ) ||
     notified.has(event.key)
   )
     return;
@@ -108,7 +114,12 @@ function attention(event) {
   if (notified.size > 500) notified.delete(notified.values().next().value);
   if (Notification.isSupported()) {
     const notification = new Notification({
-      title: event.status === 'needs' ? 'A task needs you' : 'A task is blocked',
+      title:
+        event.status === 'needs' || event.waitingOn?.kind === 'you'
+          ? 'Waiting on you'
+          : event.urgent
+            ? 'Urgent task'
+            : 'A task is blocked',
       body: event.title,
     });
     notification.on('click', () => show());
@@ -118,7 +129,12 @@ function attention(event) {
 controller.on('attention', attention);
 let previousObserved, previousRemote;
 function incoming(cards, previous) {
-  const next = new Map(cards.map((c) => [c.id, c.fingerprint + ':' + c.status]));
+  const next = new Map(
+    cards.map((c) => [
+      c.id,
+      c.fingerprint + ':' + c.status + ':' + c.urgent + ':' + JSON.stringify(c.waitingOn),
+    ]),
+  );
   if (previous)
     for (const card of cards)
       if (
@@ -131,6 +147,8 @@ function incoming(cards, previous) {
           key: card.id + ':' + next.get(card.id),
           title: card.title,
           status: card.status,
+          urgent: card.urgent,
+          waitingOn: card.waitingOn,
         });
   return next;
 }
@@ -382,7 +400,7 @@ app.whenReady().then(async () => {
     area = screen.getPrimaryDisplay().workArea;
   window = new BrowserWindow({
     width: 484,
-    height: Math.min(780, area.height - 32),
+    height: Math.min(720, area.height - 32),
     minWidth: 390,
     minHeight: 590,
     x: Math.max(area.x, Math.min(saved.x ?? area.x + area.width - 508, area.x + area.width - 484)),
