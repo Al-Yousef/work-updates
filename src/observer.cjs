@@ -11,7 +11,7 @@ function startObserver(root, options, onFeed) {
   let binary, args;
   if (options.helper) {
     binary = options.helper;
-    args = ['--root', root];
+    args = ['--root', root, '--parent-pid', String(process.pid)];
   } else {
     const bundled = path.join(
       os.homedir(),
@@ -25,7 +25,15 @@ function startObserver(root, options, onFeed) {
     binary =
       options.python ||
       (fs.existsSync(bundled) ? bundled : process.platform === 'win32' ? 'python' : 'python3');
-    args = ['-X', 'utf8', path.join(__dirname, '..', 'bridge', 'collector.py'), '--root', root];
+    args = [
+      '-X',
+      'utf8',
+      path.join(__dirname, '..', 'bridge', 'collector.py'),
+      '--root',
+      root,
+      '--parent-pid',
+      String(process.pid),
+    ];
   }
   const child = spawn(binary, args, { windowsHide: true, stdio: 'ignore' });
   let stopped = false,
@@ -68,6 +76,7 @@ function startObserver(root, options, onFeed) {
   const timer = setInterval(poll, 700);
   poll();
   return {
+    pid: child.pid,
     request(ids) {
       atomic(path.join(root, 'data', 'details-request.json'), { threadIds: ids });
       fs.writeFileSync(path.join(root, 'data', 'refresh.flag'), 'context');

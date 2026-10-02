@@ -669,3 +669,29 @@ textarea#task-prompt {
 .composer-actions button {
   width: 100%;
 }
+.full {
+  width: 100%;
+  margin-top: 12px;
+}
+.group-list {
+  max-height: 260px;
+  overflow: auto;
+  margin: 12px 0;
+}
+.group-choice {
+  display: flex;
+  align-items: center;
+  gap: 12px;
+  min-height: 44px;
+  padding: 10px 0;
+  color: var(--soft);
+}
+.group-choice input {
+  width: 18px;
+  height: 18px;
+  flex-shrink: 0;
+  accent-color: #8fab99;
+}
+.group-choice span {
+  overflow-wrap: anywhere;
+}

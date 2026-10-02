@@ -188,7 +188,18 @@ function configure() {
 async function perform(method, input = {}) {
   if (
     remotePeer &&
-    ['create', 'start', 'action', 'undo', 'send', 'stop', 'respond', 'details'].includes(method)
+    [
+      'create',
+      'start',
+      'action',
+      'undo',
+      'send',
+      'stop',
+      'respond',
+      'details',
+      'group',
+      'refresh',
+    ].includes(method)
   )
     return remotePeer.command(method, input);
   if (method === 'state') return snapshot();
@@ -200,6 +211,11 @@ async function perform(method, input = {}) {
   if (method === 'start') return controller.start(input.id);
   if (method === 'action') return queue.action(input.id, input.action);
   if (method === 'undo') return queue.undoLast();
+  if (method === 'group') return queue.group(input);
+  if (method === 'refresh') {
+    observer?.request([]);
+    return {};
+  }
   if (method === 'send') return controller.send(input.id, input.text, input.sourceId);
   if (method === 'stop') return controller.stop(input.id);
   if (method === 'respond') return controller.respond(input.id, input.decision, input.answers);
@@ -403,6 +419,8 @@ app.whenReady().then(async () => {
     'stop',
     'respond',
     'details',
+    'group',
+    'refresh',
     'open',
     'project',
     'settings',
@@ -459,6 +477,18 @@ app.whenReady().then(async () => {
   }
   configure();
   await window.loadURL('work-updates://app/index.html');
+  const runtime = () =>
+    atomic(path.join(dataDir, 'runtime.json'), {
+      appPid: process.pid,
+      collectorPid: observer?.pid || null,
+      chats: queue.feed.monitoredCount || 0,
+      feedCollectedAt: queue.feed.collectedAt || 0,
+      visible: window.isVisible(),
+      updatedAt: now(),
+    });
+  runtime();
+  const runtimeTimer = setInterval(runtime, 3000);
+  runtimeTimer.unref();
   if (!demo && safeStorage.isEncryptionAvailable()) {
     const { HostPeer } = require('./src/peer.cjs');
     hostPeer = new HostPeer({

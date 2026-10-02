@@ -5,6 +5,39 @@ const fs = require('node:fs');
 const os = require('node:os');
 const path = require('node:path');
 const { Queue, now } = require('../src/queue.cjs');
+test('groups preserve source chats, can be edited and undone without losing queued tasks', (t) => {
+  const q = model(t);
+  q.feed.threads.push({
+    ...q.feed.threads[0],
+    id: 'second-chat',
+    title: 'Desktop app',
+    taskTitle: 'Check installer',
+  });
+  q.group({ title: 'Release planning', ids: ['sample-chat', 'second-chat'] });
+  const group = q.state.groups[0];
+  assert.equal(q.cards().length, 1);
+  assert.equal(q.get(group.id).sources.length, 2);
+  const task = q.create({ title: 'Follow-up checks', prompt: 'Verify the sample release.' });
+  q.group({ id: group.id, title: 'Launch review', ids: group.threads });
+  assert.equal(q.state.groups[0].title, 'Launch review');
+  q.undoLast();
+  assert.equal(q.state.groups[0].title, 'Release planning');
+  assert.ok(q.get(task.id));
+  q.group({ id: group.id, action: 'remove' });
+  assert.equal(q.cards().length, 3);
+  assert.throws(() => q.group({ title: 'Invalid', ids: ['sample-chat', 'unknown'] }));
+});
+test('manual chat status is reversible and returning to Automatic follows the feed', (t) => {
+  const q = model(t);
+  q.action('sample-chat', 'status:waiting');
+  assert.equal(q.get('sample-chat').status, 'waiting');
+  q.feed.threads[0].status = 'blocked';
+  assert.equal(q.get('sample-chat').status, 'waiting');
+  q.action('sample-chat', 'status:auto');
+  assert.equal(q.get('sample-chat').status, 'blocked');
+  q.undoLast();
+  assert.equal(q.get('sample-chat').status, 'waiting');
+});
 function model(t) {
   const dir = fs.mkdtempSync(path.join(os.tmpdir(), 'work-updates-test-'));
   t.after(() => fs.rmSync(dir, { recursive: true, force: true }));

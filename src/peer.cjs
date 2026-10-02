@@ -17,6 +17,8 @@ const allowed = new Set([
   'stop',
   'respond',
   'details',
+  'group',
+  'refresh',
 ]);
 const fingerprint = (raw) => crypto.createHash('sha256').update(raw).digest('hex');
 function privateAddress(host) {

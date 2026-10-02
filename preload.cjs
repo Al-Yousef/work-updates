@@ -10,6 +10,8 @@ const methods = [
   'stop',
   'respond',
   'details',
+  'group',
+  'refresh',
   'open',
   'project',
   'settings',

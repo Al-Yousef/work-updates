@@ -384,6 +384,15 @@ def main():
     except (OSError, ValueError):
         pass
     parent_alive = lambda: True
+    if args.parent_pid and os.name != 'nt':
+        def parent_alive():
+            try:
+                os.kill(args.parent_pid, 0)
+                return True
+            except ProcessLookupError:
+                return False
+            except PermissionError:
+                return True
     if args.parent_pid and os.name == 'nt':
         import ctypes
         from ctypes import wintypes

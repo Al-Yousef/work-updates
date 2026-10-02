@@ -11,6 +11,7 @@ A small native desktop queue for work spread across Codex chats. See what needs 
 - **New task** saves a title and prompt in Queued. Start chat creates one dedicated Codex conversation. Queue & start chat is also available.
 - **Done** closes the actual task. Reviewed only acknowledges an update. Undo and Reopen are available; neither action archives the source chat.
 - **Corner launcher** puts a small W button at the bottom-left of the desktop. Click to toggle the queue; right-click to create a task. It can be enabled in Settings.
+- **Chat groups** combine related source chats into a connected notification stack. Manage, edit, ungroup or undo a group from Settings. In details, Your status can override an existing chat's automatic label with Waiting, Blocked, Needs you or Working.
 
 The app updates existing local Codex chats every few seconds. Tasks started in Work Updates stream their replies and approval requests immediately. Ordinary commentary stays quiet; a hidden window can notify when a task is blocked or needs input. A finished agent pass appears as Ready to review, and only you decide when its task is Done.
 

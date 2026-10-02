@@ -492,6 +492,36 @@ if ($('corner-toggle')) {
     actions.id = 'primary-actions';
     panel.append(actions);
     primaryActions(card, actions);
+    if (details && card.kind === 'observed' && !card.done) {
+      const status = node('select', '', { 'aria-label': 'Your status' });
+      status.id = 'manual-status';
+      for (const [value, label] of [
+        ['auto', 'Automatic'],
+        ['needs', 'Needs you'],
+        ['waiting', 'Waiting'],
+        ['blocked', 'Blocked'],
+        ['working', 'Working'],
+      ])
+        status.append(node('option', label, { value }));
+      status.value = card.manual || 'auto';
+      status.addEventListener('change', async () => {
+        try {
+          const next = await call('action', { id: card.id, action: 'status:' + status.value });
+          state = { ...state, ...next, settings: state.settings };
+          updateDetails();
+          notice('Status updated · Undo is available');
+        } catch (error) {
+          notice(error.message, true);
+        }
+      });
+      panel.append(
+        node('label', 'Your status', { class: 'field-label', for: 'manual-status' }),
+        status,
+      );
+      const group = state.groups?.find((g) => g.id === card.id);
+      if (group)
+        panel.append(button('Edit chat group', () => groupEditor(group.id), 'detail-link'));
+    }
     if (!details) panel.append(button('Details & chat', () => showCard(id, true), 'detail-link'));
     else {
       lastMessages = '';
@@ -764,6 +794,115 @@ if ($('corner-toggle')) {
     });
     queueMicrotask(() => (advanced ? prompt.focus() : title.focus()));
   }
+  function groupEditor(id) {
+    const group = state.groups?.find((g) => g.id === id);
+    openPanel('group', group ? 'Edit chat group' : 'Group chats');
+    const panel = $('panel'),
+      title = node('input', '', { id: 'group-title', maxlength: '100', placeholder: 'Group name' }),
+      search = node('input', '', {
+        'aria-label': 'Search chats',
+        placeholder: 'Search source chat names…',
+      }),
+      chosen = new Set(group?.threads || []),
+      list = node('div'),
+      count = node('p');
+    title.value = group?.title || '';
+    list.className = 'group-list';
+    count.className = 'field-note';
+    const sources = [
+      ...new Map(
+        state.cards
+          .filter((c) => c.kind === 'observed')
+          .flatMap((c) => c.sources)
+          .map((s) => [s.id, s]),
+      ).values(),
+    ].sort((a, b) => a.title.localeCompare(b.title));
+    panel.append(
+      node('h2', group ? 'Keep related chats together' : 'One card for related chats', {
+        class: 'panel-title',
+      }),
+      node('label', 'Group name', { class: 'field-label', for: 'group-title' }),
+      title,
+      node('p', 'Selected chats move into this group. Each keeps its original conversation.', {
+        class: 'field-note',
+      }),
+      search,
+      count,
+      list,
+    );
+    function draw() {
+      list.replaceChildren();
+      count.textContent = chosen.size + ' selected';
+      const visible = sources
+        .filter((s) => s.title.toLowerCase().includes(search.value.toLowerCase()))
+        .sort((a, b) => Number(chosen.has(b.id)) - Number(chosen.has(a.id)))
+        .slice(0, 50);
+      for (const source of visible) {
+        const label = node('label'),
+          box = node('input', '', { type: 'checkbox' });
+        label.className = 'group-choice';
+        box.checked = chosen.has(source.id);
+        box.addEventListener('change', () => {
+          box.checked ? chosen.add(source.id) : chosen.delete(source.id);
+          count.textContent = chosen.size + ' selected';
+        });
+        label.append(box, node('span', source.title));
+        list.append(label);
+      }
+      if (!visible.length) list.append(node('p', 'No matching chats', { class: 'field-note' }));
+    }
+    search.addEventListener('input', draw);
+    draw();
+    panel.append(
+      button(
+        'Save group',
+        async () => {
+          try {
+            const next = await call('group', { id, ids: [...chosen], title: title.value });
+            state = { ...state, ...next, settings: state.settings };
+            closePanel();
+            notice('Group saved · Undo is available');
+          } catch (error) {
+            notice(error.message, true);
+          }
+        },
+        'primary full',
+      ),
+    );
+    if (group)
+      panel.append(
+        button(
+          'Ungroup these chats',
+          async () => {
+            try {
+              const next = await call('group', { id, action: 'remove' });
+              state = { ...state, ...next, settings: state.settings };
+              closePanel();
+              notice('Chats ungrouped · Undo is available');
+            } catch (error) {
+              notice(error.message, true);
+            }
+          },
+          'quiet full',
+        ),
+      );
+  }
+  function groupManager() {
+    openPanel('groups', 'Chat groups');
+    const panel = $('panel');
+    panel.append(
+      node('h2', 'Keep related work together', { class: 'panel-title' }),
+      button('Create a group', () => groupEditor(), 'primary full'),
+    );
+    for (const group of state.groups || [])
+      panel.append(
+        button(
+          group.title + ' · ' + group.threads.length + ' chats',
+          () => groupEditor(group.id),
+          'settings-button',
+        ),
+      );
+  }
   function showSettings() {
     openPanel('settings', 'Queue settings');
     const panel = $('panel');
@@ -805,6 +944,21 @@ if ($('corner-toggle')) {
           showHidden = false;
           view = 'updates';
           closePanel();
+        },
+        'settings-button',
+      ),
+    );
+    panel.append(
+      button('Manage chat groups', groupManager, 'settings-button'),
+      button(
+        'Refresh chats',
+        async () => {
+          try {
+            await call('refresh');
+            notice('Refreshing local chats');
+          } catch (error) {
+            notice(error.message, true);
+          }
         },
         'settings-button',
       ),

@@ -110,6 +110,7 @@ class Queue extends EventEmitter {
         title: taskTitle,
         chatName: name,
         kind: 'observed',
+        manual: state.manual || 'auto',
         status,
         label: labels[status] || display.label || 'Updated',
         at: display.notificationAt || display.updatedAt,
@@ -195,6 +196,7 @@ class Queue extends EventEmitter {
       collectedAt: this.feed.collectedAt,
       health: this.health,
       settings: this.state.settings,
+      groups: this.state.groups,
       queued: cards.filter((c) => c.status === 'queued' && !c.done).length,
       ready: cards.filter((c) => c.readyForReview && !c.done && !c.reviewed && !c.snoozed).length,
       working: cards.filter((c) => c.status === 'working' && !c.done).length,
@@ -248,7 +250,12 @@ class Queue extends EventEmitter {
       key: card.taskKey,
       done: this.state.done[card.taskKey] ? structuredClone(this.state.done[card.taskKey]) : null,
     };
-    if (action === 'done') {
+    if (action.startsWith('status:')) {
+      const manual = action.slice(7);
+      if (task || !['auto', 'needs', 'waiting', 'blocked', 'working'].includes(manual))
+        throw new Error('Choose a supported chat status.');
+      this.state.cards[id] = { ...this.cardState(id), manual };
+    } else if (action === 'done') {
       this.state.done[card.taskKey] = {
         ...card,
         done: true,
@@ -292,6 +299,12 @@ class Queue extends EventEmitter {
     return this.snapshot();
   }
   undoLast() {
+    if (this.undo?.groups) {
+      this.state.groups = this.undo.groups;
+      this.undo = null;
+      this.save();
+      return this.snapshot();
+    }
     if (this.undo) {
       const before = this.undo,
         task = this.state.tasks.find((t) => t.id === before.id);
@@ -330,6 +343,36 @@ class Queue extends EventEmitter {
     msg.text = value.slice(0, 16000);
     task.messages = task.messages.slice(-60);
     this.save();
+  }
+  group(input) {
+    const before = structuredClone(this.state.groups),
+      existing = this.state.groups.find((g) => g.id === input.id);
+    if (input.action === 'remove') {
+      if (!existing) throw new Error('This group no longer exists.');
+      this.state.groups = this.state.groups.filter((g) => g.id !== input.id);
+    } else {
+      const title = text(input.title, 100);
+      if (!title || !Array.isArray(input.ids))
+        throw new Error('Name the group and select at least two chats.');
+      const ids = [...new Set(input.ids)];
+      const owned = new Set(this.state.tasks.map((t) => t.threadId));
+      if (
+        ids.length < 2 ||
+        ids.length > 80 ||
+        ids.some((id) => owned.has(id) || !this.feed.threads.some((t) => t.id === id))
+      )
+        throw new Error('Select between 2 and 80 existing Codex chats.');
+      if (input.id && !existing) throw new Error('This group no longer exists.');
+      const group = { id: existing?.id || 'group:' + crypto.randomUUID(), title, threads: ids };
+      this.state.groups = this.state.groups
+        .filter((g) => g.id !== group.id)
+        .map((g) => ({ ...g, threads: g.threads.filter((id) => !ids.includes(id)) }))
+        .filter((g) => g.threads.length > 1);
+      this.state.groups.push(group);
+    }
+    this.undo = { groups: before };
+    this.save();
+    return this.snapshot();
   }
 }
 module.exports = { Queue, atomic, read, now, text, hash };

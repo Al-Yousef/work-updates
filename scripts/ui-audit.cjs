@@ -134,6 +134,45 @@ async function waitFor(page, fn) {
       await page.locator('#queue-task').isVisible(),
       'Composer primary remains reachable at zoom',
     );
+    await page.keyboard.press('Escape');
+    await page.evaluate(() => (document.body.style.zoom = '1'));
+    await app.evaluate(({ BrowserWindow }) => BrowserWindow.getAllWindows()[0].setSize(484, 780));
+    await page
+      .getByRole('button', { name: 'Review launch notes, Ready to review' })
+      .click({ button: 'right' });
+    await page.locator('#manual-status').selectOption('waiting');
+    await waitFor(page, () =>
+      document.querySelector('#panel-status').textContent.includes('Waiting'),
+    );
+    check(
+      (await page.locator('#chat-input').count()) === 1,
+      'Manual status keeps the conversation open',
+    );
+    await page.locator('#manual-status').selectOption('auto');
+    await waitFor(page, () =>
+      document.querySelector('#panel-status').textContent.includes('Ready to review'),
+    );
+    await page.keyboard.press('Escape');
+    await page.getByRole('button', { name: 'Settings', exact: true }).click();
+    await page.getByRole('button', { name: 'Manage chat groups', exact: true }).click();
+    await page.getByRole('button', { name: 'Create a group', exact: true }).click();
+    await page.locator('#group-title').fill('Launch review');
+    await page.getByLabel('Launch planning', { exact: true }).check();
+    await page.getByLabel('Desktop app', { exact: true }).check();
+    await page.getByRole('button', { name: 'Save group', exact: true }).click();
+    await page.locator('.grouped').waitFor();
+    check(true, 'Grouping produces a connected notification stack');
+    await page.getByRole('button', { name: 'Settings', exact: true }).click();
+    await page.getByRole('button', { name: 'Manage chat groups', exact: true }).click();
+    await page.getByRole('button', { name: 'Launch review · 2 chats', exact: true }).click();
+    await page.getByRole('button', { name: 'Ungroup these chats', exact: true }).click();
+    check(
+      (await page.locator('.grouped').count()) === 0,
+      'Ungroup restores independent source cards',
+    );
+    await page.getByRole('button', { name: 'Undo', exact: true }).click();
+    await page.locator('.grouped').waitFor();
+    check(true, 'Undo restores only the grouping');
     check(errors.length === 0, 'No renderer exceptions');
     process.stdout.write(
       'Native desktop UI: ' + checks + ' checks passed. Synthetic screenshots: artifacts/ui\n',
