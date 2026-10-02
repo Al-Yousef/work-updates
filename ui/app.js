@@ -260,13 +260,16 @@ if ($('corner-toggle')) {
       ? 'Show fewer'
       : 'Show all ' + cards.length + (view === 'done' ? ' completed tasks' : ' updates');
     $('undo').hidden = !state.undo;
-    $('connection').textContent = !state.health.ok
-      ? 'Sync paused · ' + state.health.message
-      : state.remote
+    $('connection').textContent =
+      state.remote && !state.connected
         ? state.connection
-        : state.collectedAt
-          ? 'Watching ' + state.monitoredCount + ' local chats · Up to date'
-          : 'Reading local Codex chats…';
+        : !state.health.ok
+          ? 'Sync paused · ' + state.health.message
+          : state.remote
+            ? state.connection
+            : state.collectedAt
+              ? 'Watching ' + state.monitoredCount + ' local chats · Up to date'
+              : 'Reading local Codex chats…';
   }
   function openPanel(next, title) {
     returnFocus = document.activeElement;
@@ -541,6 +544,7 @@ if ($('corner-toggle')) {
       (s) => s.id === ($('source-chat')?.value || card.sources[0]?.id),
     );
     const unavailable =
+      (state.remote && !state.connected) ||
       card.done ||
       !card.sources.length ||
       (card.kind === 'observed' && source?.lifecycle === 'working') ||
@@ -669,7 +673,13 @@ if ($('corner-toggle')) {
       }
       lastRequests = requestSignature;
     }
-    const actionSignature = JSON.stringify([card.status, card.done, card.threadId, state.remote]);
+    const actionSignature = JSON.stringify([
+      card.status,
+      card.done,
+      card.threadId,
+      state.remote,
+      state.connected,
+    ]);
     if (actionSignature !== lastActions) {
       primaryActions(card, $('primary-actions'));
       lastActions = actionSignature;
@@ -907,6 +917,7 @@ if ($('corner-toggle')) {
     openPanel('settings', 'Queue settings');
     const panel = $('panel');
     panel.append(node('h2', 'Make it yours', { class: 'panel-title' }));
+    panel.append(node('p', 'Work Updates ' + state.version, { class: 'field-note' }));
     for (const [key, label] of [
       ['pin', 'Keep above other windows'],
       ['corner', 'Show corner launcher'],

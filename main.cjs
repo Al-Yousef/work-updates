@@ -72,6 +72,8 @@ function snapshot() {
     demo,
     platform: process.platform,
     remote: !!remotePeer,
+    connected: !!remotePeer?.connected,
+    version: app.getVersion(),
     hosting: !!hostPeer?.server,
     connection: remotePeer?.connected
       ? 'Connected to desktop'
