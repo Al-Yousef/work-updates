@@ -296,6 +296,94 @@ body.panel-open .clock-area {
   object-fit: cover;
   box-shadow: 0 1px 4px #00153730;
 }
+.status-indicator {
+  --status-color: #b8c6d7;
+  --status-plate: #667489;
+  position: relative;
+  display: grid;
+  place-items: center;
+  width: 40px;
+  height: 40px;
+  flex-shrink: 0;
+  isolation: isolate;
+}
+.status-indicator .app-icon {
+  width: 30px;
+  height: 30px;
+  border-radius: 8px;
+  background: var(--status-plate);
+  box-shadow: none;
+}
+.status-indicator::before,
+.status-indicator::after {
+  content: '';
+  position: absolute;
+  inset: 0;
+  border-radius: 50%;
+  border: 2px solid var(--status-color);
+  pointer-events: none;
+}
+.status-indicator::before {
+  opacity: 0.7;
+}
+.status-indicator::after {
+  display: none;
+}
+.status-indicator[data-status='working'] {
+  --status-color: #76caff;
+  --status-plate: #346e9d;
+}
+.status-indicator[data-status='needs'] {
+  --status-color: #ffd16b;
+  --status-plate: #9a7434;
+}
+.status-indicator[data-status='blocked'] {
+  --status-color: #ff9990;
+  --status-plate: #a15a58;
+}
+.status-indicator[data-status='ready'] {
+  --status-color: #7de4aa;
+  --status-plate: #377c62;
+}
+.status-indicator[data-status='waiting'] {
+  --status-color: #c9b5ff;
+  --status-plate: #736099;
+}
+.status-indicator[data-status='working']::before {
+  border-color: #ffffff26;
+}
+.status-indicator[data-status='working']::after {
+  display: block;
+  border-color: var(--status-color) var(--status-color) transparent transparent;
+  animation: status-turn 1.3s linear infinite;
+}
+.status-symbol {
+  position: absolute;
+  right: -1px;
+  bottom: -1px;
+  width: 14px;
+  height: 14px;
+  display: grid;
+  place-items: center;
+  border-radius: 50%;
+  background: var(--status-color);
+  color: #142332;
+  font-size: 12px;
+  line-height: 1;
+  font-weight: 800;
+  box-shadow: 0 0 0 2px #28435a;
+}
+.status-indicator[data-status='working'] .status-symbol {
+  display: none;
+}
+html:not(.revealed) .status-indicator::after {
+  animation-play-state: paused;
+}
+@keyframes status-turn {
+  to {
+    transform: rotate(360deg);
+  }
+}
 .card-copy {
   display: block;
   flex: 1;
@@ -478,10 +566,19 @@ footer button {
 .notification-preview .panel-top {
   gap: 9px;
 }
-.notification-preview .app-icon {
+.notification-preview .status-indicator {
+  width: 32px;
+  height: 32px;
+}
+.notification-preview .status-indicator .app-icon {
   width: 24px;
   height: 24px;
   border-radius: 6px;
+}
+.notification-preview .status-symbol {
+  width: 12px;
+  height: 12px;
+  font-size: 10px;
 }
 .notification-app {
   flex: 1;
@@ -886,6 +983,15 @@ textarea#task-prompt {
     height: 30px;
     border-radius: 8px;
   }
+  .card-header .status-indicator {
+    width: 36px;
+    height: 36px;
+  }
+  .card-header .status-indicator .app-icon {
+    width: 26px;
+    height: 26px;
+    border-radius: 7px;
+  }
   .meta {
     font-size: 11px;
   }
@@ -906,5 +1012,8 @@ textarea#task-prompt {
   }
   .card-trigger.pressing {
     transform: none;
+  }
+  .status-indicator::after {
+    animation: none !important;
   }
 }

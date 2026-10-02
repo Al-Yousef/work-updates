@@ -379,6 +379,121 @@ async function waitFor(page, fn) {
       app.evaluate(({ BrowserWindow }, value) => {
         BrowserWindow.getAllWindows()[0].webContents.send('work-updates:state', value);
       }, fixture);
+    const statusFixture = (status, label, owner = 'none') => {
+      const fixture = structuredClone(baseline);
+      fixture.cards = [
+        {
+          ...fixture.cards[0],
+          status,
+          label,
+          done: false,
+          waitingOn: { kind: owner },
+          urgent: false,
+        },
+      ];
+      return fixture;
+    };
+    await page.emulateMedia({ reducedMotion: 'no-preference' });
+    await pushFixture(statusFixture('working', 'Working'));
+    await page.locator('#queue .status-indicator[data-status=working]').waitFor();
+    const ringBefore = await page
+      .locator('#queue .status-indicator')
+      .evaluate((e) => getComputedStyle(e, '::after').transform);
+    await page.waitForTimeout(180);
+    check(
+      await page
+        .locator('#queue .status-indicator')
+        .evaluate(
+          (e, before) =>
+            getComputedStyle(e, '::after').animationName === 'status-turn' &&
+            getComputedStyle(e, '::after').transform !== before,
+          ringBefore,
+        ),
+      'The working ring actually rotates around the stationary W',
+    );
+    await page.locator('.card-trigger').click();
+    await page.locator('#panel .status-indicator[data-status=working]').waitFor();
+    await page.evaluate(() => {
+      window.auditStatusIcon = document.querySelector('#panel .status-indicator');
+    });
+    await pushFixture(statusFixture('ready', 'Ready to review'));
+    await page.locator('#panel .status-indicator[data-status=ready]').waitFor();
+    check(
+      await page.evaluate(
+        () =>
+          document.querySelector('#panel .status-indicator') === window.auditStatusIcon &&
+          getComputedStyle(window.auditStatusIcon, '::after').animationName === 'none',
+      ),
+      'A live completion updates the same expanded W and stops its ring',
+    );
+    await page.keyboard.press('Escape');
+    const statusCues = [];
+    for (const [status, label, owner] of [
+      ['needs', 'Waiting on you', 'you'],
+      ['blocked', 'Blocked', 'none'],
+      ['ready', 'Ready to review', 'none'],
+      ['waiting', 'Waiting on reviewer', 'other'],
+      ['unknown', 'Check status', 'unknown'],
+    ]) {
+      await pushFixture(statusFixture(status, label, owner));
+      await page.locator('#queue .status-indicator[data-status=' + status + ']').waitFor();
+      statusCues.push(
+        await page.locator('.card-trigger').evaluate((e) => ({
+          color: getComputedStyle(e.querySelector('.status-indicator'))
+            .getPropertyValue('--status-color')
+            .trim(),
+          symbol: e.querySelector('.status-symbol').textContent,
+          label: e.getAttribute('aria-label'),
+        })),
+      );
+    }
+    check(
+      new Set(statusCues.map((c) => c.color)).size === 5 &&
+        new Set(statusCues.map((c) => c.symbol)).size === 5 &&
+        statusCues.some((c) => c.label.includes('Waiting on you')) &&
+        statusCues.some((c) => c.label.includes('Waiting on reviewer')),
+      'Status colors have distinct symbols and preserve accessible waiting-owner labels',
+    );
+    await pushFixture(statusFixture('starting', 'Starting chat'));
+    await page.locator('#queue .status-indicator[data-status=working]').waitFor();
+    await page.emulateMedia({ reducedMotion: 'reduce' });
+    check(
+      await page
+        .locator('#queue .status-indicator')
+        .evaluate(
+          (e) =>
+            getComputedStyle(e, '::after').animationName === 'none' &&
+            getComputedStyle(e, '::after').display === 'block',
+        ),
+      'Reduced motion keeps the working arc visible without rotation',
+    );
+    await page.emulateMedia({ reducedMotion: 'reduce' });
+    await pushFixture(baseline);
+    const cuePreview = structuredClone(baseline);
+    cuePreview.ready = 0;
+    cuePreview.working = 1;
+    cuePreview.cards = [
+      ['needs', 'Approve the compact layout', 'Waiting on you', 'you'],
+      ['working', 'Build the chat watcher', 'Working', 'none'],
+      ['blocked', 'Fix the installer error', 'Blocked', 'none'],
+    ].map(([status, title, label, owner], index) => ({
+      ...structuredClone(baseline.cards[0]),
+      id: 'status-preview-' + index,
+      taskKey: 'status-preview-' + index,
+      status,
+      title,
+      label,
+      done: false,
+      waitingOn: { kind: owner },
+      urgent: false,
+      sources: baseline.cards[0].sources.slice(0, 1),
+    }));
+    await pushFixture(cuePreview);
+    await page
+      .getByRole('button', { name: 'Build the chat watcher, Working', exact: true })
+      .waitFor();
+    await page.locator('#queue').screenshot({ path: path.join(output, 'status-indicators.png') });
+    await pushFixture(baseline);
     const longTitle =
       'Review the desktop notification behavior with every local Codex chat and a much longer task title';
     const longFixture = structuredClone(baseline);

@@ -5,6 +5,41 @@ const APP_ICON =
   encodeURIComponent(
     '<svg xmlns="http://www.w3.org/2000/svg" width="512" height="512" viewBox="0 0 512 512"><rect width="512" height="512" rx="116" fill="#5c7a6a"/><path fill="#f1f4f7" d="M96 136H150L185 296L229 155H283L325 296L361 136H416L359 376H304L257 221L207 376H152Z"/></svg>',
   );
+const STATUS_ICON = APP_ICON.replace(
+  encodeURIComponent('fill="#5c7a6a"'),
+  encodeURIComponent('fill="none"'),
+);
+const STATUS_SYMBOLS = {
+  working: '',
+  needs: '!',
+  blocked: '−',
+  ready: '•',
+  waiting: 'Ⅱ',
+  queued: '…',
+  unknown: '?',
+  done: '✓',
+};
+function statusTone(card) {
+  if (card.done || card.status === 'done') return 'done';
+  if (['working', 'starting'].includes(card.status)) return 'working';
+  if (card.status === 'needs' || card.waitingOn?.kind === 'you') return 'needs';
+  return Object.hasOwn(STATUS_SYMBOLS, card.status) ? card.status : 'unknown';
+}
+function updateStatusIcon(icon, card) {
+  const tone = statusTone(card);
+  if (icon.dataset.status === tone) return;
+  icon.dataset.status = tone;
+  icon.querySelector('.status-symbol').textContent = STATUS_SYMBOLS[tone];
+}
+function statusIcon(card) {
+  const icon = node('span', '', { class: 'status-indicator', 'aria-hidden': 'true' });
+  icon.append(
+    node('img', '', { src: STATUS_ICON, alt: '', class: 'app-icon' }),
+    node('span', '', { class: 'status-symbol' }),
+  );
+  updateStatusIcon(icon, card);
+  return icon;
+}
 async function call(method, data) {
   const result = await api[method](data);
   if (!result.ok) throw Object.assign(new Error(result.error), { taskId: result.taskId });
@@ -263,9 +298,7 @@ if ($('corner-toggle')) {
         );
         replacement.setAttribute('aria-label', card.title + ', ' + card.label);
         const header = node('span', '', { class: 'card-header' });
-        const icon = node('img', '', { src: APP_ICON, alt: '', 'aria-hidden': 'true' });
-        icon.className = 'app-icon';
-        header.append(icon);
+        header.append(statusIcon(card));
         const copy = node('span');
         copy.className = 'card-copy';
         const meta = node('span');
@@ -732,7 +765,7 @@ if ($('corner-toggle')) {
     status.textContent = card.label + (card.urgent ? ' · Urgent' : '');
     const close = top.lastElementChild;
     top.replaceChildren(
-      node('img', '', { src: APP_ICON, alt: '', class: 'app-icon' }),
+      statusIcon(card),
       node('span', 'Work Updates', { class: 'notification-app' }),
       node('span', ago(card.doneAt || card.at), { id: 'notification-age', class: 'card-age' }),
       close,
@@ -814,6 +847,7 @@ if ($('corner-toggle')) {
     const source = selectedSource(card);
     $('panel').querySelector('.panel-title').textContent = source?.taskTitle || card.title;
     $('panel-status').textContent = card.label + (card.urgent ? ' · Urgent' : '');
+    updateStatusIcon($('panel').querySelector('.status-indicator'), card);
     $('notification-age').textContent = ago(card.doneAt || card.at);
     if ($('task-error')) $('task-error').textContent = card.error || '';
     const complete = $('complete-task');

@@ -6,6 +6,8 @@ Work Updates is a desktop queue for deciding what needs attention across many Co
 
 A card shows the task title, status, and age. Chat names and message text live in details. A completed agent pass is **Ready to review**; only the user can mark the actual task **Done**. **Reviewed** acknowledges an update without closing its task. **Snooze 1h** postpones the notification.
 
+The left W is also the status indicator, in both the queue and expanded notification. A blue ring rotates around the stationary W only while Starting or Working. Waiting on you uses amber and an exclamation mark, Blocked uses coral and a stop bar, Ready to review uses green and a dot, and an external wait uses lavender and pause bars. Queued, unknown and Done use muted gray with ellipsis, question mark and check respectively. Keep the existing text label and explicit waiting owner, so color never carries the meaning alone. Urgency stays a separate text priority. Use a 40px indicator (36px on narrow screens), without changing the notification surface or adding colored status pills. Reduced motion freezes the working arc; hidden windows pause it. Watcher refreshes must update the expanded indicator without rebuilding or restarting an unchanged ring. These are Work Updates status cues within the existing Apple notification layout, not claimed Apple notification behavior.
+
 ## Controls
 
 | Input                      | Card                             | New-task button                       |
