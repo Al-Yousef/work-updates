@@ -229,7 +229,9 @@ function refreshCorner() {
   const control = corner;
   control.once('ready-to-show', () => {
     if (corner !== control || control.isDestroyed()) return;
+    if (launcherInfo.target === 'weather') control.setAlwaysOnTop(true, 'pop-up-menu');
     control.showInactive();
+    if (launcherInfo.target === 'weather') control.moveTop();
     windowController.enable(true);
     publish();
   });
@@ -249,6 +251,12 @@ function cornerWindow() {
     if (++ticks % 100 === 0) refreshCorner();
     if (!corner || corner.isDestroyed() || window.isDestroyed()) return;
     windowController.tick(screen.getCursorScreenPoint());
+    if (launcherInfo.target === 'weather' && windowController.onCorner) {
+      // Explorer can raise the taskbar after this window was shown. Keep the
+      // transparent click target in front while its region is being used.
+      if (!corner.isAlwaysOnTop()) corner.setAlwaysOnTop(true, 'pop-up-menu');
+      corner.moveTop();
+    }
   }, 100);
   cornerTimer.unref();
 }

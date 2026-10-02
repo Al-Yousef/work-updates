@@ -1,5 +1,6 @@
 'use strict';
 const { _electron: electron } = require('playwright');
+const { execFileSync } = require('node:child_process');
 const fs = require('node:fs'),
   path = require('node:path'),
   os = require('node:os'),
@@ -409,9 +410,76 @@ async function waitFor(page, fn) {
     await page.emulateMedia({ reducedMotion: 'no-preference' });
     await page.waitForTimeout(300);
     await page.evaluate(() => window.workUpdates.settings({ pin: false }));
+    let weatherHit;
+    if (process.platform === 'win32') {
+      const target = await app.evaluate(async ({ BrowserWindow, screen }) => {
+        const control = BrowserWindow.getAllWindows().find((w) =>
+          w.webContents.getURL().endsWith('/weather.html'),
+        );
+        const bounds = control.getBounds();
+        const handle = control.getNativeWindowHandle();
+        globalThis.taskbarChallenger = new BrowserWindow({
+          ...bounds,
+          frame: false,
+          transparent: true,
+          backgroundColor: '#00000001',
+          show: false,
+          focusable: false,
+          hasShadow: false,
+          skipTaskbar: true,
+          webPreferences: { sandbox: true, contextIsolation: true, nodeIntegration: false },
+        });
+        await taskbarChallenger.loadURL(
+          'data:text/html,<html style="background:rgba(0,0,0,0.004)"></html>',
+        );
+        taskbarChallenger.setAlwaysOnTop(true, 'pop-up-menu');
+        taskbarChallenger.showInactive();
+        taskbarChallenger.moveTop();
+        await taskbarChallenger.webContents.capturePage();
+        const challengerHandle = taskbarChallenger.getNativeWindowHandle();
+        return {
+          point: screen.dipToScreenPoint({ x: bounds.x + 70, y: bounds.y + 24 }),
+          handle: (handle.length === 8
+            ? handle.readBigUInt64LE()
+            : BigInt(handle.readUInt32LE())
+          ).toString(),
+          challengerHandle: (challengerHandle.length === 8
+            ? challengerHandle.readBigUInt64LE()
+            : BigInt(challengerHandle.readUInt32LE())
+          ).toString(),
+        };
+      });
+      weatherHit = (expectedHandle = target.handle) =>
+        execFileSync(
+          'powershell.exe',
+          [
+            '-NoProfile',
+            '-NonInteractive',
+            '-ExecutionPolicy',
+            'Bypass',
+            '-File',
+            path.join(root, 'tests', 'native-weather-hit.ps1'),
+            '-X',
+            String(target.point.x),
+            '-Y',
+            String(target.point.y),
+            '-ExpectedHandle',
+            expectedHandle,
+          ],
+          { windowsHide: true, encoding: 'utf8', timeout: 12000 },
+        ).trim() === 'true';
+      check(
+        weatherHit(target.challengerHandle),
+        'A competing native surface initially receives the weather hit',
+      );
+    }
     await cursor(atCorner);
     await waitForMode('peek');
     await page.waitForTimeout(300);
+    if (weatherHit) {
+      check(weatherHit(), 'Hover restores the actual Windows click target above the taskbar');
+      await app.evaluate(() => globalThis.taskbarChallenger.destroy());
+    }
     const unpinnedPeek = await app.evaluate(({ BrowserWindow }) => {
       const w = BrowserWindow.getAllWindows().find((w) =>
         w.webContents.getURL().endsWith('/index.html'),
