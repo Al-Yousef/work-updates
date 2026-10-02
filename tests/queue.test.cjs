@@ -6,6 +6,61 @@ const os = require('node:os');
 const path = require('node:path');
 const { Queue, now } = require('../src/queue.cjs');
 const { taskSource } = require('../src/task-source.cjs');
+test('a detached task follows recorded chat status and context while preserving local review and snooze', (t) => {
+  const q = model(t);
+  q.feed.threads[0].contextLoaded = true;
+  const task = q.create({ title: 'Old task', prompt: 'Old request' });
+  q.patch(task.id, { threadId: 'sample-chat', status: 'blocked', error: 'Codex disconnected' });
+  q.message(task.id, 'assistant', 'Old local context');
+  const observed = q.feed.threads[0];
+  Object.assign(observed, {
+    status: 'working',
+    lifecycle: 'working',
+    body: 'Current recorded work.',
+    summary: 'Current recorded work.',
+    taskTitle: 'Current request',
+    turnId: 'source-pass',
+  });
+  let card = q.get(task.id);
+  assert.equal(card.status, 'working');
+  assert.equal(card.summary, observed.summary);
+  assert.equal(card.sources[0].body, observed.body);
+  assert.equal(card.kind, 'observed');
+  assert.equal(card.messages.length, 0);
+  assert.equal(card.taskKey, task.id);
+  assert.ok(card.replyError.includes('connection closed'));
+  assert.equal(task.error, 'Codex disconnected');
+  Object.assign(observed, { status: 'ready', lifecycle: 'completed', readyForReview: true });
+  q.action(task.id, 'reviewed');
+  assert.equal(q.get(task.id).reviewed, true);
+  observed.fingerprint = 'next-pass';
+  assert.equal(q.get(task.id).reviewed, false);
+  q.action(task.id, 'snooze');
+  assert.equal(q.get(task.id).snoozed, true);
+  q.ownedThreads.add('sample-chat');
+  q.patch(task.id, { status: 'working', error: '' });
+  card = q.get(task.id);
+  assert.equal(card.kind, 'local');
+  assert.equal(card.taskKey, task.id);
+  assert.equal(card.status, 'working');
+});
+test('a completed pass needing a user decision survives restart and can be marked Done', (t) => {
+  const q = model(t),
+    task = q.create({ title: 'Choose a draft', prompt: 'Ask for a choice.' });
+  q.patch(task.id, {
+    threadId: 'owned-chat',
+    status: 'needs',
+    turnId: 'pass',
+    notificationVersion: 'pass',
+    completedAt: now(),
+  });
+  q.save();
+  const reloaded = new Queue(q.directory);
+  assert.equal(reloaded.get(task.id).status, 'needs');
+  assert.equal(reloaded.get(task.id).readyForReview, true);
+  reloaded.action(task.id, 'done');
+  assert.equal(reloaded.get(task.id).done, true);
+});
 test('owners and urgency survive reload without changing completion fingerprints', (t) => {
   const q = model(t);
   q.action('sample-chat', 'owner:Reviewer');

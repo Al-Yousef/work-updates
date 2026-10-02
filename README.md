@@ -20,6 +20,8 @@ A small native desktop queue for work spread across Codex chats. See what needs 
 
 The app updates existing local Codex chats every few seconds. Tasks started in Work Updates stream their replies and approval requests immediately. Ordinary commentary stays quiet; a hidden window can notify when a task is blocked or needs input. A finished agent pass appears as Ready to review, and only you decide when its task is Done.
 
+If Work Updates loses ownership of a chat, its card follows the latest recorded Codex status and context. A reply connection error stays in details rather than replacing that chat's status. A rejected writer lock does not create an adopted task or a sent-message entry. A completed pass asking for a decision stays Waiting on you; it can be marked Done because the agent has finished, while live approval requests remain protected.
+
 For connection problems, right-click the tray icon and choose **Open diagnostic logs**. The private `logs/app.log` records timestamps, the Codex process ID, request method and duration, RPC error codes, timeouts, process exits and bounded server stderr. It rotates at 512 KiB with two backups. RPC request/reply bodies are excluded; error output can contain private paths or identifiers, so inspect it before sharing. Logs stay on your desktop and are never uploaded automatically. `runtime.json` separately records the current writer connection and watcher state. An active-writer error means another Codex process owns that chat for replies, even when its latest pass is idle; use Open chat to reply there.
 
 ![Task details, conversation and quick actions](assets/actions.png)

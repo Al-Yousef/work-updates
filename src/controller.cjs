@@ -22,10 +22,16 @@ class Controller extends EventEmitter {
     super();
     this.queue = queue;
     this.client = client;
-    client.on('created', ({ taskId, threadId }) => queue.patch(taskId, { threadId }));
+    client.on('created', ({ taskId, threadId }) => {
+      queue.ownedThreads.add(threadId);
+      queue.patch(taskId, { threadId });
+    });
+    client.on('loaded', ({ threadId }) => queue.ownedThreads.add(threadId));
     client.on('notification', (m) => this.event(m));
     client.on('request', (m) => this.request(m));
     client.on('disconnected', (details) => {
+      for (const threadId of details?.threadIds || queue.ownedThreads)
+        queue.ownedThreads.delete(threadId);
       for (const t of queue.state.tasks)
         if (
           ['working', 'starting', 'needs'].includes(t.status) &&
@@ -61,6 +67,7 @@ class Controller extends EventEmitter {
       q.patch(id, { status: 'starting', cwd, error: '', device: executionDevice() });
       if (!task.messages.some((m) => m.role === 'user')) q.message(id, 'user', task.prompt);
       const result = await this.client.start(task, cwd);
+      q.ownedThreads.add(result.threadId);
       q.patch(id, { ...result, ...(task.status === 'starting' ? { status: 'working' } : {}) });
       return task;
     } catch (error) {
@@ -83,33 +90,40 @@ class Controller extends EventEmitter {
     if (task && !task.threadId) throw new Error('Start this task before sending a message.');
     if ([...q.approvals.values()].some((r) => r.taskId === id))
       throw new Error('Answer the pending request before sending another message.');
-    if (!task) {
-      if (!source) throw new Error('Choose a source chat.');
-      if (source.lifecycle === 'working')
-        throw new Error('This chat is working in Codex. Open it there to steer the current pass.');
-      task = q.create({ title: card.title, prompt: value, cwd: source.cwd });
-      q.patch(task.id, { threadId: source.id, adopted: true });
-      if (source.body) q.message(task.id, 'assistant', source.body);
-    }
-    if (q.busy.has(task.id)) throw new Error('A message is already being sent.');
-    q.busy.add(task.id);
+    if (!source) throw new Error('Choose a source chat.');
+    if (!q.ownedThreads.has(source.id) && source.lifecycle === 'working')
+      throw new Error('This chat is working in Codex. Open it there to steer the current pass.');
+    if (task && q.busy.has(task.id)) throw new Error('A message is already being sent.');
     q.busy.add(lock);
-    q.message(task.id, 'user', value);
-    q.patch(task.id, {
-      status: 'working',
-      error: '',
-      reviewedVersion: '',
-      device: executionDevice(),
-    });
+    if (task) q.busy.add(task.id);
     try {
+      // Resume must succeed before an observed chat becomes an app-owned task.
+      // A writer-lock rejection leaves its update and context intact.
+      if (this.client.prepare) await this.client.prepare(source.id);
+      if (!task) {
+        task = q.create({ title: card.title, prompt: value, cwd: source.cwd });
+        q.patch(task.id, { threadId: source.id, adopted: true });
+        if (source.body) q.message(task.id, 'assistant', source.body);
+      }
+      q.ownedThreads.add(source.id);
+      q.busy.add(task.id);
+      q.message(task.id, 'user', value);
+      q.patch(task.id, {
+        status: 'working',
+        error: '',
+        reviewedVersion: '',
+        device: executionDevice(),
+      });
       await this.client.send(task.threadId, value);
       return { taskId: task.id };
     } catch (error) {
-      q.patch(task.id, { status: 'blocked', error: error.message });
-      error.taskId = task.id;
+      if (task) {
+        q.patch(task.id, { status: 'blocked', error: error.message });
+        error.taskId = task.id;
+      }
       throw error;
     } finally {
-      q.busy.delete(task.id);
+      if (task) q.busy.delete(task.id);
       q.busy.delete(lock);
     }
   }
@@ -122,7 +136,13 @@ class Controller extends EventEmitter {
     p ||= {};
     const q = this.queue,
       task = this.taskFor(p.threadId);
+    if (method === 'thread/closed') {
+      q.ownedThreads.delete(p.threadId);
+      q.save();
+      return;
+    }
     if (!task) return;
+    q.ownedThreads.add(p.threadId);
     if (method === 'turn/started')
       q.patch(task.id, { status: 'working', turnId: p.turn.id, error: '' });
     else if (method === 'item/agentMessage/delta') {

@@ -1165,6 +1165,10 @@ async function waitFor(page, fn) {
       (await app.evaluate(() => globalThis.auditReplySource)) === replySource,
       'The group reply reaches the same selected chat id',
     );
+    check(
+      (await page.locator('#context-host .body-text').count()) === 0,
+      'Acquiring the selected chat removes its older read-only context instead of duplicating the live conversation',
+    );
     check(errors.length === 0, 'No renderer exceptions');
     process.stdout.write(
       'Native desktop UI: ' + checks + ' checks passed. Synthetic screenshots: artifacts/ui\n',

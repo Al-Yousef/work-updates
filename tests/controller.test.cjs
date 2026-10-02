@@ -35,6 +35,66 @@ test('a lost connection blocks only its affected chats and preserves unrelated a
   assert.equal(q.approvals.has('one'), false);
   assert.equal(q.approvals.has('two'), true);
 });
+test('a refused writer lock creates no adopted task or fake user message', async (t) => {
+  const { q, client, c } = setup(t);
+  q.setFeed({
+    threads: [
+      {
+        id: 'external-chat',
+        title: 'Source chat',
+        taskTitle: 'Review draft',
+        body: 'Draft ready.',
+        status: 'ready',
+        lifecycle: 'completed',
+        fingerprint: 'version',
+        contextLoaded: true,
+      },
+    ],
+  });
+  const card = q.get('external-chat');
+  let sends = 0;
+  client.prepare = async () => {
+    throw new Error('already has an active writer');
+  };
+  client.send = async () => {
+    sends++;
+  };
+  await assert.rejects(c.send(card.id, 'A test reply', undefined, card.taskKey), /active writer/);
+  assert.equal(q.state.tasks.length, 0);
+  assert.equal(q.get(card.id).status, 'ready');
+  assert.equal(q.get(card.id).sources[0].body, 'Draft ready.');
+  assert.equal(q.busy.size, 0);
+  assert.equal(sends, 0);
+});
+test('a detached old task cannot steer a chat that is working in the desktop', async (t) => {
+  const { q, client, c } = setup(t);
+  const task = q.create({ title: 'Old task', prompt: 'Old request' });
+  q.patch(task.id, { threadId: 'external-chat', status: 'blocked', error: 'Codex disconnected' });
+  q.setFeed({
+    threads: [
+      {
+        id: 'external-chat',
+        title: 'Source chat',
+        taskTitle: 'Current request',
+        body: 'Working on the current request.',
+        status: 'working',
+        lifecycle: 'working',
+        fingerprint: 'version',
+        contextLoaded: true,
+      },
+    ],
+  });
+  client.prepare = async () => {
+    throw new Error('Should not resume');
+  };
+  const card = q.get(task.id);
+  await assert.rejects(
+    c.send(card.id, 'A test reply', undefined, card.taskKey),
+    /working in Codex/,
+  );
+  assert.equal(task.messages.length, 0);
+  assert.equal(q.get(task.id).status, 'working');
+});
 test('group reply uses the displayed source and concurrent retries cannot adopt it twice', async (t) => {
   const { q, client, c } = setup(t);
   const records = [

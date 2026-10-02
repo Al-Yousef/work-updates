@@ -59,9 +59,13 @@ class Queue extends EventEmitter {
     this.busy = new Set();
     this.undo = null;
     this.approvals = new Map();
+    this.ownedThreads = new Set();
     // A crash must offer a retry, never create a second chat automatically.
     for (const task of this.state.tasks)
-      if (['starting', 'working', 'needs'].includes(task.status)) {
+      if (
+        ['starting', 'working'].includes(task.status) ||
+        (task.status === 'needs' && !(task.completedAt && task.notificationVersion === task.turnId))
+      ) {
         task.status = 'blocked';
         task.error = 'The app restarted. Reopen this task to continue.';
       }
@@ -165,6 +169,28 @@ class Queue extends EventEmitter {
       if (!used.has(chat.id)) result.push(make(chat.id, chat.title, [chat]));
     for (const task of this.state.tasks) {
       const observed = this.feed.threads.find((s) => s.id === task.threadId);
+      if (
+        observed?.contextLoaded &&
+        !this.ownedThreads.has(task.threadId) &&
+        !this.busy.has(task.id) &&
+        !['queued', 'starting', 'done'].includes(task.status)
+      ) {
+        const card = make(task.id, observed.title, [observed]);
+        result.push({
+          ...card,
+          taskKey: task.id,
+          threadId: task.threadId,
+          messages: [],
+          notificationVersion: observed.fingerprint,
+          replyError: task.error ? 'Reply connection: ' + taskSummary(task) : '',
+          reviewed:
+            task.reviewedVersion === observed.fingerprint ||
+            (!!observed.turnId && task.reviewedVersion === observed.turnId),
+          snoozed: task.snoozedUntil > now(),
+          snoozedUntil: task.snoozedUntil || 0,
+        });
+        continue;
+      }
       const summary = taskSummary(
         task,
         [...this.approvals.values()].find((r) => r.taskId === task.id),
@@ -216,7 +242,9 @@ class Queue extends EventEmitter {
               },
             ]
           : [],
-        readyForReview: task.status === 'ready',
+        readyForReview:
+          task.status === 'ready' ||
+          !!(task.completedAt && task.notificationVersion === task.turnId),
         reviewed: task.reviewedVersion === task.notificationVersion,
         snoozed: task.snoozedUntil > now(),
         done: task.status === 'done',
@@ -274,7 +302,11 @@ class Queue extends EventEmitter {
     const card = this.get(id, expectedTaskKey);
     id = card.id;
     const task = this.state.tasks.find((t) => t.id === id);
-    if (action === 'done' && ['working', 'starting', 'needs'].includes(card.status))
+    if (
+      action === 'done' &&
+      (['working', 'starting'].includes(card.status) ||
+        (card.status === 'needs' && !card.readyForReview))
+    )
       throw new Error('Wait for the current pass to finish, or stop it before marking Done.');
     this.undo = {
       id,
@@ -342,7 +374,7 @@ class Queue extends EventEmitter {
         this.undo.created = restored.id;
       }
     } else if (action === 'reviewed') {
-      if (task) task.reviewedVersion = task.notificationVersion;
+      if (task) task.reviewedVersion = card.notificationVersion || task.notificationVersion;
       else this.state.cards[id] = { ...this.cardState(id), dismissed: card.fingerprint };
     } else if (action === 'snooze') {
       if (task) task.snoozedUntil = now() + 3600;

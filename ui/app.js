@@ -923,10 +923,12 @@ if ($('corner-toggle')) {
       device: source?.device || card.device,
     });
     $('notification-age').textContent = ago(card.doneAt || card.at);
-    if ($('task-error')) $('task-error').textContent = card.error || '';
+    if ($('task-error')) $('task-error').textContent = card.replyError || card.error || '';
     const complete = $('complete-task');
     if (complete) {
-      complete.disabled = ['working', 'starting', 'needs'].includes(card.status);
+      complete.disabled =
+        ['working', 'starting'].includes(card.status) ||
+        (card.status === 'needs' && !card.readyForReview);
       complete.title = complete.disabled
         ? 'Finish or stop the current pass first'
         : 'Finish the task and move it to Done';
@@ -966,8 +968,13 @@ if ($('corner-toggle')) {
       }
       context.querySelectorAll('.body-text').forEach((e, i) => (e.scrollTop = offsets[i] || 0));
       lastContext = contextSignature;
-    } else if (!context.childNodes.length) {
-      context.append(node('div', 'Chat · ' + card.title, { class: 'source-name' }));
+    } else if (card.kind !== 'observed' && lastContext !== 'local:' + card.id) {
+      context.replaceChildren(
+        node('div', 'Chat · ' + (source?.title || card.chatName || card.title), {
+          class: 'source-name',
+        }),
+      );
+      lastContext = 'local:' + card.id;
     }
     const requests = state.approvals.filter((r) => r.taskId === card.id),
       requestSignature = JSON.stringify(requests);

@@ -144,8 +144,20 @@ class Codex extends EventEmitter {
         try {
           if (m.method && m.id !== undefined) this.emit('request', m);
           else if (m.method) {
+            if (m.method === 'thread/closed') {
+              this.loaded.delete(m.params.threadId);
+              this.active.delete(m.params.threadId);
+            }
             if (m.method === 'turn/started') this.active.set(m.params.threadId, m.params.turn.id);
             if (m.method === 'turn/completed') this.active.delete(m.params.threadId);
+            if (['turn/started', 'turn/completed'].includes(m.method))
+              this.log('codex.' + m.method.replace('/', '.'), {
+                pid: proc.pid,
+                threadId: m.params.threadId,
+                turnId: m.params.turn.id,
+                status: m.params.turn.status,
+                message: m.params.turn.error?.message,
+              });
             this.emit('notification', m);
           } else if (m.id !== undefined) {
             const pending = this.waiting.get(m.id);
@@ -299,10 +311,7 @@ class Codex extends EventEmitter {
       this.emit('created', { taskId: task.id, threadId: id });
       await this.call('thread/name/set', { threadId: id, name: task.title });
     } else if (!this.loaded.has(id)) {
-      const resumed = await this.call('thread/resume', { threadId: id });
-      if (resumed.thread?.id !== id)
-        throw new Error('Codex resumed an unexpected chat. No message was sent.');
-      this.loaded.add(id);
+      await this.prepare(id);
     }
     const turn = await this.call('turn/start', {
       threadId: id,
@@ -310,7 +319,7 @@ class Codex extends EventEmitter {
     });
     return { threadId: id, turnId: turn.turn.id };
   }
-  async send(threadId, value) {
+  async prepare(threadId) {
     await this.connect();
     if (!this.loaded.has(threadId)) {
       const resumed = await this.call('thread/resume', { threadId });
@@ -318,6 +327,10 @@ class Codex extends EventEmitter {
         throw new Error('Codex resumed an unexpected chat. No message was sent.');
       this.loaded.add(threadId);
     }
+    this.emit('loaded', { threadId });
+  }
+  async send(threadId, value) {
+    await this.prepare(threadId);
     if (this.active.has(threadId))
       return this.call('turn/steer', {
         threadId,

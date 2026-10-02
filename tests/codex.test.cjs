@@ -166,6 +166,26 @@ test('stderr and malformed protocol lines are bounded and stdout EOF is an actio
   await disconnected;
   assert.equal(client.ready, false);
 });
+test('turn lifecycle is logged without recording streamed conversation text', async () => {
+  const { client, processes, logs } = fixture();
+  await client.connect();
+  processes[0].respond({
+    method: 'turn/started',
+    params: { threadId: 'owned-thread', turn: { id: 'turn', status: 'inProgress' } },
+  });
+  processes[0].respond({
+    method: 'item/agentMessage/delta',
+    params: { threadId: 'owned-thread', itemId: 'message', delta: 'Private streamed text' },
+  });
+  processes[0].respond({
+    method: 'turn/completed',
+    params: { threadId: 'owned-thread', turn: { id: 'turn', status: 'completed' } },
+  });
+  assert.ok(logs.some((l) => l.event === 'codex.turn.started' && l.turnId === 'turn'));
+  assert.ok(logs.some((l) => l.event === 'codex.turn.completed' && l.status === 'completed'));
+  assert.ok(!JSON.stringify(logs).includes('Private streamed text'));
+  client.close();
+});
 test('resuming an unexpected thread never sends to it', async () => {
   const client = new Codex();
   client.connect = async () => {};
