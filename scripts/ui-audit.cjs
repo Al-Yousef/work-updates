@@ -323,7 +323,24 @@ async function waitFor(page, fn) {
     await page.evaluate(() => window.workUpdates.settings({ corner: true }));
     const launcherPage = await launcherReady;
     await launcherPage.locator('#corner-toggle').waitFor();
-    await page.evaluate(() => window.workUpdates.window({ action: 'hide' }));
+    await page.locator('#hide').click();
+    check(
+      (await page.evaluate(() => window.workUpdates.state())).value.windowMode === 'hidden',
+      'The visible X hides the retained queue',
+    );
+    await app.evaluate(({ app }) => app.emit('second-instance', {}, ['Work Updates.exe']));
+    check(
+      (await page.evaluate(() => window.workUpdates.state())).value.windowMode === 'hidden',
+      'Relaunch with the weather shortcut enabled leaves the queue concealed',
+    );
+    await app.evaluate(({ app }) =>
+      app.emit('second-instance', {}, ['Work Updates.exe', '--show']),
+    );
+    check(
+      (await page.evaluate(() => window.workUpdates.state())).value.windowMode === 'pinned',
+      'An explicit show request still opens the retained queue',
+    );
+    await page.locator('#hide').click();
     const launcherBounds = await app.evaluate(({ BrowserWindow }) =>
       BrowserWindow.getAllWindows()
         .find((w) => /\/(corner|weather)\.html$/.test(w.webContents.getURL()))

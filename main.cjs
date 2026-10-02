@@ -171,7 +171,10 @@ function show() {
 function toggle() {
   windowController?.toggle();
 }
-app.on('second-instance', show);
+app.on('second-instance', (_event, argv) => {
+  if (!argv.includes('--hidden') && (!queue.state.settings.corner || argv.includes('--show')))
+    show();
+});
 function icon() {
   return nativeImage
     .createFromPath(path.join(__dirname, 'assets', 'icon.png'))
@@ -461,7 +464,8 @@ app.whenReady().then(async () => {
   });
   const saved = queue.state.settings.bounds || {},
     area = screen.getPrimaryDisplay().workArea,
-    initiallyVisible = !args.includes('--hidden') && !queue.state.settings.corner;
+    initiallyVisible =
+      !args.includes('--hidden') && (!queue.state.settings.corner || args.includes('--show'));
   window = new BrowserWindow({
     width: 484,
     height: Math.min(720, area.height - 32),
