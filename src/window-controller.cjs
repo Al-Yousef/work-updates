@@ -43,10 +43,17 @@ class WindowController {
     this.enteredAt = this.leftAt = null;
     if (!enabled && this.mode === 'peek') this.hide();
   }
+  setFocusable(value) {
+    if (this.window.isFocusable?.() === value) return;
+    this.window.setFocusable(value);
+    // Electron's Windows SetFocusable also calls SetSkipTaskbar(!value).
+    // Preserve our tray-only window when granting keyboard focus.
+    this.window.setSkipTaskbar?.(true);
+  }
   peek() {
     if (!this.enabled || this.mode !== 'hidden' || this.suppressed) return;
     if (this.window.isFocused?.()) this.window.blur();
-    if (this.window.isFocusable?.() !== false) this.window.setFocusable(false);
+    this.setFocusable(false);
     const launcher = this.launcher(),
       area = this.workArea(launcher);
     const bounds = this.window.getBounds();
@@ -61,14 +68,14 @@ class WindowController {
   retain() {
     if (this.mode !== 'peek') return;
     this.setMode('pinned');
-    this.window.setFocusable(true);
+    this.setFocusable(true);
     this.window.focus();
     this.present(true);
     this.remember();
     this.enteredAt = this.leftAt = null;
   }
   show() {
-    this.window.setFocusable(true);
+    this.setFocusable(true);
     if (this.mode === 'hidden') {
       const area = this.workArea(this.floating);
       this.window.setPosition(

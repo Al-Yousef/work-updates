@@ -10,6 +10,9 @@ function fixture() {
       super();
       this.visible = false;
       this.focused = false;
+      this.focusable = false;
+      this.skipTaskbar = true;
+      this.focusChanges = 0;
       this.bounds = { x: 850, y: 40, width: 484, height: 720 };
     }
     isVisible() {
@@ -26,7 +29,16 @@ function fixture() {
       this.visible = true;
     }
     setFocusable(value) {
+      this.focusable = value;
+      this.skipTaskbar = !value;
+      this.focusChanges++;
       if (!value) this.focused = false;
+    }
+    isFocusable() {
+      return this.focusable;
+    }
+    setSkipTaskbar(value) {
+      this.skipTaskbar = value;
     }
     show() {
       this.visible = true;
@@ -66,6 +78,21 @@ test('brief corner transit stays hidden; a hover opens without stealing focus', 
   assert.equal(f.window.visible, true);
   assert.equal(f.window.focused, false);
   assert.equal(f.saved.length, 0);
+});
+
+test('granting focus preserves tray-only taskbar behavior and repeated opens do not reset it', () => {
+  const f = fixture();
+  f.controller.show();
+  assert.equal(f.window.focusable, true);
+  assert.equal(f.window.skipTaskbar, true);
+  f.controller.show();
+  assert.equal(f.window.focusChanges, 1);
+  f.controller.hide();
+  f.enter(500);
+  assert.equal(f.window.focusable, false);
+  f.controller.retain();
+  assert.equal(f.window.focusable, true);
+  assert.equal(f.window.skipTaskbar, true);
 });
 test('crossing the gap and entering the queue keeps a peek open; leaving closes it', () => {
   const f = fixture();

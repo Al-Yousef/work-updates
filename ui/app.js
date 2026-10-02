@@ -1,10 +1,6 @@
 'use strict';
 const api = window.workUpdates;
-const APP_ICON =
-  'data:image/svg+xml;charset=utf-8,' +
-  encodeURIComponent(
-    '<svg xmlns="http://www.w3.org/2000/svg" width="512" height="512" viewBox="0 0 512 512"><rect width="512" height="512" rx="116" fill="#5c7a6a"/><path fill="#f1f4f7" d="M96 136H150L185 296L229 155H283L325 296L361 136H416L359 376H304L257 221L207 376H152Z"/></svg>',
-  );
+const APP_ICON = '/icon.svg';
 const DEVICE_LABELS = {
   pc: 'Windows PC',
   mac: 'Mac',
@@ -305,6 +301,7 @@ if ($('corner-toggle')) {
       swipeId,
       visibleCards.map((card) => [
         view === 'done' ? card.taskKey : card.id,
+        card.taskKey,
         card.title,
         card.chatName,
         notificationSummary(card),
@@ -314,7 +311,6 @@ if ($('corner-toggle')) {
         card.waitingOn?.kind === 'you',
         card.urgent,
         card.sources.length,
-        ago(card.doneAt || card.at),
       ]),
     ]);
     // Window mode and watcher heartbeats don't change the cards. Keep their
@@ -435,6 +431,13 @@ if ($('corner-toggle')) {
           .querySelector('[data-id="' + CSS.escape(focused) + '"]')
           ?.focus({ preventScroll: true });
     }
+    // Elapsed time is presentation, not a new notification. Keep the decoded
+    // icon, working ring and glass surface when only its age changes.
+    visibleCards.forEach((card, index) => {
+      const age = $('queue').children[index]?.querySelector('.card-age');
+      const value = ago(card.doneAt || card.at);
+      if (age && age.textContent !== value) age.textContent = value;
+    });
     $('show-all').hidden = cards.length <= 3;
     $('show-all').textContent = showAll
       ? 'Show fewer'

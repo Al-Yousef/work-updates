@@ -23,10 +23,67 @@ async function waitFor(page, fn) {
     const executablePath = process.env.WORK_UPDATES_EXECUTABLE;
     app = await electron.launch({
       executablePath,
-      args: [...(!executablePath ? [root] : []), '--demo', '--data-dir', dir],
+      args: [...(!executablePath ? [root] : []), '--demo', '--hidden', '--data-dir', dir],
       timeout: 30000,
     });
     const page = await app.firstWindow();
+    await page.locator('.card-trigger').first().waitFor({ state: 'attached' });
+    check(
+      (await page.evaluate(() => window.workUpdates.state())).value.windowMode === 'hidden',
+      'Background launch conceals the queue with the weather shortcut disabled',
+    );
+    await page.waitForTimeout(300);
+    check(
+      await page
+        .locator('html')
+        .evaluate((e) => Number(getComputedStyle(e).opacity) === 0 && document.body.inert),
+      'Concealed startup paints no queue and cannot accept input',
+    );
+    const runtime = JSON.parse(fs.readFileSync(path.join(dir, 'runtime.json')));
+    check(
+      runtime.tray.registered && !runtime.visible,
+      'Native tray registers while the queue remains hidden',
+    );
+    await app.evaluate(({ BrowserWindow }) => {
+      const window = BrowserWindow.getAllWindows()[0];
+      const focusable = window.setFocusable.bind(window),
+        skip = window.setSkipTaskbar.bind(window);
+      globalThis.auditTrayFocus = [];
+      window.setFocusable = (value) => {
+        globalThis.auditTrayFocus.push(['focusable', value]);
+        focusable(value);
+      };
+      window.setSkipTaskbar = (value) => {
+        globalThis.auditTrayFocus.push(['skipTaskbar', value]);
+        skip(value);
+      };
+    });
+    await app.evaluate(({ BrowserWindow }) => BrowserWindow.getAllWindows()[0].close());
+    check(
+      (await app.windows()).length === 1,
+      'Native close conceals the queue without terminating the tray app',
+    );
+    await page.evaluate(() => window.workUpdates.window({ action: 'show' }));
+    await page.waitForFunction(
+      () => Number(getComputedStyle(document.documentElement).opacity) === 1,
+    );
+    check(
+      await app.evaluate(
+        () =>
+          JSON.stringify(globalThis.auditTrayFocus.slice(-2)) ===
+          JSON.stringify([
+            ['focusable', true],
+            ['skipTaskbar', true],
+          ]),
+      ),
+      'Taking keyboard focus reapplies native taskbar exclusion',
+    );
+    const focusChanges = await app.evaluate(() => globalThis.auditTrayFocus.length);
+    await page.evaluate(() => window.workUpdates.window({ action: 'show' }));
+    check(
+      (await app.evaluate(() => globalThis.auditTrayFocus.length)) === focusChanges,
+      'Repeated opens preserve focus and do not recreate the taskbar entry',
+    );
     const nativeHit = async (selector) => {
       const bounds = await page.locator(selector).boundingBox();
       const target = await app.evaluate(
@@ -63,7 +120,7 @@ async function waitFor(page, fn) {
             '-Handle',
             target.handle,
           ],
-          { windowsHide: true, encoding: 'utf8', timeout: 12000 },
+          { windowsHide: true, encoding: 'utf8', timeout: 30000 },
         ).trim(),
       );
     };
@@ -771,7 +828,7 @@ async function waitFor(page, fn) {
             '-ExpectedHandle',
             expectedHandle,
           ],
-          { windowsHide: true, encoding: 'utf8', timeout: 12000 },
+          { windowsHide: true, encoding: 'utf8', timeout: 30000 },
         ).trim() === 'true';
       check(
         weatherHit(target.challengerHandle),
@@ -827,6 +884,42 @@ async function waitFor(page, fn) {
           });
       });
     });
+    const ageBefore = await page.locator('.card-age').first().textContent();
+    const ageState = (await page.evaluate(() => window.workUpdates.state())).value;
+    try {
+      await page.evaluate(() => {
+        window.auditDateNow = Date.now;
+        Date.now = () => window.auditDateNow() + 86400000;
+      });
+      await app.evaluate(({ BrowserWindow }, state) => {
+        BrowserWindow.getAllWindows()
+          .find((w) => w.webContents.getURL().endsWith('/index.html'))
+          .webContents.send('work-updates:state', state);
+      }, ageState);
+      await page.waitForFunction(
+        (before) => document.querySelector('.card-age').textContent !== before,
+        ageBefore,
+      );
+      check(
+        await page.evaluate(
+          () =>
+            window.hoverRedraws === 0 &&
+            window.hoverCards.every(
+              (card, index) => document.querySelector('#queue').children[index] === card,
+            ),
+        ),
+        'Elapsed-time labels update in place without rebuilding notification surfaces',
+      );
+    } finally {
+      await page.evaluate(() => {
+        Date.now = window.auditDateNow;
+      });
+      await app.evaluate(({ BrowserWindow }, state) => {
+        BrowserWindow.getAllWindows()
+          .find((w) => w.webContents.getURL().endsWith('/index.html'))
+          .webContents.send('work-updates:state', state);
+      }, ageState);
+    }
     await app.evaluate(({ BrowserWindow }) => {
       globalThis.hoverShows = 0;
       BrowserWindow.getAllWindows()

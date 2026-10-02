@@ -7,6 +7,7 @@ const {
   Tray,
   Menu,
   nativeImage,
+  nativeTheme,
   Notification,
   shell,
   dialog,
@@ -25,15 +26,28 @@ const { startObserver } = require('./src/observer.cjs');
 const { WindowController } = require('./src/window-controller.cjs');
 const { taskSource } = require('./src/task-source.cjs');
 const taskbar = require('./src/taskbar.cjs');
+const { dataDirectory, startsVisible } = require('./src/background.cjs');
+const { createTray } = require('./src/tray.cjs');
 const args = process.argv;
 function argument(name) {
   const index = args.indexOf(name);
   return index >= 0 ? args[index + 1] : undefined;
 }
 const demo = args.includes('--demo');
-const dataDir = argument('--data-dir')
-  ? path.resolve(argument('--data-dir'))
-  : app.getPath('userData');
+const dataDir = dataDirectory({
+  explicit: argument('--data-dir'),
+  platform: process.platform,
+  packaged: app.isPackaged,
+  executable: process.execPath,
+  fallback: app.getPath('userData'),
+  isFile: (file) => {
+    try {
+      return fs.statSync(file).isFile();
+    } catch {
+      return false;
+    }
+  },
+});
 fs.mkdirSync(dataDir, { recursive: true });
 app.setPath('userData', dataDir);
 app.setAppUserModelId('io.workupdates.desktop');
@@ -97,6 +111,7 @@ function snapshot() {
 }
 function publish() {
   const state = snapshot();
+  tray?.update(state);
   if (window && !window.isDestroyed()) window.webContents.send('work-updates:state', state);
   if (corner && !corner.isDestroyed())
     corner.webContents.send('work-updates:state', { windowMode: state.windowMode });
@@ -174,14 +189,8 @@ function toggle() {
   windowController?.toggle();
 }
 app.on('second-instance', (_event, argv) => {
-  if (!argv.includes('--hidden') && (!queue.state.settings.corner || argv.includes('--show')))
-    show();
+  if (startsVisible(argv)) show();
 });
-function icon() {
-  return nativeImage
-    .createFromPath(path.join(__dirname, 'assets', 'icon.png'))
-    .resize({ width: 32, height: 32 });
-}
 function refreshCorner() {
   const previous = JSON.stringify(launcherInfo);
   const display = screen.getPrimaryDisplay();
@@ -465,6 +474,7 @@ app.whenReady().then(async () => {
       '/weather.css': ['weather.css', 'text/css'],
       '/app.js': ['app.js', 'text/javascript'],
       '/style.css': ['style.css', 'text/css'],
+      '/icon.svg': ['../assets/icon.svg', 'image/svg+xml'],
     };
     const entry = files[url.pathname];
     if (url.hostname !== 'app' || !entry) return new Response('Not found', { status: 404 });
@@ -481,8 +491,7 @@ app.whenReady().then(async () => {
     area = screen.getPrimaryDisplay().workArea,
     queueWidth = 420,
     queueHeight = Math.min(880, area.height - 32),
-    initiallyVisible =
-      !args.includes('--hidden') && (!queue.state.settings.corner || args.includes('--show'));
+    initiallyVisible = startsVisible(args, demo);
   window = new BrowserWindow({
     width: queueWidth,
     height: queueHeight,
@@ -583,23 +592,24 @@ app.whenReady().then(async () => {
         return { ok: false, error: error.message, taskId: error.taskId };
       }
     });
-  tray = new Tray(icon());
-  tray.setToolTip('Work Updates');
-  tray.setContextMenu(
-    Menu.buildFromTemplate([
-      { label: 'Show queue', click: show },
-      { label: 'New task', click: () => perform('window', { action: 'new' }) },
-      { type: 'separator' },
-      {
-        label: 'Quit Work Updates',
-        click: () => {
-          quitting = true;
-          app.quit();
-        },
-      },
-    ]),
-  );
-  tray.on('click', toggle);
+  if (process.platform === 'darwin') app.dock?.hide();
+  tray = createTray({
+    Tray,
+    Menu,
+    nativeImage,
+    nativeTheme,
+    assets: path.join(__dirname, 'assets'),
+    platform: process.platform,
+    demo,
+    show,
+    hide: () => windowController.hide(),
+    create: () => perform('window', { action: 'new' }),
+    quit: () => {
+      quitting = true;
+      app.quit();
+    },
+  });
+  tray.update(snapshot());
   if (argument('--legacy-root')) queue.importLegacy(path.resolve(argument('--legacy-root')));
   if (demo) queue.setFeed(require('./src/demo.cjs').feed());
   else {
@@ -628,7 +638,6 @@ app.whenReady().then(async () => {
   configure();
   for (const event of ['display-added', 'display-removed', 'display-metrics-changed'])
     screen.on(event, refreshCorner);
-  if (!args.includes('--hidden') && queue.state.settings.corner && !corner) show();
   await window.loadURL('work-updates://app/index.html');
   const runtime = () =>
     atomic(path.join(dataDir, 'runtime.json'), {
@@ -640,6 +649,7 @@ app.whenReady().then(async () => {
       windowMode: windowController.mode,
       cornerEnabled: !!queue.state.settings.corner,
       launcher: { ...launcherInfo, active: !!corner && !corner.isDestroyed() },
+      tray: tray.status(),
       updatedAt: now(),
     });
   runtime();
