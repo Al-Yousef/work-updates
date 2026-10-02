@@ -11,7 +11,8 @@ A small native desktop queue for work spread across Codex chats. See what needs 
 - **New task** saves a title and prompt in Queued. Start chat creates one dedicated Codex conversation. Queue & start chat is also available.
 - **From your chats ⌄** switches between Updates, Queued and Done. The main surface stays a simple lock-screen notification stack.
 - **Done** closes the actual task. Reviewed only acknowledges an update. Undo and Reopen are available; neither action archives the source chat.
-- **Corner launcher** puts a small W button at the bottom-left of the desktop. Click to toggle the queue; right-click to create a task. It can be enabled in Settings.
+- **Corner launcher** puts a small W button just above the taskbar at the bottom-left. Hover to peek without taking keyboard focus; click the launcher or queue to keep it open. Drag the top to move it, and click the launcher again to hide. A temporary peek closes when you leave it; a retained window remembers where you moved it. Enable Bottom-left hover launcher in Settings. Right-click the launcher creates a task.
+- **Swipe left** on a notification to reveal Snooze 1h and Reviewed. Neither runs until you choose it.
 - **Waiting on you** stays first, followed by urgent tasks. Other waiting cards name the person or team when explicitly recorded. Missing ownership appears as **Waiting · owner unclear**; details let you set who or override urgency.
 - **Chat groups** combine related source chats into a connected notification stack. Manage, edit, ungroup or undo a group from Settings. In details, Your status can override an existing chat's automatic label.
 

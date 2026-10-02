@@ -22,6 +22,7 @@ const { Queue, read, atomic, now } = require('./src/queue.cjs');
 const { Codex } = require('./src/codex.cjs');
 const { Controller } = require('./src/controller.cjs');
 const { startObserver } = require('./src/observer.cjs');
+const { WindowController } = require('./src/window-controller.cjs');
 const args = process.argv;
 function argument(name) {
   const index = args.indexOf(name);
@@ -48,6 +49,8 @@ let window,
   hostPeer,
   remotePeer,
   remoteState,
+  windowController,
+  cornerTimer,
   quitting = false;
 const queue = new Queue(dataDir);
 const client = demo
@@ -75,6 +78,7 @@ function snapshot() {
     connected: !!remotePeer?.connected,
     version: app.getVersion(),
     hosting: !!hostPeer?.server,
+    windowMode: windowController?.mode || 'hidden',
     connection: remotePeer?.connected
       ? 'Connected to desktop'
       : remotePeer
@@ -85,6 +89,7 @@ function snapshot() {
 function publish() {
   const state = snapshot();
   if (window && !window.isDestroyed()) window.webContents.send('work-updates:state', state);
+  if (corner && !corner.isDestroyed()) corner.webContents.send('work-updates:state', state);
   hostPeer?.broadcast(queue.snapshot());
 }
 let publication;
@@ -153,14 +158,10 @@ function incoming(cards, previous) {
   return next;
 }
 function show() {
-  if (window) {
-    window.show();
-    window.focus();
-  }
+  windowController?.show();
 }
 function toggle() {
-  if (window.isVisible()) window.hide();
-  else show();
+  windowController?.toggle();
 }
 app.on('second-instance', show);
 function icon() {
@@ -169,6 +170,8 @@ function icon() {
     .resize({ width: 32, height: 32 });
 }
 function cornerWindow() {
+  clearInterval(cornerTimer);
+  windowController.enable(!!queue.state.settings.corner);
   if (corner) {
     corner.destroy();
     corner = null;
@@ -176,15 +179,16 @@ function cornerWindow() {
   if (!queue.state.settings.corner) return;
   const area = screen.getPrimaryDisplay().workArea;
   corner = new BrowserWindow({
-    width: 52,
-    height: 52,
+    width: 44,
+    height: 44,
     x: area.x + 12,
-    y: area.y + area.height - 64,
+    y: area.y + area.height - 56,
     frame: false,
     transparent: true,
     alwaysOnTop: true,
     resizable: false,
     skipTaskbar: true,
+    focusable: false,
     webPreferences: {
       preload: path.join(__dirname, 'preload.cjs'),
       contextIsolation: true,
@@ -195,6 +199,12 @@ function cornerWindow() {
   corner.loadURL('work-updates://app/corner.html');
   corner.webContents.on('will-navigate', (e) => e.preventDefault());
   corner.webContents.setWindowOpenHandler(() => ({ action: 'deny' }));
+  corner.webContents.on('did-finish-load', publish);
+  cornerTimer = setInterval(() => {
+    if (!corner || corner.isDestroyed() || window.isDestroyed()) return;
+    windowController.tick(screen.getCursorScreenPoint());
+  }, 100);
+  cornerTimer.unref();
 }
 function configure() {
   window.setAlwaysOnTop(queue.state.settings.pin !== false);
@@ -276,8 +286,10 @@ async function perform(method, input = {}) {
     return snapshot();
   }
   if (method === 'window') {
-    if (input.action === 'hide') window.hide();
+    if (input.action === 'hide') windowController.hide();
     else if (input.action === 'toggle') toggle();
+    else if (input.action === 'corner') windowController.clickCorner();
+    else if (input.action === 'retain') windowController.retain();
     else if (input.action === 'show') show();
     else if (input.action === 'quit') {
       quitting = true;
@@ -397,7 +409,8 @@ app.whenReady().then(async () => {
     });
   });
   const saved = queue.state.settings.bounds || {},
-    area = screen.getPrimaryDisplay().workArea;
+    area = screen.getPrimaryDisplay().workArea,
+    initiallyVisible = !args.includes('--hidden') && !queue.state.settings.corner;
   window = new BrowserWindow({
     width: 484,
     height: Math.min(720, area.height - 32),
@@ -407,7 +420,7 @@ app.whenReady().then(async () => {
     y: Math.max(area.y, Math.min(saved.y ?? area.y + 24, area.y + area.height - 590)),
     frame: false,
     transparent: true,
-    show: !args.includes('--hidden'),
+    show: initiallyVisible,
     backgroundColor: '#00000000',
     title: 'Work Updates',
     icon: path.join(__dirname, 'assets', 'icon.png'),
@@ -419,15 +432,22 @@ app.whenReady().then(async () => {
     },
   });
   window.webContents.setWindowOpenHandler(() => ({ action: 'deny' }));
+  windowController = new WindowController({
+    window,
+    visible: initiallyVisible,
+    launcher: () => corner?.getBounds(),
+    workArea: (bounds) => screen.getDisplayMatching(bounds).workArea,
+    saveBounds: (bounds) => {
+      queue.state.settings.bounds = bounds;
+    },
+  });
+  windowController.onChange = publish;
   window.webContents.on('will-navigate', (e) => e.preventDefault());
   window.on('close', (e) => {
     if (!quitting) {
       e.preventDefault();
-      window.hide();
+      windowController.hide();
     }
-  });
-  window.on('move', () => {
-    queue.state.settings.bounds = window.getBounds();
   });
   for (const method of [
     'state',
@@ -504,6 +524,8 @@ app.whenReady().then(async () => {
       chats: queue.feed.monitoredCount || 0,
       feedCollectedAt: queue.feed.collectedAt || 0,
       visible: window.isVisible(),
+      windowMode: windowController.mode,
+      cornerEnabled: !!queue.state.settings.corner,
       updatedAt: now(),
     });
   runtime();
@@ -568,5 +590,6 @@ app.on('before-quit', () => {
   hostPeer?.close();
   remotePeer?.close();
   globalShortcut.unregisterAll();
+  clearInterval(cornerTimer);
   tray?.destroy();
 });

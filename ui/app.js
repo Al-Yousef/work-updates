@@ -1,5 +1,10 @@
 'use strict';
 const api = window.workUpdates;
+const APP_ICON =
+  'data:image/svg+xml;charset=utf-8,' +
+  encodeURIComponent(
+    '<svg xmlns="http://www.w3.org/2000/svg" width="512" height="512" viewBox="0 0 512 512"><rect width="512" height="512" rx="116" fill="#5c7a6a"/><path fill="#f1f4f7" d="M96 136H150L185 296L229 155H283L325 296L361 136H416L359 376H304L257 221L207 376H152Z"/></svg>',
+  );
 async function call(method, data) {
   const result = await api[method](data);
   if (!result.ok) throw new Error(result.error);
@@ -51,19 +56,35 @@ function clock() {
   });
 }
 if ($('corner-toggle')) {
-  $('corner-toggle').addEventListener('click', () => call('window', { action: 'toggle' }));
+  $('corner-toggle').replaceChildren(node('img', '', { src: APP_ICON, alt: '' }));
+  $('corner-toggle').addEventListener('click', () => call('window', { action: 'corner' }));
   $('corner-toggle').addEventListener('contextmenu', (event) => {
     event.preventDefault();
     call('window', { action: 'new' });
   });
+  api.subscribe((value) => {
+    $('corner-toggle').setAttribute(
+      'aria-label',
+      value.windowMode === 'peek'
+        ? 'Keep Work Updates open'
+        : value.windowMode === 'pinned'
+          ? 'Hide Work Updates queue'
+          : 'Show Work Updates queue',
+    );
+    document.body.classList.toggle('latched', value.windowMode === 'pinned');
+  });
 } else {
+  document.addEventListener('pointerdown', () =>
+    call('window', { action: 'retain' }).catch(() => {}),
+  );
   let state,
     view = 'updates',
     showAll = false,
     mode = null,
     selected = null,
     returnFocus = null,
-    pressed = false;
+    pressed = false,
+    swipeId = null;
   let taskDraft = { title: '', prompt: '', cwd: '' },
     messageDrafts = new Map(),
     answerDrafts = new Map(),
@@ -75,13 +96,14 @@ if ($('corner-toggle')) {
     browseAll = false;
   const currentCard = () =>
     state?.done.find((c) => c.taskKey === selected) || state?.cards.find((c) => c.id === selected);
-  function bindPress(element, click, hold) {
+  function bindPress(element, click, hold, swipe) {
     let timer,
       held = false,
       moved = false,
       origin;
     const stop = () => {
       clearTimeout(timer);
+      element.classList.remove('pressing');
       pressed = false;
     };
     element.addEventListener('pointerdown', (event) => {
@@ -90,9 +112,12 @@ if ($('corner-toggle')) {
       moved = false;
       pressed = true;
       origin = [event.clientX, event.clientY];
+      element.focus({ preventScroll: true });
+      element.classList.add('pressing');
+      if (swipe) element.setPointerCapture(event.pointerId);
       timer = setTimeout(() => {
         held = true;
-        pressed = false;
+        stop();
         hold();
       }, 650);
     });
@@ -112,7 +137,12 @@ if ($('corner-toggle')) {
         stop();
       }
     });
-    element.addEventListener('pointerup', () => {
+    element.addEventListener('pointerup', (event) => {
+      if (swipe && moved && !held && origin) {
+        const dx = event.clientX - origin[0],
+          dy = event.clientY - origin[1];
+        if (Math.abs(dy) < 35 && Math.abs(dx) > 70) swipe(dx);
+      }
       stop();
       setTimeout(() => {
         if (!mode) render();
@@ -174,12 +204,13 @@ if ($('corner-toggle')) {
       focused = document.activeElement?.dataset.id;
     queue.replaceChildren();
     for (const card of showAll ? cards : cards.slice(0, 3)) {
+      const id = view === 'done' ? card.taskKey : card.id;
       const wrap = node('div');
       wrap.className = 'card-wrap' + (card.sources.length > 1 ? ' grouped' : '');
+      wrap.classList.toggle('swiped', swipeId === id);
       const surface = node('div');
       surface.className = 'card';
       wrap.append(surface);
-      const id = view === 'done' ? card.taskKey : card.id;
       const replacement = node('button', '', { type: 'button' });
       replacement.className = 'card-trigger';
       replacement.dataset.id = id;
@@ -187,47 +218,56 @@ if ($('corner-toggle')) {
         replacement,
         () => showCard(id, false),
         () => showCard(id, true),
+        view !== 'done' && card.status !== 'queued'
+          ? (dx) => {
+              swipeId = dx < 0 ? id : null;
+              wrap.classList.toggle('swiped', swipeId === id);
+              surface.querySelector('.swipe-actions').inert = swipeId !== id;
+            }
+          : null,
       );
       replacement.setAttribute('aria-label', card.title + ', ' + card.label);
-      const icon = node('span', 'W');
+      const header = node('span', '', { class: 'card-header' });
+      const icon = node('img', '', { src: APP_ICON, alt: '', 'aria-hidden': 'true' });
       icon.className = 'app-icon';
-      replacement.append(icon);
-      const copy = node('div');
+      header.append(icon);
+      const copy = node('span');
       copy.className = 'card-copy';
-      const meta = node('div');
+      const meta = node('span');
       meta.className = 'meta';
-      meta.append(
-        node(
-          'span',
-          card.kind === 'local'
-            ? 'Your task'
-            : 'Codex · ' + card.sources.length + (card.sources.length === 1 ? ' chat' : ' chats'),
-        ),
-        node('span', ago(card.doneAt || card.at)),
-      );
-      const title = node('div', card.title);
-      title.className = 'card-title';
-      const badge = node('span', card.label);
-      badge.className = 'badge ' + card.status;
+      meta.textContent =
+        'Work Updates' + (card.sources.length > 1 ? ' · ' + card.sources.length + ' chats' : '');
+      const title = node('span', card.title, { class: 'card-title' });
+      const line = node('span', '', { class: 'notification-line' });
+      line.append(meta, node('span', ago(card.doneAt || card.at), { class: 'card-age' }));
+      copy.append(line, title);
+      const statuses = node('span', '', { class: 'card-statuses' });
+      const badge = node('span', card.label, { class: 'badge ' + card.status });
       if (card.waitingOn?.kind === 'you') badge.classList.add('needs');
-      copy.append(meta, title, badge);
-      if (card.urgent) copy.append(node('span', 'Urgent', { class: 'badge urgent' }));
-      replacement.append(copy);
+      statuses.append(badge);
+      if (card.urgent) statuses.append(node('span', ' · Urgent', { class: 'badge urgent' }));
+      copy.append(statuses);
+      header.append(copy);
+      replacement.append(header);
       surface.append(replacement);
       if (view !== 'done' && card.status !== 'queued') {
-        const dismiss = button(showHidden ? '↺' : '×', () =>
+        const tray = node('div', '', { class: 'swipe-actions' });
+        tray.inert = swipeId !== id;
+        const dismiss = button(showHidden ? 'Restore' : 'Reviewed', () =>
           runAction(card.id, showHidden ? 'restore' : 'reviewed'),
         );
-        dismiss.className = 'card-dismiss';
         dismiss.setAttribute(
           'aria-label',
           showHidden ? 'Restore notification' : 'Mark update reviewed',
         );
-        surface.append(dismiss);
+        tray.append(
+          button('Snooze 1h', () => runAction(card.id, 'snooze')),
+          dismiss,
+        );
+        surface.prepend(tray);
       }
       queue.append(wrap);
     }
-    if (!showAll && cards.length >= 3) queue.lastElementChild?.classList.add('stack-end');
     if (!cards.length) {
       const empty = node('div');
       empty.className = 'empty';
@@ -278,8 +318,9 @@ if ($('corner-toggle')) {
               : 'Reading local Codex chats…';
   }
   function openPanel(next, title) {
-    returnFocus = document.activeElement;
+    if (!mode) returnFocus = document.activeElement;
     mode = next;
+    $('panel').className = next === 'details' || next === 'actions' ? 'notification-panel' : '';
     $('panel').replaceChildren();
     $('panel').setAttribute('aria-label', title);
     $('scrim').hidden = false;
@@ -302,6 +343,7 @@ if ($('corner-toggle')) {
     const before = returnFocus;
     mode = null;
     selected = null;
+    swipeId = null;
     $('scrim').hidden = true;
     $('shell').inert = false;
     render();
@@ -314,6 +356,7 @@ if ($('corner-toggle')) {
     try {
       const next = await call('action', { id, action });
       state = { ...state, ...next, settings: state.settings };
+      swipeId = null;
       if (mode) closePanel();
       else render();
       notice(
@@ -428,6 +471,9 @@ if ($('corner-toggle')) {
     }
   }
   function showCard(id, details) {
+    const origin = document
+      .querySelector('[data-id="' + CSS.escape(id) + '"]')
+      ?.getBoundingClientRect();
     selected = id;
     const card = currentCard();
     if (!card) return;
@@ -584,7 +630,52 @@ if ($('corner-toggle')) {
       );
     }
     if (!details) panel.append(button('Details & chat', () => showCard(id, true), 'detail-link'));
-    else {
+    const preview = node('section', '', { class: 'notification-preview' });
+    const top = panel.querySelector('.panel-top');
+    const status = $('panel-status');
+    status.className = 'expanded-status';
+    status.textContent = card.label + (card.urgent ? ' · Urgent' : '');
+    const close = top.lastElementChild;
+    top.replaceChildren(
+      node('img', '', { src: APP_ICON, alt: '', class: 'app-icon' }),
+      node('span', 'Work Updates', { class: 'notification-app' }),
+      node('span', ago(card.doneAt || card.at), { id: 'notification-age', class: 'card-age' }),
+      close,
+    );
+    preview.append(top, title, status);
+    for (const child of [...panel.children]) {
+      if (child === actions || child === preview || child.classList.contains('detail-link'))
+        continue;
+      // Context, reply and approvals belong to the expanded notification.
+      if (
+        child === picker ||
+        ['approval-host', 'context-host', 'messages', 'task-error'].includes(child.id) ||
+        (child.classList.contains('compose-row') && child.querySelector('#chat-input'))
+      )
+        preview.append(child);
+    }
+    panel.prepend(preview);
+    if (details && !card.done) {
+      const settings = node('details', '', { class: 'task-options' });
+      settings.append(node('summary', 'Task settings'));
+      for (const child of [...panel.children])
+        if (child !== preview && child !== actions) settings.append(child);
+      panel.append(settings);
+    }
+    if (origin && !matchMedia('(prefers-reduced-motion: reduce)').matches) {
+      const target = preview.getBoundingClientRect();
+      preview.animate(
+        [
+          {
+            transform: `translate(${origin.x - target.x}px, ${origin.y - target.y}px) scale(${origin.width / target.width}, ${origin.height / target.height})`,
+            opacity: 0.65,
+          },
+          { transform: 'none', opacity: 1 },
+        ],
+        { duration: 260, easing: 'cubic-bezier(.2,.8,.2,1)' },
+      );
+    }
+    if (details) {
       lastMessages = '';
       lastRequests = '';
       lastActions = '';
@@ -620,7 +711,9 @@ if ($('corner-toggle')) {
     if (mode !== 'details') return;
     const card = currentCard();
     if (!card) return;
-    $('panel-status').textContent = card.label + ' · ' + ago(card.at);
+    $('panel').querySelector('.panel-title').textContent = card.title;
+    $('panel-status').textContent = card.label + (card.urgent ? ' · Urgent' : '');
+    $('notification-age').textContent = ago(card.doneAt || card.at);
     $('task-error').textContent = card.error || '';
     const list = $('messages'),
       messages = card.messages || [],
@@ -978,7 +1071,7 @@ if ($('corner-toggle')) {
     panel.append(node('p', 'Work Updates ' + state.version, { class: 'field-note' }));
     for (const [key, label] of [
       ['pin', 'Keep above other windows'],
-      ['corner', 'Show corner launcher'],
+      ['corner', 'Bottom-left hover launcher'],
       ['attention', 'Notify me when a task needs me'],
     ]) {
       const row = node('div');
@@ -995,6 +1088,11 @@ if ($('corner-toggle')) {
       node('p', 'Toggle queue: ' + (state.settings.shortcut || 'Ctrl+Alt+Space'), {
         class: 'field-note',
       }),
+      node(
+        'p',
+        'Hover the bottom-left launcher to peek. Click the launcher or queue to keep it open; drag the top to move it. Click the launcher again to hide.',
+        { class: 'field-note' },
+      ),
     );
     panel.append(
       button(
@@ -1152,9 +1250,9 @@ if ($('corner-toggle')) {
     if (event.key === 'Tab' && mode) {
       const focusable = [
         ...$('panel').querySelectorAll(
-          'button:not(:disabled),input:not(:disabled),textarea:not(:disabled),select:not(:disabled)',
+          'button:not(:disabled),input:not(:disabled),textarea:not(:disabled),select:not(:disabled),summary',
         ),
-      ];
+      ].filter((element) => element.getClientRects().length && !element.closest('[inert]'));
       const first = focusable[0],
         last = focusable.at(-1);
       if (event.shiftKey && document.activeElement === first) {

@@ -14,6 +14,7 @@ A card shows the task title, status, and age. Chat names and message text live i
 | Hold 650 ms                | Details and compact conversation | Composer with project options         |
 | Right click / Shift+F10    | Same details and conversation    | Same composer with project options    |
 | Escape / outside click     | Return to the queue              | Cancel composer; preserve typed draft |
+| Swipe left                 | Reveal Snooze and Reviewed       | —                                     |
 
 Menus are accelerators, never the sole route to a feature. A visible **Details & chat** action gives keyboard and mouse users a discoverable alternative to holding.
 
@@ -21,26 +22,33 @@ New tasks have a title, prompt, and optional workspace. **Queue task** saves a d
 
 **Mark done** moves a task to Done, with Undo and Reopen. It does not archive or delete its Codex chat. Incoming commentary never clears Done or resurrects a reviewed update. A clearly different task in an existing chat can receive a new task identity.
 
-## Visual language
+## Lock Screen reference contract — October 1, 2026
 
-Use the approved dark lock-screen composition: blue-gray wash, large clock, 23px rounded notifications, muted green identity icon, and restrained status colors. Use 8px spacing increments, 44px main targets, a visible keyboard focus ring, text contrast, and reduced-motion support. Card text wraps to two lines; full text is always available in details. Panels have a consistent width and retain the background queue's positions while open. Success uses a short undo notice, not an interrupting dialog.
+The user's latest direction replaces the iCloud dashboard surface treatment. Use Apple Lock Screen notifications as the structural source. Three inspected Apple examples establish the following:
 
-Keep the original 484×720 composition: quiet Desktop overlay toolbar, large date and clock, three translucent rounded notifications and a subtle stack underneath. No persistent tabs or dashboard panels. A small heading menu opens Updates, Queued and Done; the plus button opens the composer. Settings and task context remain in sheets.
+| Inspected evidence                                                                                                                                                                                 | Transfer to Work Updates                                                                                                                             | Product adaptation                                                                                                    |
+| -------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------- | ---------------------------------------------------------------------------------------------------------------------------------------------------- | --------------------------------------------------------------------------------------------------------------------- |
+| [Apple's published Lock Screen image](https://cdsassets.apple.com/live/7WUAS350/images/ios/ios-26-iphone-16-pro-lock-screen-notifications.png), linked from its September 14, 2026 support article | One continuous translucent rounded card; icon at left; content beside it; age at upper right; close spacing; queue toward the bottom under the clock | Original Work Updates icon and CSS wallpaper; task title and explicit waiting owner; desktop toolbar and queue filter |
+| [Apple's notification options image](https://cdsassets.apple.com/live/7WUAS350/images/ios/ios-26-iphone-16-pro-manage-notifications.png)                                                           | Frosted floating menu, plain command rows and restrained separators; mute for one hour                                                               | Snooze 1h, Reviewed, Open chat and Mark done are this app's commands                                                  |
+| [Apple's expanded notification anatomy](https://developer.apple.com/documentation/usernotificationsui/customizing-the-appearance-of-notifications)                                                 | Expand the selected notification over a blurred background; keep identity and full content together                                                  | Inline Codex conversation and reply; manual status, owner and priority behind Task settings                           |
+
+The compact/options images are explicitly named iOS 26; the developer example is older. They establish visible structure, not pixel-exact iOS 27 rendering. Apple's [current iPhone notification guide](https://support.apple.com/guide/iphone/view-and-respond-to-notifications-iph6534c01bc/ios) verifies hold-to-expand and quick actions. No verified current iOS 27 hold screenshot was found. Do not claim these assets demonstrate it.
+
+Keep click for quick actions, as requested earlier. Apple normally uses tap to open the source app: our mapping is an explicit desktop adaptation. Hold 650 ms expands the same card, with press feedback and origin-based expansion, full context, a reply and actions. Right click and Shift+F10 provide the same expanded view. Escape/outside click closes and returns focus. Dragging cancels the hold; releasing a successful hold never opens a second panel. Reduced motion removes press/expansion animations.
+
+Remove the split slate header/black body, colored status pills, always-visible per-card X, decorative fake stacks and blue/green action blocks. Underlays mean actual grouped chats only. Use a continuous frosted material and monochrome command rows. Text remains readable against the original background. Windows uses Segoe UI fallback; CSS backdrop blur approximates the material and does not implement Apple's native Liquid Glass optics.
+
+## Queue and responsive behavior
+
+The optional bottom-left launcher uses a 220 ms hover dwell to open a temporary peek without stealing focus. Leaving both launcher and queue for 400 ms closes the peek. Clicking either retains it; dragging its header retains it and remembers the new position. Clicking the launcher again hides it and suppresses another hover until the pointer leaves. Keep the launcher above the taskbar, preserve the previous floating position during temporary peeks, and preserve explicit hide/keyboard/tray controls. These are product-specific desktop behaviors, not Apple's Lock Screen gestures.
+
+Keep the 484×720 notification queue, with a quiet Work Updates toolbar, date and clock, and three rounded notifications. A heading menu opens Updates, Queued and Done; the plus button opens the composer. At 390×590, reduce clock space and card padding while keeping titles readable and controls reachable. Expanded windows retain one readable queue column. Card titles wrap to two lines; full text is available by holding. Long waiting-owner text wraps. Panels retain the background queue's positions while open, and replies survive dismissal. Main command targets are at least 44px; keyboard focus remains visible; collapsed settings do not participate in the dialog's Tab cycle.
 
 Waiting on you always sorts first, then urgent items, then other actionable blockers and review items. Ordinary working items and external waits follow. Waiting cards must identify the owner. Extract only explicit names or roles from the latest recorded response; unknown owners are labeled as unclear. Details support a named waiting owner and Automatic/Urgent/Normal priority. Group cards surface their highest-attention source, keeping every source conversation attached. Ownership and urgency changes never alter completion fingerprints or replay reviewed history.
 
 ## Required states
 
 Loading; empty queue; queued draft; starting; active; ready to review; waiting; blocked; approval required; failed launch with retry; sync paused with last successful data; snoozed; reviewed; done; restored; disconnected companion; connected companion. Each visible control must have a verified outcome.
-
-## Reference evidence
-
-- [Apple context menus](https://developer.apple.com/design/human-interface-guidelines/context-menus): relevant, short contextual commands; every command is also discoverable in the main interface. Use hold and right click consistently. Do not borrow branding or hide essential commands behind gestures.
-- [Microsoft contextual commands](https://learn.microsoft.com/en-us/windows/apps/develop/ui/controls/collection-commanding): support keyboard, mouse, and touch routes to the same operations; Shift+F10 must work.
-- [Apple notification guidance](https://developer.apple.com/design/human-interface-guidelines/managing-notifications): classify urgency honestly. Stream ordinary progress quietly; alert on meaningful required input or failure.
-- [Todoist Create and edit flow on UIZZE](https://uizze.com/apps/c8004cbe4eadde8718053446031ff836?journey=ecc1f7fc981eca1b05df868acfd63eb8&platform=ios), step 1, iOS screen 285: task context and a comment control share one sheet. Transfer the compact conversation next to its task, with a quiet source-chat label. Do not copy branding, artwork, or exact positioning.
-- Same inspected flow, step 2, iOS screen 89: one focused task composer with a short title and an explicit save/cancel route. Transfer deliberate queueing and retained drafts because starting an agent should be a clear action. Do not copy Todoist's navigation or proprietary text.
-- Same inspected flow, step 3, iOS screen 28: title and description remain separate while editing. Transfer a short card title and a fuller prompt in the composer, with reachable actions. Do not copy the keyboard, red palette, or exact layout.
 
 ## Acceptance
 

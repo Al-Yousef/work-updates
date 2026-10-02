@@ -1,5 +1,5 @@
 'use strict';
-const { _electron: electron, expect } = require('playwright');
+const { _electron: electron } = require('playwright');
 const fs = require('node:fs'),
   path = require('node:path'),
   os = require('node:os'),
@@ -32,6 +32,7 @@ async function waitFor(page, fn) {
     };
     const nativeScreenshot = page.screenshot.bind(page);
     page.screenshot = async (options) => {
+      await page.locator('#notice').waitFor({ state: 'hidden', timeout: 6000 });
       await page.waitForTimeout(200);
       return nativeScreenshot(options);
     };
@@ -58,7 +59,29 @@ async function waitFor(page, fn) {
       (await page.evaluate(() => typeof require)) === 'undefined',
       'Renderer has no Node access',
     );
+    await waitFor(page, () =>
+      [...document.querySelectorAll('.app-icon')].every((e) => e.complete && e.naturalWidth > 0),
+    );
+    check(true, 'Notification icons load under the app content policy');
+    check(
+      await page.locator('.swipe-actions').first().isHidden(),
+      'Swipe commands stay hidden until a swipe',
+    );
     await page.screenshot({ path: path.join(output, 'queue.png') });
+    const swipeCard = page.getByRole('button', { name: 'Review launch notes, Ready to review' });
+    const swipeBounds = await swipeCard.boundingBox();
+    await page.mouse.move(swipeBounds.x + swipeBounds.width - 25, swipeBounds.y + 45);
+    await page.mouse.down();
+    await page.mouse.move(swipeBounds.x + 70, swipeBounds.y + 45, { steps: 8 });
+    await page.mouse.up();
+    await page.locator('.swiped .swipe-actions').waitFor({ state: 'visible' });
+    check(await page.locator('#scrim').isHidden(), 'Swipe reveals options without opening a panel');
+    await page.screenshot({ path: path.join(output, 'swipe.png') });
+    await page.locator('.swiped').getByRole('button', { name: 'Snooze 1h', exact: true }).click();
+    await waitFor(page, () => document.querySelectorAll('.card-trigger').length === 2);
+    check(true, 'Swipe snooze postpones only the chosen notification');
+    await page.getByRole('button', { name: 'Undo', exact: true }).click();
+    await waitFor(page, () => document.querySelectorAll('.card-trigger').length === 3);
     await page.getByRole('button', { name: 'Review launch notes, Ready to review' }).click();
     check(
       (await page.getByRole('button', { name: 'Open chat ↗', exact: true }).count()) === 1,
@@ -94,7 +117,23 @@ async function waitFor(page, fn) {
       'Hold opens conversation exactly once',
     );
     await page.screenshot({ path: path.join(output, 'chat.png') });
-    await page.keyboard.press('Escape');
+    check(
+      await page.locator('.task-options').evaluate((e) => !e.open),
+      'Hold keeps task settings collapsed',
+    );
+    await page.locator('.task-options summary').focus();
+    await page.keyboard.press('Tab');
+    check(
+      await page
+        .getByRole('button', { name: 'Back to queue', exact: true })
+        .evaluate((e) => e === document.activeElement),
+      'Tab wraps past collapsed task settings',
+    );
+    await page.getByRole('button', { name: 'Back to queue', exact: true }).click();
+    check(
+      await launch.evaluate((e) => e === document.activeElement),
+      'Hold dismissal returns focus to its notification',
+    );
     await page.mouse.move(bounds.x + 80, bounds.y + 45);
     await page.mouse.down();
     await page.mouse.move(bounds.x + 105, bounds.y + 45);
@@ -159,6 +198,7 @@ async function waitFor(page, fn) {
     await page
       .getByRole('button', { name: 'Review launch notes, Ready to review' })
       .click({ button: 'right' });
+    await page.locator('.task-options summary').click();
     await page.locator('#manual-status').selectOption('waiting');
     await waitFor(page, () =>
       document.querySelector('#panel-status').textContent.includes('Waiting'),
@@ -203,6 +243,171 @@ async function waitFor(page, fn) {
     await page.getByRole('button', { name: 'Undo', exact: true }).click();
     await page.locator('.grouped').waitFor();
     check(true, 'Undo restores only the grouping');
+    await page.locator('#notice').waitFor({ state: 'hidden', timeout: 6000 });
+    const baseline = await page.evaluate(async () => (await window.workUpdates.state()).value);
+    const pushFixture = async (fixture) =>
+      app.evaluate(({ BrowserWindow }, value) => {
+        BrowserWindow.getAllWindows()[0].webContents.send('work-updates:state', value);
+      }, fixture);
+    const longTitle =
+      'Review the desktop notification behavior with every local Codex chat and a much longer task title';
+    const longFixture = structuredClone(baseline);
+    longFixture.cards[0].title = longTitle;
+    longFixture.cards[0].label = 'Waiting on the desktop application review team';
+    await pushFixture(longFixture);
+    await page
+      .getByRole('button', { name: longTitle + ', ' + longFixture.cards[0].label })
+      .waitFor();
+    check(
+      await page.evaluate(() => document.body.scrollWidth <= innerWidth),
+      'Long task and owner names do not overflow',
+    );
+    await page.screenshot({ path: path.join(output, 'long-text.png') });
+    await page
+      .getByRole('button', { name: longTitle + ', ' + longFixture.cards[0].label })
+      .click({ button: 'right' });
+    check(
+      (await page.locator('.panel-title').innerText()) === longTitle,
+      'Expanded notification reveals the full title',
+    );
+    await page.keyboard.press('Escape');
+    await pushFixture({ ...baseline, cards: [], done: [], ready: 0, working: 0 });
+    await page.locator('.empty').waitFor();
+    await page.screenshot({ path: path.join(output, 'empty.png') });
+    check(
+      (await page.locator('.card-trigger').count()) === 0,
+      'Empty queue preserves an honest empty state',
+    );
+    await pushFixture({
+      ...baseline,
+      health: { ok: false, message: 'Last successful chat data is still available' },
+    });
+    await waitFor(page, () =>
+      document.querySelector('#connection').textContent.startsWith('Sync paused'),
+    );
+    await page.screenshot({ path: path.join(output, 'sync-paused.png') });
+    check(
+      (await page.locator('.card-trigger').count()) > 0,
+      'Sync failure keeps the last available notifications',
+    );
+    await pushFixture(baseline);
+    await app.evaluate(({ BrowserWindow }) => BrowserWindow.getAllWindows()[0].setSize(390, 590));
+    await page.locator('.card-trigger').first().click({ button: 'right' });
+    await page.locator('#chat-input').waitFor({ state: 'visible' });
+    check(
+      await page.locator('#panel').evaluate((e) => e.getBoundingClientRect().bottom <= innerHeight),
+      'Compact expanded notification stays within the window',
+    );
+    check(
+      await page.locator('.notification-preview').evaluate((e) => e.getAnimations().length === 0),
+      'Reduced motion suppresses expansion animation',
+    );
+    await page.screenshot({ path: path.join(output, 'compact-hold.png') });
+    await page.keyboard.press('Escape');
+    // Exercise the real native show/focus/position controls with a deterministic cursor feed.
+    await app.evaluate(({ screen }) => {
+      screen.getCursorScreenPoint = () => ({ x: 100000, y: 100000 });
+    });
+    const launcherReady = app.waitForEvent('window');
+    await page.evaluate(() => window.workUpdates.settings({ corner: true }));
+    const launcherPage = await launcherReady;
+    await launcherPage.locator('#corner-toggle').waitFor();
+    await page.evaluate(() => window.workUpdates.window({ action: 'hide' }));
+    const launcherBounds = await app.evaluate(({ BrowserWindow }) =>
+      BrowserWindow.getAllWindows()
+        .find((w) => w.webContents.getURL().endsWith('/corner.html'))
+        .getBounds(),
+    );
+    const cursor = async (point) =>
+      app.evaluate(({ screen }, value) => {
+        screen.getCursorScreenPoint = () => value;
+      }, point);
+    const atCorner = { x: launcherBounds.x + 22, y: launcherBounds.y + 22 };
+    const waitForMode = async (mode) => {
+      for (let attempt = 0; attempt < 120; attempt++) {
+        if ((await page.evaluate(() => window.workUpdates.state())).value.windowMode === mode)
+          return;
+        await page.waitForTimeout(100);
+      }
+      throw new Error('Native window did not reach ' + mode);
+    };
+    await cursor(atCorner);
+    await waitForMode('peek');
+    await page.waitForTimeout(200);
+    const nativePeek = await app.evaluate(({ BrowserWindow }) => {
+      const w = BrowserWindow.getAllWindows().find((w) =>
+        w.webContents.getURL().endsWith('/index.html'),
+      );
+      return { visible: w.isVisible(), focused: w.isFocused(), focusable: w.isFocusable() };
+    });
+    check(
+      nativePeek.visible && !nativePeek.focused,
+      'Native hover peek opens without stealing focus: ' + JSON.stringify(nativePeek),
+    );
+    const peekBounds = await app.evaluate(({ BrowserWindow }) =>
+      BrowserWindow.getAllWindows()
+        .find((w) => w.webContents.getURL().endsWith('/index.html'))
+        .getBounds(),
+    );
+    await cursor({ x: peekBounds.x + 200, y: peekBounds.y + 200 });
+    await page.waitForTimeout(600);
+    check(
+      (await page.evaluate(() => window.workUpdates.state())).value.windowMode === 'peek',
+      'Moving into the queue preserves the peek',
+    );
+    await cursor({ x: 100000, y: 100000 });
+    await waitForMode('hidden');
+    check(true, 'Leaving a native peek hides it');
+    await cursor(atCorner);
+    await waitForMode('peek');
+    await launcherPage.locator('#corner-toggle').click();
+    await waitForMode('pinned');
+    await cursor({ x: 100000, y: 100000 });
+    await page.waitForTimeout(600);
+    check(
+      await app.evaluate(({ BrowserWindow }) =>
+        BrowserWindow.getAllWindows()
+          .find((w) => w.webContents.getURL().endsWith('/index.html'))
+          .isVisible(),
+      ),
+      'Clicking the corner retains the native queue',
+    );
+    await app.evaluate(({ BrowserWindow }) =>
+      BrowserWindow.getAllWindows()
+        .find((w) => w.webContents.getURL().endsWith('/index.html'))
+        .setPosition(120, 80),
+    );
+    await page.waitForTimeout(150);
+    await cursor(atCorner);
+    await launcherPage.locator('#corner-toggle').click();
+    await page.waitForTimeout(600);
+    check(
+      (await page.evaluate(() => window.workUpdates.state())).value.windowMode === 'hidden',
+      'A corner click hides and suppresses immediate hover reopening',
+    );
+    await launcherPage.locator('#corner-toggle').click();
+    check(
+      await app.evaluate(({ BrowserWindow }) => {
+        const b = BrowserWindow.getAllWindows()
+          .find((w) => w.webContents.getURL().endsWith('/index.html'))
+          .getBounds();
+        return b.x === 120 && b.y === 80;
+      }),
+      'Retained native window restores its moved position',
+    );
+    await page.evaluate(() => window.workUpdates.window({ action: 'hide' }));
+    await cursor({ x: 100000, y: 100000 });
+    await page.waitForTimeout(150);
+    await cursor(atCorner);
+    await waitForMode('peek');
+    await page.locator('#view-menu').click();
+    check(
+      (await page.evaluate(() => window.workUpdates.state())).value.windowMode === 'pinned',
+      'Clicking inside the peek retains it',
+    );
+    await page.keyboard.press('Escape');
+    await page.evaluate(() => window.workUpdates.settings({ corner: false }));
+    check((await app.windows()).length === 1, 'Disabling the launcher removes its native control');
     check(errors.length === 0, 'No renderer exceptions');
     process.stdout.write(
       'Native desktop UI: ' + checks + ' checks passed. Synthetic screenshots: artifacts/ui\n',
