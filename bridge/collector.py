@@ -163,7 +163,7 @@ def request_text(text):
 
 
 def continuation(text):
-    return bool(re.fullmatch(r"(?:yes|yeah|yep|yup|ok|okay|sure|bet|perfect|great|thanks|thank you|go|go ahead|go for it|do it|let'?s go|let'?s do it|continue|keep going|proceed|please)[\s,!.]*" 
+    return bool(re.fullmatch(r"(?:yes|yeah|yep|yup|ok|okay|sure|bet|perfect|great|thanks|thank you|go|go ahead|go for it|do it|let'?s go|let'?s do it|continue|keep going|proceed|please)[\s,!.]*"
                              r"(?:(?:yes|yeah|ok|okay|sure|bet|perfect|thanks|go for it|please)[\s,!.]*)*", text, re.I))
 
 
@@ -196,7 +196,7 @@ def task_title(text):
     # Do not guess the referent, expose pasted code/URLs, or crop an oversized prompt.
     if (len(value) > 80 or len(value.split()) > 14 or len(subject.split()) < 2
             or re.match(r'^(?:it|this|that|these|those|them|him|her|something|everything|anything|what|who|which|when|where|how|why|a way|the thing)\b', subject, re.I)
-            or re.search(r'\b(?:him|her|them|it|this|that|retarded|idiot|fuck|shit|nigga)\b', subject, re.I)
+            or re.search(r'\b(?:him|her|them|it|this|that)\b', subject, re.I)
             or subject.lower() in ('the design', 'the app', 'the task', 'the changes', 'all of them', 'brother man')
             or re.search(r'https?://|[<>{}\\]|\b(?:password|secret|token)\s*[:=]', value)):
         return ''
