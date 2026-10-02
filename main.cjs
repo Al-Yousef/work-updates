@@ -52,6 +52,7 @@ let window,
   remoteState,
   windowController,
   cornerTimer,
+  concealTimer,
   quitting = false;
 let launcherInfo = {
   target: process.platform === 'win32' ? 'weather' : 'corner',
@@ -111,7 +112,7 @@ const notified = new Set();
 function attention(event) {
   if (
     !queue.state.settings.attention ||
-    window?.isVisible() ||
+    (windowController && windowController.mode !== 'hidden') ||
     !['needs', 'blocked', 'waiting', 'ready'].includes(event.status) ||
     !(
       event.status === 'needs' ||
@@ -248,8 +249,15 @@ function cornerWindow() {
   }, 100);
   cornerTimer.unref();
 }
+function configureWindowLevel() {
+  const above = queue.state.settings.pin !== false || windowController.mode === 'peek';
+  if (window.isAlwaysOnTop() !== above)
+    // Windows' default floating level moves behind Explorer's taskbar, which
+    // can also clear topmost. The queue already stays inside the work area.
+    window.setAlwaysOnTop(above, process.platform === 'win32' ? 'pop-up-menu' : 'floating');
+}
 function configure() {
-  window.setAlwaysOnTop(queue.state.settings.pin !== false);
+  configureWindowLevel();
   cornerWindow();
   globalShortcut.unregisterAll();
   const key = process.platform === 'darwin' ? 'Command+Option+Space' : 'Control+Alt+Space';
@@ -463,7 +471,10 @@ app.whenReady().then(async () => {
     y: Math.max(area.y, Math.min(saved.y ?? area.y + 24, area.y + area.height - 590)),
     frame: false,
     transparent: true,
-    show: initiallyVisible,
+    show: false,
+    focusable: false,
+    skipTaskbar: true,
+    hasShadow: false,
     backgroundColor: '#00000000',
     title: 'Work Updates',
     icon: path.join(__dirname, 'assets', 'icon.png'),
@@ -477,7 +488,27 @@ app.whenReady().then(async () => {
   window.webContents.setWindowOpenHandler(() => ({ action: 'deny' }));
   windowController = new WindowController({
     window,
-    visible: initiallyVisible,
+    visible: false,
+    present: (visible) => {
+      clearTimeout(concealTimer);
+      window.setIgnoreMouseEvents(!visible);
+      if (visible) {
+        configureWindowLevel();
+        if (!window.isVisible()) window.showInactive();
+        if (windowController.mode === 'pinned') window.moveTop();
+      } else
+        concealTimer = setTimeout(() => {
+          if (!window.isDestroyed() && windowController.mode === 'hidden') {
+            // Windows can keep an inactive layered window as foreground after
+            // blur(). Release it only once the exit has painted zero alpha.
+            const focused = window.isFocused();
+            if (focused) window.hide();
+            window.setFocusable(false);
+            configureWindowLevel();
+            if (focused) window.showInactive();
+          }
+        }, 260);
+    },
     launcher: () => corner?.getBounds(),
     workArea: (bounds) => screen.getDisplayMatching(bounds).workArea,
     saveBounds: (bounds) => {
@@ -485,6 +516,11 @@ app.whenReady().then(async () => {
     },
   });
   windowController.onChange = publish;
+  window.once('ready-to-show', () => {
+    window.setIgnoreMouseEvents(true);
+    window.showInactive();
+    if (initiallyVisible || windowController.mode === 'pinned') show();
+  });
   window.webContents.on('will-navigate', (e) => e.preventDefault());
   window.on('close', (e) => {
     if (!quitting) {
@@ -569,7 +605,7 @@ app.whenReady().then(async () => {
       collectorPid: observer?.pid || null,
       chats: queue.feed.monitoredCount || 0,
       feedCollectedAt: queue.feed.collectedAt || 0,
-      visible: window.isVisible(),
+      visible: windowController.mode !== 'hidden',
       windowMode: windowController.mode,
       cornerEnabled: !!queue.state.settings.corner,
       launcher: { ...launcherInfo, active: !!corner && !corner.isDestroyed() },
@@ -638,5 +674,6 @@ app.on('before-quit', () => {
   remotePeer?.close();
   globalShortcut.unregisterAll();
   clearInterval(cornerTimer);
+  clearTimeout(concealTimer);
   tray?.destroy();
 });

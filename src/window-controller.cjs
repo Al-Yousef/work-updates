@@ -7,11 +7,12 @@ const inside = (point, rect, margin = 0) =>
   point.y < rect.y + rect.height + margin;
 
 class WindowController {
-  constructor({ window, launcher, workArea, saveBounds, visible = window.isVisible() }) {
+  constructor({ window, launcher, workArea, saveBounds, present, visible = window.isVisible() }) {
     this.window = window;
     this.launcher = launcher;
     this.workArea = workArea;
     this.saveBounds = saveBounds;
+    this.present = present || ((visible) => (visible ? window.showInactive() : window.hide()));
     this.mode = visible ? 'pinned' : 'hidden';
     this.floating = window.getBounds();
     this.enabled = false;
@@ -44,7 +45,8 @@ class WindowController {
   }
   peek() {
     if (!this.enabled || this.mode !== 'hidden' || this.suppressed) return;
-    this.window.setFocusable(false);
+    if (this.window.isFocused?.()) this.window.blur();
+    if (this.window.isFocusable?.() !== false) this.window.setFocusable(false);
     const launcher = this.launcher(),
       area = this.workArea(launcher);
     const bounds = this.window.getBounds();
@@ -53,7 +55,7 @@ class WindowController {
       Math.max(area.y, launcher.y - bounds.height - 6),
     );
     this.setMode('peek');
-    this.window.showInactive();
+    this.present(true);
     this.leftAt = null;
   }
   retain() {
@@ -61,6 +63,7 @@ class WindowController {
     this.setMode('pinned');
     this.window.setFocusable(true);
     this.window.focus();
+    this.present(true);
     this.remember();
     this.enteredAt = this.leftAt = null;
   }
@@ -74,14 +77,14 @@ class WindowController {
       );
     }
     this.setMode('pinned');
-    this.window.show();
+    this.present(true);
     this.window.focus();
     this.remember();
   }
   hide(suppress = this.onCorner) {
     if (this.mode === 'pinned') this.remember();
     this.setMode('hidden');
-    this.window.hide();
+    this.present(false);
     this.enteredAt = this.leftAt = null;
     // A click while hovering must stay hidden until the pointer leaves the launcher.
     this.suppressed = suppress;

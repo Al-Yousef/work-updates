@@ -11,6 +11,11 @@ async function call(method, data) {
   return result.value;
 }
 const $ = (id) => document.getElementById(id);
+function presentWindow(value) {
+  const visible = value.windowMode !== 'hidden';
+  document.documentElement.classList.toggle('revealed', visible);
+  document.body.inert = !visible;
+}
 function node(tag, text = '', attributes = {}) {
   const element = document.createElement(tag);
   if (text) element.textContent = text;
@@ -1338,6 +1343,7 @@ if ($('corner-toggle')) {
   });
   api.subscribe((value) => {
     state = value;
+    presentWindow(value);
     if (value.openComposer) showComposer();
     if (mode === 'details') updateDetails();
     else if (!mode) render();
@@ -1345,6 +1351,7 @@ if ($('corner-toggle')) {
   call('state')
     .then((value) => {
       state = value;
+      presentWindow(value);
       render();
     })
     .catch((error) => notice(error.message, true));

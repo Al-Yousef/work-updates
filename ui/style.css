@@ -17,6 +17,18 @@
 * {
   box-sizing: border-box;
 }
+html.desktop-queue {
+  transform: translateX(-100%);
+  opacity: 0;
+  will-change: transform, opacity;
+  transition:
+    transform 240ms cubic-bezier(0.2, 0.8, 0.2, 1),
+    opacity 180ms ease;
+}
+html.desktop-queue.revealed {
+  transform: translateX(0);
+  opacity: 1;
+}
 body {
   margin: 0;
   padding: 8px;

@@ -33,6 +33,7 @@ async function waitFor(page, fn) {
     const nativeScreenshot = page.screenshot.bind(page);
     page.screenshot = async (options) => {
       await page.locator('#notice').waitFor({ state: 'hidden', timeout: 6000 });
+      await page.waitForFunction(() => document.documentElement.getAnimations().length === 0);
       await page.waitForTimeout(200);
       return nativeScreenshot(options);
     };
@@ -388,11 +389,53 @@ async function waitFor(page, fn) {
       }
       throw new Error('Native window did not reach ' + mode);
     };
+    await page.emulateMedia({ reducedMotion: 'no-preference' });
+    await page.waitForTimeout(300);
+    await page.evaluate(() => window.workUpdates.settings({ pin: false }));
+    await cursor(atCorner);
+    await waitForMode('peek');
+    await page.waitForTimeout(300);
+    const unpinnedPeek = await app.evaluate(({ BrowserWindow }) => {
+      const w = BrowserWindow.getAllWindows().find((w) =>
+        w.webContents.getURL().endsWith('/index.html'),
+      );
+      return { above: w.isAlwaysOnTop(), focused: w.isFocused(), focusable: w.isFocusable() };
+    });
+    check(
+      unpinnedPeek.above && !unpinnedPeek.focused,
+      'Hover preview rises without focus when the retained-window pin setting is off: ' +
+        JSON.stringify(unpinnedPeek),
+    );
+    await page.locator('#view-menu').click();
+    await waitForMode('pinned');
+    check(
+      await app.evaluate(
+        ({ BrowserWindow }) =>
+          !BrowserWindow.getAllWindows()
+            .find((w) => w.webContents.getURL().endsWith('/index.html'))
+            .isAlwaysOnTop(),
+      ),
+      'Retaining the preview restores the chosen pin setting',
+    );
+    await page.keyboard.press('Escape');
+    await page.evaluate(() => window.workUpdates.window({ action: 'hide' }));
+    await cursor({ x: 100000, y: 100000 });
+    await page.waitForTimeout(300);
+    await page.evaluate(() => window.workUpdates.settings({ pin: true }));
+    await page.waitForTimeout(300);
     await page.evaluate(() => {
       window.hoverCards = [...document.querySelector('#queue').children];
       window.hoverRedraws = 0;
       window.hoverObserver = new MutationObserver(() => window.hoverRedraws++);
       window.hoverObserver.observe(document.querySelector('#queue'), { childList: true });
+      window.motionFrames = [];
+      document.documentElement.addEventListener('transitionrun', (event) => {
+        if (event.propertyName === 'transform')
+          window.motionFrames.push({
+            entering: document.documentElement.classList.contains('revealed'),
+            x: new DOMMatrixReadOnly(getComputedStyle(document.documentElement).transform).m41,
+          });
+      });
     });
     await app.evaluate(({ BrowserWindow }) => {
       globalThis.hoverShows = 0;
@@ -451,9 +494,86 @@ async function waitFor(page, fn) {
       'Repeated hover and identical watcher updates keep notification nodes intact',
     );
     check(
-      (await app.evaluate(() => globalThis.hoverShows)) === 3,
-      'Each sustained hover reveals the native queue exactly once',
+      (await app.evaluate(() => globalThis.hoverShows)) === 0,
+      'Repeated hover never cycles the native surface visibility',
     );
+    await page.waitForTimeout(300);
+    check(
+      await page.evaluate(
+        () =>
+          window.motionFrames.some((frame) => frame.entering && frame.x < -100) &&
+          window.motionFrames.some((frame) => !frame.entering && frame.x <= 0),
+      ),
+      'Rendered reveal and dismissal both travel from or toward the left',
+    );
+    check(
+      await page.evaluate(
+        () =>
+          new DOMMatrixReadOnly(getComputedStyle(document.documentElement).transform).m41 <=
+            -innerWidth && getComputedStyle(document.documentElement).opacity === '0',
+      ),
+      'Dismissal finishes outside the viewport on the left',
+    );
+    const concealed = await app.evaluate(async ({ BrowserWindow }) => {
+      const w = BrowserWindow.getAllWindows().find((w) =>
+        w.webContents.getURL().endsWith('/index.html'),
+      );
+      const bitmap = (await w.webContents.capturePage()).getBitmap();
+      let alpha = 0;
+      for (let i = 3; i < bitmap.length; i += 4) alpha = Math.max(alpha, bitmap[i]);
+      return { alpha, focused: w.isFocused(), focusable: w.isFocusable(), shadow: w.hasShadow() };
+    });
+    check(
+      concealed.alpha === 0 && !concealed.focused && !concealed.focusable && !concealed.shadow,
+      'Concealed native surface has no visible pixels, focus or shadow: ' +
+        JSON.stringify(concealed),
+    );
+    check(
+      await page.evaluate(() => document.body.inert),
+      'Concealed queue is excluded from keyboard and assistive navigation',
+    );
+    await cursor(atCorner);
+    await waitForMode('peek');
+    await page.evaluate(() => window.workUpdates.window({ action: 'hide' }));
+    await page.waitForTimeout(70);
+    await page.evaluate(() => window.workUpdates.window({ action: 'corner' }));
+    await waitForMode('pinned');
+    await page.waitForTimeout(300);
+    check(
+      await page.evaluate(
+        () =>
+          getComputedStyle(document.documentElement).opacity === '1' &&
+          new DOMMatrixReadOnly(getComputedStyle(document.documentElement).transform).m41 === 0 &&
+          !document.body.inert,
+      ),
+      'Reopening during dismissal reverses smoothly and remains open',
+    );
+    await page.evaluate(() => window.workUpdates.window({ action: 'hide' }));
+    await cursor({ x: 100000, y: 100000 });
+    await page.waitForTimeout(300);
+    await page.emulateMedia({ reducedMotion: 'reduce' });
+    await cursor(atCorner);
+    await waitForMode('peek');
+    check(
+      await page.evaluate(
+        () =>
+          document.documentElement.getAnimations().length === 0 &&
+          new DOMMatrixReadOnly(getComputedStyle(document.documentElement).transform).m41 === 0,
+      ),
+      'Reduced motion reveals immediately without sliding',
+    );
+    await page.evaluate(() => window.workUpdates.window({ action: 'hide' }));
+    await cursor({ x: 100000, y: 100000 });
+    await page.waitForTimeout(150);
+    check(
+      await page.evaluate(
+        () =>
+          document.documentElement.getAnimations().length === 0 &&
+          getComputedStyle(document.documentElement).opacity === '0',
+      ),
+      'Reduced motion conceals immediately without sliding',
+    );
+    await page.emulateMedia({ reducedMotion: 'no-preference' });
     await page.evaluate(() => window.hoverObserver.disconnect());
     await cursor(atCorner);
     await waitForMode('peek');
