@@ -23,6 +23,7 @@ const { Codex } = require('./src/codex.cjs');
 const { Controller } = require('./src/controller.cjs');
 const { startObserver } = require('./src/observer.cjs');
 const { WindowController } = require('./src/window-controller.cjs');
+const taskbar = require('./src/taskbar.cjs');
 const args = process.argv;
 function argument(name) {
   const index = args.indexOf(name);
@@ -52,6 +53,11 @@ let window,
   windowController,
   cornerTimer,
   quitting = false;
+let launcherInfo = {
+  target: process.platform === 'win32' ? 'weather' : 'corner',
+  bounds: null,
+  message: '',
+};
 const queue = new Queue(dataDir);
 const client = demo
   ? new (require('./src/demo.cjs').DemoCodex)()
@@ -79,6 +85,7 @@ function snapshot() {
     version: app.getVersion(),
     hosting: !!hostPeer?.server,
     windowMode: windowController?.mode || 'hidden',
+    launcher: { ...launcherInfo, active: !!corner && !corner.isDestroyed() },
     connection: remotePeer?.connected
       ? 'Connected to desktop'
       : remotePeer
@@ -169,22 +176,41 @@ function icon() {
     .createFromPath(path.join(__dirname, 'assets', 'icon.png'))
     .resize({ width: 32, height: 32 });
 }
-function cornerWindow() {
-  clearInterval(cornerTimer);
-  windowController.enable(!!queue.state.settings.corner);
-  if (corner) {
-    corner.destroy();
+function refreshCorner() {
+  const previous = JSON.stringify(launcherInfo);
+  const display = screen.getPrimaryDisplay();
+  const area = display.workArea;
+  launcherInfo =
+    process.platform === 'win32'
+      ? taskbar.weatherTarget(display, taskbar.readLayout())
+      : {
+          target: 'corner',
+          bounds: { width: 44, height: 44, x: area.x + 12, y: area.y + area.height - 56 },
+          message: '',
+        };
+  if (process.platform === 'win32' && !queue.state.settings.corner && launcherInfo.bounds)
+    launcherInfo.message = 'Weather shortcut off. Windows Widgets uses the weather area.';
+  if (!queue.state.settings.corner || !launcherInfo.bounds) {
+    if (windowController.enabled) windowController.enable(false);
+    corner?.destroy();
     corner = null;
+    if (previous !== JSON.stringify(launcherInfo)) publish();
+    return;
   }
-  if (!queue.state.settings.corner) return;
-  const area = screen.getPrimaryDisplay().workArea;
+  if (corner && !corner.isDestroyed()) {
+    if (previous !== JSON.stringify(launcherInfo)) {
+      corner.setBounds(launcherInfo.bounds);
+      publish();
+    }
+    return;
+  }
   corner = new BrowserWindow({
-    width: 44,
-    height: 44,
-    x: area.x + 12,
-    y: area.y + area.height - 56,
+    ...launcherInfo.bounds,
     frame: false,
     transparent: true,
+    backgroundColor: '#00000000',
+    hasShadow: false,
+    show: false,
     alwaysOnTop: true,
     resizable: false,
     skipTaskbar: true,
@@ -196,11 +222,27 @@ function cornerWindow() {
       sandbox: true,
     },
   });
-  corner.loadURL('work-updates://app/corner.html');
+  const control = corner;
+  control.once('ready-to-show', () => {
+    if (corner !== control || control.isDestroyed()) return;
+    control.showInactive();
+    windowController.enable(true);
+    publish();
+  });
+  corner.loadURL(
+    'work-updates://app/' + (launcherInfo.target === 'weather' ? 'weather.html' : 'corner.html'),
+  );
   corner.webContents.on('will-navigate', (e) => e.preventDefault());
   corner.webContents.setWindowOpenHandler(() => ({ action: 'deny' }));
   corner.webContents.on('did-finish-load', publish);
+}
+function cornerWindow() {
+  clearInterval(cornerTimer);
+  refreshCorner();
+  if (!queue.state.settings.corner) return;
+  let ticks = 0;
   cornerTimer = setInterval(() => {
+    if (++ticks % 100 === 0) refreshCorner();
     if (!corner || corner.isDestroyed() || window.isDestroyed()) return;
     windowController.tick(screen.getCursorScreenPoint());
   }, 100);
@@ -394,6 +436,7 @@ app.whenReady().then(async () => {
     const files = {
       '/index.html': ['index.html', 'text/html'],
       '/corner.html': ['corner.html', 'text/html'],
+      '/weather.html': ['weather.html', 'text/html'],
       '/app.js': ['app.js', 'text/javascript'],
       '/style.css': ['style.css', 'text/css'],
     };
@@ -516,6 +559,9 @@ app.whenReady().then(async () => {
     });
   }
   configure();
+  for (const event of ['display-added', 'display-removed', 'display-metrics-changed'])
+    screen.on(event, refreshCorner);
+  if (!args.includes('--hidden') && queue.state.settings.corner && !corner) show();
   await window.loadURL('work-updates://app/index.html');
   const runtime = () =>
     atomic(path.join(dataDir, 'runtime.json'), {
@@ -526,6 +572,7 @@ app.whenReady().then(async () => {
       visible: window.isVisible(),
       windowMode: windowController.mode,
       cornerEnabled: !!queue.state.settings.corner,
+      launcher: { ...launcherInfo, active: !!corner && !corner.isDestroyed() },
       updatedAt: now(),
     });
   runtime();

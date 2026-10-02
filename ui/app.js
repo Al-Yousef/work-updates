@@ -56,11 +56,12 @@ function clock() {
   });
 }
 if ($('corner-toggle')) {
-  $('corner-toggle').replaceChildren(node('img', '', { src: APP_ICON, alt: '' }));
+  const weather = document.body.classList.contains('weather-hotspot');
+  if (!weather) $('corner-toggle').replaceChildren(node('img', '', { src: APP_ICON, alt: '' }));
   $('corner-toggle').addEventListener('click', () => call('window', { action: 'corner' }));
   $('corner-toggle').addEventListener('contextmenu', (event) => {
     event.preventDefault();
-    call('window', { action: 'new' });
+    if (!weather) call('window', { action: 'new' });
   });
   api.subscribe((value) => {
     $('corner-toggle').setAttribute(
@@ -1071,7 +1072,12 @@ if ($('corner-toggle')) {
     panel.append(node('p', 'Work Updates ' + state.version, { class: 'field-note' }));
     for (const [key, label] of [
       ['pin', 'Keep above other windows'],
-      ['corner', 'Bottom-left hover launcher'],
+      [
+        'corner',
+        state.platform === 'win32'
+          ? 'Open queue from the weather area'
+          : 'Bottom-left hover launcher',
+      ],
       ['attention', 'Notify me when a task needs me'],
     ]) {
       const row = node('div');
@@ -1090,10 +1096,14 @@ if ($('corner-toggle')) {
       }),
       node(
         'p',
-        'Hover the bottom-left launcher to peek. Click the launcher or queue to keep it open; drag the top to move it. Click the launcher again to hide.',
+        state.platform === 'win32'
+          ? 'Hover the taskbar weather to peek. Click there or in the queue to keep it open; drag the top to move it. Click the weather again to hide. Turn this off to restore normal Widgets clicks.'
+          : 'Hover the bottom-left launcher to peek. Click the launcher or queue to keep it open; drag the top to move it. Click the launcher again to hide.',
         { class: 'field-note' },
       ),
     );
+    if (state.platform === 'win32')
+      panel.append(node('p', state.launcher?.message || '', { class: 'field-note' }));
     panel.append(
       button(
         showHidden ? 'Back to visible updates' : 'Snoozed & reviewed updates',

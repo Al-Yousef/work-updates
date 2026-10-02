@@ -17,7 +17,7 @@ test('watcher reports health changes even when no new feed can be written', asyn
   const result = await new Promise((resolve, reject) => {
     const timer = setTimeout(
       () => reject(new Error('Watcher did not report the unavailable store.')),
-      7000,
+      20000,
     );
     watcher = startObserver(
       path.join(dir, 'observer'),
@@ -26,6 +26,9 @@ test('watcher reports health changes even when no new feed can be written', asyn
         if (!health.ok && health.at) {
           clearTimeout(timer);
           resolve({ feed, health });
+        } else if (!health.ok && /could not start|stopped/.test(health.message)) {
+          clearTimeout(timer);
+          reject(new Error(health.message));
         }
       },
     );

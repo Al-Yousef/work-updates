@@ -305,8 +305,18 @@ async function waitFor(page, fn) {
     await page.screenshot({ path: path.join(output, 'compact-hold.png') });
     await page.keyboard.press('Escape');
     // Exercise the real native show/focus/position controls with a deterministic cursor feed.
-    await app.evaluate(({ screen }) => {
+    await app.evaluate(({ app, screen }) => {
       screen.getCursorScreenPoint = () => ({ x: 100000, y: 100000 });
+      if (process.platform === 'win32') {
+        process.getBuiltinModule('module').createRequire(app.getAppPath() + '/main.cjs')(
+          './src/taskbar.cjs',
+        ).readLayout = () => ({ centered: true, widgets: true });
+        const display = screen.getPrimaryDisplay();
+        screen.getPrimaryDisplay = () => ({
+          ...display,
+          workArea: { ...display.bounds, height: display.bounds.height - 48 },
+        });
+      }
     });
     const launcherReady = app.waitForEvent('window');
     await page.evaluate(() => window.workUpdates.settings({ corner: true }));
@@ -315,14 +325,61 @@ async function waitFor(page, fn) {
     await page.evaluate(() => window.workUpdates.window({ action: 'hide' }));
     const launcherBounds = await app.evaluate(({ BrowserWindow }) =>
       BrowserWindow.getAllWindows()
-        .find((w) => w.webContents.getURL().endsWith('/corner.html'))
+        .find((w) => /\/(corner|weather)\.html$/.test(w.webContents.getURL()))
         .getBounds(),
     );
+    if (process.platform === 'win32') {
+      check(
+        (await launcherPage.locator('img').count()) === 0 &&
+          (await launcherPage.locator('#corner-toggle').textContent()) === '',
+        'Weather area has no added W, icon, or text',
+      );
+      const material = await launcherPage.locator('#corner-toggle').evaluate((el) => {
+        const css = getComputedStyle(el);
+        return { color: css.backgroundColor, shadow: css.boxShadow, radius: css.borderRadius };
+      });
+      check(
+        material.color === 'rgba(0, 0, 0, 0.004)' &&
+          material.shadow === 'none' &&
+          material.radius === '0px',
+        'Weather control adds no visible card treatment: ' + JSON.stringify(material),
+      );
+      const nativeTarget = await app.evaluate(async ({ BrowserWindow, screen }) => {
+        const w = BrowserWindow.getAllWindows().find((w) =>
+          w.webContents.getURL().endsWith('/weather.html'),
+        );
+        const bitmap = (await w.webContents.capturePage()).getBitmap();
+        let alpha = 0;
+        for (let i = 3; i < bitmap.length; i += 4) alpha = Math.max(alpha, bitmap[i]);
+        return {
+          bounds: w.getBounds(),
+          display: screen.getPrimaryDisplay(),
+          shadow: w.hasShadow(),
+          focusable: w.isFocusable(),
+          alpha,
+        };
+      });
+      check(
+        nativeTarget.bounds.y ===
+          nativeTarget.display.workArea.y + nativeTarget.display.workArea.height &&
+          nativeTarget.bounds.width === 144 &&
+          nativeTarget.bounds.height === 48,
+        'Weather input region sits inside the taskbar strip',
+      );
+      check(
+        !nativeTarget.shadow && !nativeTarget.focusable && nativeTarget.alpha <= 1,
+        'Native weather region remains visually transparent and unfocusable: alpha=' +
+          nativeTarget.alpha,
+      );
+    }
     const cursor = async (point) =>
       app.evaluate(({ screen }, value) => {
         screen.getCursorScreenPoint = () => value;
       }, point);
-    const atCorner = { x: launcherBounds.x + 22, y: launcherBounds.y + 22 };
+    const atCorner = {
+      x: launcherBounds.x + Math.floor(launcherBounds.width / 2),
+      y: launcherBounds.y + Math.floor(launcherBounds.height / 2),
+    };
     const waitForMode = async (mode) => {
       for (let attempt = 0; attempt < 120; attempt++) {
         if ((await page.evaluate(() => window.workUpdates.state())).value.windowMode === mode)
@@ -406,6 +463,30 @@ async function waitFor(page, fn) {
       'Clicking inside the peek retains it',
     );
     await page.keyboard.press('Escape');
+    if (process.platform === 'win32') {
+      await app.evaluate(({ app, screen }) => {
+        process.getBuiltinModule('module').createRequire(app.getAppPath() + '/main.cjs')(
+          './src/taskbar.cjs',
+        ).readLayout = () => ({ centered: false, widgets: true });
+        screen.emit('display-metrics-changed', {}, screen.getPrimaryDisplay(), ['workArea']);
+      });
+      for (let attempt = 0; attempt < 20 && (await app.windows()).length !== 1; attempt++)
+        await page.waitForTimeout(50);
+      check(
+        (await app.windows()).length === 1 &&
+          (await page.evaluate(() => window.workUpdates.state())).value.windowMode === 'pinned',
+        'Changing to left alignment removes the input region and keeps the retained queue open',
+      );
+      const restored = app.waitForEvent('window');
+      await app.evaluate(({ app, screen }) => {
+        process.getBuiltinModule('module').createRequire(app.getAppPath() + '/main.cjs')(
+          './src/taskbar.cjs',
+        ).readLayout = () => ({ centered: true, widgets: true });
+        screen.emit('display-metrics-changed', {}, screen.getPrimaryDisplay(), ['workArea']);
+      });
+      await (await restored).locator('#corner-toggle').waitFor();
+      check((await app.windows()).length === 2, 'A supported layout restores the weather region');
+    }
     await page.evaluate(() => window.workUpdates.settings({ corner: false }));
     check((await app.windows()).length === 1, 'Disabling the launcher removes its native control');
     check(errors.length === 0, 'No renderer exceptions');
