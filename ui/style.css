@@ -106,7 +106,7 @@ button.icon:hover {
   max-width: 620px;
   margin: 0 auto;
   padding: 14px 20px 17px;
-  border-radius: 28px;
+  border-radius: 36px;
   background:
     radial-gradient(ellipse 120% 90% at -18% 83%, #147b7890 0 35%, transparent 35.5%),
     radial-gradient(ellipse 105% 93% at 102% 23%, #10488a80 0 50%, transparent 50.5%),
@@ -145,7 +145,7 @@ button.icon:hover {
 }
 .clock-area {
   text-align: center;
-  padding: 26px 0 20px;
+  padding: 32px 0 24px;
   flex: 1;
   min-height: 146px;
   -webkit-app-region: drag;

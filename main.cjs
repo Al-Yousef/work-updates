@@ -472,15 +472,20 @@ app.whenReady().then(async () => {
   });
   const saved = queue.state.settings.bounds || {},
     area = screen.getPrimaryDisplay().workArea,
+    queueWidth = 420,
+    queueHeight = Math.min(880, area.height - 32),
     initiallyVisible =
       !args.includes('--hidden') && (!queue.state.settings.corner || args.includes('--show'));
   window = new BrowserWindow({
-    width: 484,
-    height: Math.min(720, area.height - 32),
+    width: queueWidth,
+    height: queueHeight,
     minWidth: 390,
     minHeight: 590,
-    x: Math.max(area.x, Math.min(saved.x ?? area.x + area.width - 508, area.x + area.width - 484)),
-    y: Math.max(area.y, Math.min(saved.y ?? area.y + 24, area.y + area.height - 590)),
+    x: Math.max(
+      area.x,
+      Math.min(saved.x ?? area.x + area.width - queueWidth - 24, area.x + area.width - queueWidth),
+    ),
+    y: Math.max(area.y, Math.min(saved.y ?? area.y + 24, area.y + area.height - queueHeight)),
     frame: false,
     transparent: true,
     show: false,
