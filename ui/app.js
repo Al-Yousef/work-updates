@@ -5,10 +5,52 @@ const APP_ICON =
   encodeURIComponent(
     '<svg xmlns="http://www.w3.org/2000/svg" width="512" height="512" viewBox="0 0 512 512"><rect width="512" height="512" rx="116" fill="#5c7a6a"/><path fill="#f1f4f7" d="M96 136H150L185 296L229 155H283L325 296L361 136H416L359 376H304L257 221L207 376H152Z"/></svg>',
   );
-const STATUS_ICON = APP_ICON.replace(
-  encodeURIComponent('fill="#5c7a6a"'),
-  encodeURIComponent('fill="none"'),
-);
+const DEVICE_LABELS = {
+  pc: 'Windows PC',
+  mac: 'Mac',
+  linux: 'Linux PC',
+  phone: 'Phone',
+  tablet: 'Tablet',
+  unknown: 'Device not recorded',
+};
+const deviceSvg = (paths) =>
+  'data:image/svg+xml;charset=utf-8,' +
+  encodeURIComponent(
+    '<svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 32 32" fill="none" stroke="#f1f4f7" stroke-width="1.8" stroke-linecap="round" stroke-linejoin="round">' +
+      paths +
+      '</svg>',
+  );
+const DEVICE_ICONS = {
+  pc: deviceSvg('<rect x="5" y="6" width="22" height="15" rx="2"/><path d="M16 21v5m-5 0h10"/>'),
+  mac: deviceSvg(
+    '<rect x="7" y="6" width="18" height="14" rx="2"/><path d="m7 20-3 5h24l-3-5m-12 3h6"/>',
+  ),
+  phone: deviceSvg('<rect x="10" y="4" width="12" height="24" rx="3"/><path d="M14 7h4m-4 18h4"/>'),
+  tablet: deviceSvg('<rect x="7" y="4" width="18" height="24" rx="2.5"/><path d="M14 25h4"/>'),
+  linux: deviceSvg(
+    '<rect x="5" y="6" width="22" height="15" rx="2"/><path d="M16 21v5m-5 0h10m-1-11 3 2-3 2m6 0h3"/>',
+  ),
+  unknown: deviceSvg(
+    '<rect x="6" y="7" width="20" height="18" rx="3"/><path d="M14 13a2 2 0 1 1 3 1.7c-1 .6-1 1-1 1.8m0 3h.01"/>',
+  ),
+};
+function sourceDevice(card) {
+  const kind = Object.hasOwn(DEVICE_ICONS, card.device?.kind) ? card.device.kind : 'unknown';
+  return { kind, label: DEVICE_LABELS[kind] };
+}
+function notificationSummary(card) {
+  const source = card.sources.find((s) => s.id === card.primarySourceId) || card.sources[0];
+  const value = String(card.summary || source?.summary || source?.body || 'No recorded update yet.')
+    .replace(/\*\*|`/g, '')
+    .replace(/\s+/g, ' ')
+    .trim();
+  return value.length <= 160
+    ? value
+    : value
+        .slice(0, 159)
+        .replace(/\s+\S*$/, '')
+        .trimEnd() + '…';
+}
 const STATUS_SYMBOLS = {
   working: '',
   needs: '!',
@@ -26,6 +68,12 @@ function statusTone(card) {
   return Object.hasOwn(STATUS_SYMBOLS, card.status) ? card.status : 'unknown';
 }
 function updateStatusIcon(icon, card) {
+  const device = sourceDevice(card);
+  if (icon.dataset.device !== device.kind) {
+    icon.dataset.device = device.kind;
+    icon.querySelector('.app-icon').src = DEVICE_ICONS[device.kind];
+    icon.title = device.kind === 'unknown' ? device.label : 'Chat runs on ' + device.label;
+  }
   const tone = statusTone(card);
   if (icon.dataset.status === tone) return;
   icon.dataset.status = tone;
@@ -34,7 +82,7 @@ function updateStatusIcon(icon, card) {
 function statusIcon(card) {
   const icon = node('span', '', { class: 'status-indicator', 'aria-hidden': 'true' });
   icon.append(
-    node('img', '', { src: STATUS_ICON, alt: '', class: 'app-icon' }),
+    node('img', '', { src: DEVICE_ICONS.unknown, alt: '', class: 'app-icon' }),
     node('span', '', { class: 'status-symbol' }),
   );
   updateStatusIcon(icon, card);
@@ -258,6 +306,9 @@ if ($('corner-toggle')) {
       visibleCards.map((card) => [
         view === 'done' ? card.taskKey : card.id,
         card.title,
+        card.chatName,
+        notificationSummary(card),
+        sourceDevice(card).kind,
         card.label,
         card.status,
         card.waitingOn?.kind === 'you',
@@ -297,6 +348,12 @@ if ($('corner-toggle')) {
             : null,
         );
         replacement.setAttribute('aria-label', card.title + ', ' + card.label);
+        replacement.setAttribute(
+          'aria-description',
+          sourceDevice(card).kind === 'unknown'
+            ? DEVICE_LABELS.unknown
+            : 'Chat runs on ' + sourceDevice(card).label,
+        );
         const header = node('span', '', { class: 'card-header' });
         header.append(statusIcon(card));
         const copy = node('span');
@@ -304,11 +361,17 @@ if ($('corner-toggle')) {
         const meta = node('span');
         meta.className = 'meta';
         meta.textContent =
-          'Work Updates' + (card.sources.length > 1 ? ' · ' + card.sources.length + ' chats' : '');
+          (card.chatName || (card.sources.length ? card.sources[0].title : 'New chat')) +
+          (card.sources.length > 1 ? ' · ' + card.sources.length + ' chats' : '');
+        meta.title = meta.textContent;
         const title = node('span', card.title, { class: 'card-title' });
         const line = node('span', '', { class: 'notification-line' });
         line.append(meta, node('span', ago(card.doneAt || card.at), { class: 'card-age' }));
-        copy.append(line, title);
+        copy.append(
+          line,
+          title,
+          node('span', notificationSummary(card), { class: 'card-summary' }),
+        );
         const statuses = node('span', '', { class: 'card-statuses' });
         const badge = node('span', card.label, { class: 'badge ' + card.status });
         if (card.waitingOn?.kind === 'you') badge.classList.add('needs');
@@ -766,7 +829,10 @@ if ($('corner-toggle')) {
     const close = top.lastElementChild;
     top.replaceChildren(
       statusIcon(card),
-      node('span', 'Work Updates', { class: 'notification-app' }),
+      node('span', card.chatName || 'New chat', {
+        class: 'notification-app',
+        id: 'notification-chat-name',
+      }),
       node('span', ago(card.doneAt || card.at), { id: 'notification-age', class: 'card-age' }),
       close,
     );
@@ -846,8 +912,13 @@ if ($('corner-toggle')) {
     }
     const source = selectedSource(card);
     $('panel').querySelector('.panel-title').textContent = source?.taskTitle || card.title;
+    $('notification-chat-name').textContent = source?.title || card.chatName || 'New chat';
+    $('notification-chat-name').title = $('notification-chat-name').textContent;
     $('panel-status').textContent = card.label + (card.urgent ? ' · Urgent' : '');
-    updateStatusIcon($('panel').querySelector('.status-indicator'), card);
+    updateStatusIcon($('panel').querySelector('.status-indicator'), {
+      ...card,
+      device: source?.device || card.device,
+    });
     $('notification-age').textContent = ago(card.doneAt || card.at);
     if ($('task-error')) $('task-error').textContent = card.error || '';
     const complete = $('complete-task');

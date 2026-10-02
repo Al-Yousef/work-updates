@@ -397,6 +397,10 @@ html:not(.revealed) .status-indicator::after {
   margin-bottom: 3px;
 }
 .meta {
+  min-width: 0;
+  overflow: hidden;
+  text-overflow: ellipsis;
+  white-space: nowrap;
   color: var(--soft);
   font-size: 12px;
   font-weight: 400;
@@ -424,6 +428,21 @@ html:not(.revealed) .status-indicator::after {
   line-height: 20px;
   color: var(--soft);
   font-size: 14px;
+}
+.card-summary {
+  display: -webkit-box;
+  -webkit-box-orient: vertical;
+  -webkit-line-clamp: 2;
+  overflow: hidden;
+  overflow-wrap: anywhere;
+  margin-top: 4px;
+  color: var(--soft);
+  font-size: 13px;
+  line-height: 18px;
+  font-weight: 400;
+}
+.card-summary + .card-statuses {
+  margin-top: 5px;
 }
 .badge {
   font: inherit;
@@ -581,6 +600,10 @@ footer button {
   font-size: 10px;
 }
 .notification-app {
+  min-width: 0;
+  white-space: nowrap;
+  overflow: hidden;
+  text-overflow: ellipsis;
   flex: 1;
   color: var(--soft);
   font-size: 12px;

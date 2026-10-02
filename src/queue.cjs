@@ -4,6 +4,7 @@ const path = require('node:path');
 const crypto = require('node:crypto');
 const { EventEmitter } = require('node:events');
 const { inferAttention, statusLabel, priorityRank } = require('./attention.cjs');
+const { device, executionDevice, shortSummary, taskSummary } = require('./presentation.cjs');
 const now = () => Math.floor(Date.now() / 1000);
 const hash = (value) => crypto.createHash('sha256').update(value).digest('hex').slice(0, 24);
 const labels = {
@@ -119,7 +120,10 @@ class Queue extends EventEmitter {
         id,
         taskKey: key,
         title: taskTitle,
-        chatName: name,
+        chatName: display.title,
+        groupName: sources.length > 1 ? name : '',
+        summary: shortSummary(display.summary || display.body) || 'No recorded update yet.',
+        device: device(display.device || this.feed.device),
         primarySourceId: display.id,
         kind: 'observed',
         manual: state.manual || 'auto',
@@ -135,6 +139,8 @@ class Queue extends EventEmitter {
           id: s.id,
           title: s.title,
           taskTitle: s.taskTitle || '',
+          summary: shortSummary(s.summary || s.body),
+          device: device(s.device || this.feed.device),
           body: s.body || '',
           contextLoaded: !!s.contextLoaded,
           cwd: s.cwd || '',
@@ -159,10 +165,19 @@ class Queue extends EventEmitter {
       if (!used.has(chat.id)) result.push(make(chat.id, chat.title, [chat]));
     for (const task of this.state.tasks) {
       const observed = this.feed.threads.find((s) => s.id === task.threadId);
+      const summary = taskSummary(
+        task,
+        [...this.approvals.values()].find((r) => r.taskId === task.id),
+      );
+      const sourceDevice = device(
+        task.device || (observed && (observed.device || this.feed.device)),
+      );
       result.push({
         ...task,
         title: observed?.taskTitle || task.title,
-        chatName: observed?.title || task.title,
+        chatName: observed?.title || (task.threadId ? task.title : 'New chat'),
+        summary,
+        device: sourceDevice,
         primarySourceId: task.threadId,
         kind: 'local',
         taskKey: task.id,
@@ -192,6 +207,8 @@ class Queue extends EventEmitter {
                 id: task.threadId,
                 title: observed?.title || task.title,
                 taskTitle: observed?.taskTitle || task.title,
+                summary,
+                device: sourceDevice,
                 body: task.messages?.filter((m) => m.role === 'assistant').at(-1)?.text || '',
                 contextLoaded: true,
                 cwd: task.cwd,
@@ -247,6 +264,7 @@ class Queue extends EventEmitter {
       notificationVersion: 'queued',
       snoozedUntil: 0,
       threadId: null,
+      device: executionDevice(),
     };
     this.state.tasks.push(task);
     this.save();

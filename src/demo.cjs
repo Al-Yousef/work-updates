@@ -2,8 +2,10 @@
 const { EventEmitter } = require('node:events');
 const crypto = require('node:crypto');
 const { now } = require('./queue.cjs');
+const { executionDevice } = require('./presentation.cjs');
 function feed() {
   return {
+    device: executionDevice(),
     monitoredCount: 3,
     collectedAt: now(),
     threads: [

@@ -359,7 +359,8 @@ def collect(config):
             if id not in live_ids:
                 del SOURCE_CACHE[id]
         return {'schemaVersion': 2, 'collectorVersion': TASK_TITLE_VERSION, 'collectedAt': now, 'scope': 'Local Codex chats',
-                'threads': result, 'monitoredCount': len(result), 'warnings': warnings}
+                'threads': result, 'monitoredCount': len(result), 'warnings': warnings,
+                'device': {'kind': {'win32': 'pc', 'darwin': 'mac', 'linux': 'linux'}.get(sys.platform, 'unknown')}}
     finally:
         state.close()
         if history:

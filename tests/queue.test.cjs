@@ -22,9 +22,12 @@ test('owners and urgency survive reload without changing completion fingerprints
 });
 test('a grouped chat surfaces its waiting-on-you source before a newer finished source', (t) => {
   const q = model(t);
+  q.feed.device = { kind: 'mac' };
   q.feed.threads.push({
     ...q.feed.threads[0],
     id: 'needs-chat',
+    title: 'Approval chat',
+    device: { kind: 'pc' },
     taskTitle: 'Approve the draft',
     body: 'Still blocked on your approval.',
     status: 'blocked',
@@ -33,6 +36,11 @@ test('a grouped chat surfaces its waiting-on-you source before a newer finished 
   q.group({ title: 'Launch', ids: ['sample-chat', 'needs-chat'] });
   const card = q.cards()[0];
   assert.equal(card.title, 'Approve the draft');
+  assert.equal(card.chatName, 'Approval chat');
+  assert.equal(card.groupName, 'Launch');
+  assert.equal(card.summary, 'Still blocked on your approval.');
+  assert.equal(card.device.kind, 'pc');
+  assert.equal(taskSource(card, 'sample-chat').device.kind, 'mac');
   assert.equal(card.waitingOn.kind, 'you');
   assert.equal(card.label, 'Waiting on you · blocked');
   assert.equal(taskSource(card).id, 'needs-chat');
@@ -142,6 +150,33 @@ test('titles change without changing the observed chat link or review fingerprin
   assert.equal(c.sources[0].id, 'sample-chat');
   assert.equal(c.sources[0].title, 'Launch planning');
   assert.equal(c.reviewed, true);
+});
+test('summaries and executor metadata update without replaying a reviewed notification', (t) => {
+  const q = model(t);
+  q.feed.device = { kind: 'mac' };
+  q.action('sample-chat', 'reviewed');
+  const before = q.get('sample-chat');
+  q.feed.threads[0].summary = 'The build passed. Waiting for final review.';
+  const after = q.get('sample-chat');
+  assert.equal(after.summary, 'The build passed. Waiting for final review.');
+  assert.equal(after.device.kind, 'mac');
+  assert.equal(after.reviewed, true);
+  assert.equal(after.taskKey, before.taskKey);
+  assert.equal(after.fingerprint, before.fingerprint);
+  delete q.feed.device;
+  assert.equal(q.get('sample-chat').device.kind, 'unknown');
+});
+test('an app-owned summary does not report an old completion while a new reply is working', (t) => {
+  const q = model(t),
+    task = q.create({ title: 'Verify installer', prompt: 'Check the installed application.' });
+  q.message(task.id, 'assistant', 'The previous pass is ready.');
+  q.message(task.id, 'user', 'Check the updated build.');
+  q.patch(task.id, { status: 'working' });
+  assert.equal(q.get(task.id).summary, 'Working on your latest message.');
+  q.message(task.id, 'assistant', '**Current check:** The build is still running.');
+  assert.equal(q.get(task.id).summary, 'Current check: The build is still running.');
+  q.patch(task.id, { status: 'blocked', error: 'The chat disconnected. Retry to continue.' });
+  assert.equal(q.get(task.id).summary, 'The chat disconnected. Retry to continue.');
 });
 test('a stale task identity cannot complete or open the new task in the same chat', (t) => {
   const q = model(t),

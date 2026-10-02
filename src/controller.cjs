@@ -5,6 +5,7 @@ const { EventEmitter } = require('node:events');
 const { now, text } = require('./queue.cjs');
 const { inferAttention } = require('./attention.cjs');
 const { taskSource } = require('./task-source.cjs');
+const { executionDevice } = require('./presentation.cjs');
 function statusFromText(value) {
   if (inferAttention(value).waitingOn.kind === 'you') return 'needs';
   if (/\b(remaining blocker|still blocked|blocked by|blocked until|blocked on)\b/i.test(value))
@@ -48,7 +49,7 @@ class Controller extends EventEmitter {
     const cwd = task.cwd || path.join(q.directory, 'tasks', task.id);
     try {
       fs.mkdirSync(cwd, { recursive: true });
-      q.patch(id, { status: 'starting', cwd, error: '' });
+      q.patch(id, { status: 'starting', cwd, error: '', device: executionDevice() });
       if (!task.messages.some((m) => m.role === 'user')) q.message(id, 'user', task.prompt);
       const result = await this.client.start(task, cwd);
       q.patch(id, { ...result, ...(task.status === 'starting' ? { status: 'working' } : {}) });
@@ -85,7 +86,12 @@ class Controller extends EventEmitter {
     q.busy.add(task.id);
     q.busy.add(lock);
     q.message(task.id, 'user', value);
-    q.patch(task.id, { status: 'working', error: '', reviewedVersion: '' });
+    q.patch(task.id, {
+      status: 'working',
+      error: '',
+      reviewedVersion: '',
+      device: executionDevice(),
+    });
     try {
       await this.client.send(task.threadId, value);
       return { taskId: task.id };

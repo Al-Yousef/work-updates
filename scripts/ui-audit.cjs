@@ -106,10 +106,21 @@ async function waitFor(page, fn) {
     );
     check(true, 'Notification icons load under the app content policy');
     check(
+      (await page.locator('.card-trigger').first().locator('.meta').innerText()) ===
+        'Interface review' &&
+        (await page.locator('.card-trigger').first().locator('.card-summary').innerText()).includes(
+          'Both previews are ready',
+        ),
+      'A card shows its actual chat name and a recorded update alongside the task and status',
+    );
+    check(
       await page.locator('.swipe-actions').first().isHidden(),
       'Swipe commands stay hidden until a swipe',
     );
     await page.screenshot({ path: path.join(output, 'queue.png') });
+    await page
+      .locator('#queue')
+      .screenshot({ path: path.join(output, 'chat-summary-preview.png') });
     const swipeCard = page.getByRole('button', { name: 'Review launch notes, Ready to review' });
     const swipeBounds = await swipeCard.boundingBox();
     await page.mouse.move(swipeBounds.x + swipeBounds.width - 25, swipeBounds.y + 45);
@@ -350,6 +361,10 @@ async function waitFor(page, fn) {
       (await page.locator('.panel-title').innerText()) === 'Review launch notes',
       'Switching source switches the task information',
     );
+    check(
+      (await page.locator('#notification-chat-name').innerText()) === 'Launch planning',
+      'Source selection updates the expanded chat name',
+    );
     await page.locator('#chat-input').fill('Keep this draft in launch planning.');
     await groupSource.selectOption(attentionSource);
     check(
@@ -379,6 +394,48 @@ async function waitFor(page, fn) {
       app.evaluate(({ BrowserWindow }, value) => {
         BrowserWindow.getAllWindows()[0].webContents.send('work-updates:state', value);
       }, fixture);
+    const metadataFixture = structuredClone(baseline);
+    metadataFixture.cards = [metadataFixture.cards[0]];
+    metadataFixture.cards[0].chatName = 'Build review';
+    metadataFixture.cards[0].summary = 'The new build passed. Waiting for the installer review.';
+    metadataFixture.cards[0].device = { kind: 'mac' };
+    const metadataSource = metadataFixture.cards[0].sources.find(
+      (s) => s.id === metadataFixture.cards[0].primarySourceId,
+    );
+    metadataSource.title = 'Build review';
+    metadataSource.device = { kind: 'mac' };
+    await pushFixture(metadataFixture);
+    await page
+      .getByText('The new build passed. Waiting for the installer review.', { exact: true })
+      .waitFor();
+    check(
+      (await page.locator('.meta').innerText()).startsWith('Build review') &&
+        (await page.locator('#queue .status-indicator').getAttribute('data-device')) === 'mac',
+      'Updated summary, chat name and source device render together',
+    );
+    await page.locator('.card-trigger').click();
+    check(
+      (await page.locator('#notification-chat-name').innerText()) === 'Build review' &&
+        (await page.locator('#panel .status-indicator').getAttribute('data-device')) === 'mac',
+      'Expanded notification preserves the selected source device',
+    );
+    await page.keyboard.press('Escape');
+    metadataFixture.cards[0].device = { kind: 'phone' };
+    await pushFixture(metadataFixture);
+    await page.locator('#queue .status-indicator[data-device=phone]').waitFor();
+    check(
+      (await page.locator('.card-trigger').getAttribute('aria-description')).includes('Phone'),
+      'An explicitly recorded phone remains a phone on a desktop viewer',
+    );
+    delete metadataFixture.cards[0].device;
+    await pushFixture(metadataFixture);
+    await page.locator('#queue .status-indicator[data-device=unknown]').waitFor();
+    check(
+      (await page.locator('#queue .status-indicator').getAttribute('title')) ===
+        'Device not recorded',
+      'An unknown origin is not guessed from the viewer platform',
+    );
+    await pushFixture(baseline);
     const statusFixture = (status, label, owner = 'none') => {
       const fixture = structuredClone(baseline);
       fixture.cards = [
@@ -409,7 +466,7 @@ async function waitFor(page, fn) {
             getComputedStyle(e, '::after').transform !== before,
           ringBefore,
         ),
-      'The working ring actually rotates around the stationary W',
+      'The working ring actually rotates around the stationary device',
     );
     await page.locator('.card-trigger').click();
     await page.locator('#panel .status-indicator[data-status=working]').waitFor();
@@ -424,7 +481,7 @@ async function waitFor(page, fn) {
           document.querySelector('#panel .status-indicator') === window.auditStatusIcon &&
           getComputedStyle(window.auditStatusIcon, '::after').animationName === 'none',
       ),
-      'A live completion updates the same expanded W and stops its ring',
+      'A live completion updates the same expanded device and stops its ring',
     );
     await page.keyboard.press('Escape');
     const statusCues = [];
@@ -497,6 +554,8 @@ async function waitFor(page, fn) {
     const longTitle =
       'Review the desktop notification behavior with every local Codex chat and a much longer task title';
     const longFixture = structuredClone(baseline);
+    longFixture.cards[0].chatName =
+      'Desktop notification review with a long source chat name that must stay readable';
     longFixture.cards[0].title = longTitle;
     longFixture.cards[0].sources.find(
       (s) => s.id === longFixture.cards[0].primarySourceId,

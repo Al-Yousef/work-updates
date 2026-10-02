@@ -5,6 +5,7 @@ import sqlite3
 import tempfile
 import time
 import unittest
+from unittest.mock import patch
 
 spec = importlib.util.spec_from_file_location('collector', Path(__file__).resolve().parent.parent / 'bridge' / 'collector.py')
 collector = importlib.util.module_from_spec(spec)
@@ -41,6 +42,8 @@ class FeedTests(unittest.TestCase):
     def test_actual_name_latest_message_and_readonly(self):
         path = self.add('one', 'The actual chat name', [self.record('Earlier'), self.record('Still working')])
         before = (self.home / 'state_5.sqlite').read_bytes()
+        with patch.object(collector.sys, 'platform', 'darwin'):
+            self.assertEqual(collector.collect(self.config)['device']['kind'], 'mac')
         feed = collector.collect(self.config)
         self.assertEqual(feed['threads'][0]['title'], 'The actual chat name')
         self.assertEqual(feed['threads'][0]['body'], 'Still working')
