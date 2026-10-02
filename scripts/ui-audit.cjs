@@ -68,7 +68,7 @@ async function waitFor(page, fn) {
     const bounds = await launch.boundingBox();
     await page.mouse.move(bounds.x + 80, bounds.y + 45);
     await page.mouse.down();
-    await page.waitForTimeout(750);
+    await page.locator('#chat-input').waitFor({ state: 'visible', timeout: 5000 });
     await page.mouse.up();
     check(
       (await page.locator('#chat-input').count()) === 1,

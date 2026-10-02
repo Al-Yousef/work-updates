@@ -54,5 +54,6 @@ if (process.argv.includes('--ui')) {
     env: { ...process.env, WORK_UPDATES_EXECUTABLE: executable },
     stdio: 'inherit',
   });
-  process.exit(result.status || 0);
+  if (result.error) throw result.error;
+  process.exit(result.status === null ? 1 : result.status);
 }

@@ -204,7 +204,7 @@ class HostPeer extends EventEmitter {
     });
   }
   broadcast(state) {
-    this.latest = state;
+    this.latest = structuredClone(state);
     if (this.broadcastTimer) return;
     this.broadcastTimer = setTimeout(() => {
       this.broadcastTimer = null;
@@ -260,7 +260,7 @@ class RemotePeer extends EventEmitter {
           },
         },
         (res) => {
-          if (res.statusCode !== 200) {
+          if (res.statusCode !== 200 && !(route === '/command' && res.statusCode === 400)) {
             res.resume();
             reject(
               new Error(
