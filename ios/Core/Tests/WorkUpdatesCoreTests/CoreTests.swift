@@ -39,7 +39,7 @@ final class CoreTests:XCTestCase {
         XCTAssertThrowsError(try QueueState.decode(Data(count:16_000_001)))
     }
     func testRealPrivateHTTPSFixtureWhenAvailable() async throws {
-        let file="/tmp/work-updates-ios-pairing-code"
+        let file=ProcessInfo.processInfo.environment["WU_TEST_CODE_FILE"] ?? "/tmp/work-updates-ios-pairing-code"
         guard let value=try? String(contentsOfFile:file,encoding:.utf8) else {throw XCTSkip("Private synthetic TLS fixture is not running.")}
         let client=try PeerClient(code:value);defer{client.close()}
         let state=try await client.state();XCTAssertEqual(state.protocolVersion,2);XCTAssertFalse(state.cards.isEmpty)

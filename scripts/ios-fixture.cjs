@@ -8,7 +8,8 @@ const { Controller } = require('../src/controller.cjs');
 const { DemoCodex, feed } = require('../src/demo.cjs');
 const { HostPeer } = require('../src/peer.cjs');
 const directory = fs.mkdtempSync(path.join(os.tmpdir(), 'wu-ios-fixture-'));
-const codeFile = path.join(os.tmpdir(), 'work-updates-ios-pairing-code');
+const codeFile =
+  process.env.WU_TEST_CODE_FILE || path.join(os.tmpdir(), 'work-updates-ios-pairing-code');
 const queue = new Queue(directory),
   client = new DemoCodex(),
   controller = new Controller(queue, client);
