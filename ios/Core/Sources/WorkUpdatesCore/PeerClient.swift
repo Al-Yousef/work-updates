@@ -25,7 +25,13 @@ private final class PinnedDelegate: NSObject, URLSessionDelegate, URLSessionTask
                     willPerformHTTPRedirection response: HTTPURLResponse, newRequest request: URLRequest,
                     completionHandler: @escaping (URLRequest?) -> Void) {completionHandler(nil)}
 }
-public final class PeerClient: @unchecked Sendable {
+public protocol PeerConnection: AnyObject, Sendable {
+    func state() async throws -> QueueState
+    func events(_ receive: @escaping @Sendable (QueueState) async throws -> Void) async throws
+    func command(_ method: String, input: [String:JSONValue]) async throws -> JSONValue
+    func close()
+}
+public final class PeerClient: PeerConnection, @unchecked Sendable {
     public let pairing: PairingCode
     private let session: URLSession
     private let delegate: PinnedDelegate

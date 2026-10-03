@@ -9,7 +9,7 @@ packages:
 settings:
   base:
     SWIFT_VERSION: '5.9'
-    MARKETING_VERSION: '0.4.0'
+    MARKETING_VERSION: '0.4.1'
     CURRENT_PROJECT_VERSION: '1'
     CODE_SIGN_STYLE: Automatic
 targets:
@@ -49,14 +49,26 @@ targets:
       base:
         PRODUCT_BUNDLE_IDENTIFIER: io.workupdates.iphone.uitests
         GENERATE_INFOPLIST_FILE: YES
+  WorkUpdatesTests:
+    type: bundle.unit-test
+    platform: iOS
+    sources: [Tests]
+    dependencies:
+      - target: WorkUpdates
+      - package: WorkUpdatesCore
+    settings:
+      base:
+        PRODUCT_BUNDLE_IDENTIFIER: io.workupdates.iphone.tests
+        GENERATE_INFOPLIST_FILE: YES
 schemes:
   WorkUpdates:
     build:
       targets:
         WorkUpdates: all
         WorkUpdatesUITests: [test]
+        WorkUpdatesTests: [test]
     test:
-      targets: [WorkUpdatesUITests]
+      targets: [WorkUpdatesTests, WorkUpdatesUITests]
       environmentVariables:
         WU_TEST_CODE_FILE: /tmp/work-updates-ios-pairing-code
     run:

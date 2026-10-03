@@ -42,7 +42,7 @@ final class CoreTests:XCTestCase {
         let file=ProcessInfo.processInfo.environment["WU_TEST_CODE_FILE"] ?? "/tmp/work-updates-ios-pairing-code"
         guard let value=try? String(contentsOfFile:file,encoding:.utf8) else {throw XCTSkip("Private synthetic TLS fixture is not running.")}
         let client=try PeerClient(code:value);defer{client.close()}
-        let state=try await client.state();XCTAssertEqual(state.protocolVersion,2);XCTAssertFalse(state.cards.isEmpty)
+        let state=try await client.state();XCTAssertEqual(state.protocolVersion,3);XCTAssertFalse(state.cards.isEmpty)
         let task=try await client.command("create",input:["title":.string("Swift protocol sample"),"prompt":.string("Synthetic fixture only.")])
         XCTAssertNotNil(task.object?["id"]?.string)
         let pairing=try PairingCode(value)

@@ -19,20 +19,28 @@ struct LinkState {
     @Published var busy:Set<String>=[]
     @Published var error:String?
     @Published var lastUndoComputer:String?
-    private var clients:[String:PeerClient]=[:]
+    private var clients:[String:any PeerConnection]=[:]
     private var workers:[String:Task<Void,Never>]=[:]
     private var generations:[String:UUID]=[:]
+    private var connections:[String:UUID]=[:]
+    private var orders:[String:StateOrder]=[:]
     private var expectedHosts:[String:String]=[:]
+    private let clientFactory:(String) throws -> any PeerConnection
+    private let persist:([PairedComputer]) throws -> Void
     private var active=false
     let demo:Bool
-    init() {
+    init(computers:[PairedComputer]?=nil,
+         clientFactory:@escaping (String) throws -> any PeerConnection = {try PeerClient(code:$0)},
+         persist:@escaping ([PairedComputer]) throws -> Void = {try PairingVault.save($0)}) {
+        self.clientFactory=clientFactory;self.persist=persist
         demo=ProcessInfo.processInfo.arguments.contains("--demo")
         if demo {loadDemo();return}
-        do {computers=try PairingVault.load()} catch {self.error=error.localizedDescription}
+        if let computers {self.computers=computers}
+        else {do {self.computers=try PairingVault.load()} catch {self.error=error.localizedDescription}}
         #if DEBUG
         if ProcessInfo.processInfo.arguments.contains("--integration-test"),
            let code=ProcessInfo.processInfo.environment["WU_PAIRING_CODE"],!code.isEmpty {
-            computers=[PairedComputer(name:"Test computer",code:code,id:"integration-desktop")]
+            self.computers=[PairedComputer(name:"Test computer",code:code,id:"integration-desktop")]
         }
         #endif
     }
@@ -69,6 +77,7 @@ struct LinkState {
     }
     private func pause(_ id:String) {
         generations[id]=UUID()
+        connections.removeValue(forKey:id);orders.removeValue(forKey:id)
         workers.removeValue(forKey:id)?.cancel()
         clients.removeValue(forKey:id)?.close()
         links[id]=LinkState(online:false,lastSeen:links[id]?.lastSeen,message:"Reconnects when the app opens")
@@ -77,6 +86,9 @@ struct LinkState {
         if let expected=expectedHosts[id],let actual=state.host?.id,expected != actual {
             throw PeerError.server("This computer’s identity changed. Forget it and pair again.")
         }
+        var order=orders[id] ?? StateOrder()
+        guard try order.accept(state.stateVersion) else {return}
+        orders[id]=order
         if let actual=state.host?.id {expectedHosts[id]=actual}
         states[id]=state
         links[id]=LinkState(online:true,lastSeen:Date(),message:state.health?.ok == false ?
@@ -90,21 +102,24 @@ struct LinkState {
             var attempt=0
             while !Task.isCancelled {
                 guard let self,self.active,self.generations[computer.id]==generation else {return}
+                let connection=UUID()
                 do {
-                    let client=try PeerClient(code:computer.code)
+                    let client=try self.clientFactory(computer.code)
+                    self.connections[computer.id]=connection;self.orders[computer.id]=StateOrder()
                     self.clients[computer.id]=client
                     let state=try await client.state()
-                    guard self.generations[computer.id]==generation,!Task.isCancelled else {client.close();return}
+                    guard self.isCurrent(computer.id,generation:generation,connection:connection),!Task.isCancelled else {client.close();return}
                     try self.accept(state,id:computer.id);attempt=0
                     try await client.events { [weak self] state in
                         try await MainActor.run {
-                            guard let self,self.generations[computer.id]==generation,self.active else {throw CancellationError()}
+                            guard let self,self.isCurrent(computer.id,generation:generation,connection:connection),self.active else {throw CancellationError()}
                             try self.accept(state,id:computer.id)
                         }
                     }
                 } catch {
                     guard self.generations[computer.id]==generation,!Task.isCancelled else {return}
                     self.clients.removeValue(forKey:computer.id)?.close()
+                    self.connections.removeValue(forKey:computer.id);self.orders.removeValue(forKey:computer.id)
                     self.links[computer.id]=LinkState(online:false,lastSeen:self.links[computer.id]?.lastSeen,message:error.localizedDescription)
                     if let failure=error as? PeerError,case .revoked=failure {return}
                 }
@@ -119,23 +134,28 @@ struct LinkState {
         if computers.contains(where:{(try? PairingCode($0.code))?.host==value.host && (try? PairingCode($0.code))?.port==value.port}) {
             throw PeerError.server("This computer is already paired. Forget its old connection before pairing again.")
         }
-        let client=try PeerClient(code:code)
+        let client=try clientFactory(code)
         defer {client.close()}
         let state=try await client.state()
         let label=name.trimmingCharacters(in:.whitespacesAndNewlines)
         let computer=PairedComputer(name:label.isEmpty ? state.host?.name ?? "Computer" : String(label.prefix(60)),code:code)
-        try PairingVault.save(computers+[computer])
+        // Validate ordering support before saving credentials or adding the device.
+        var order=StateOrder();_ = try order.accept(state.stateVersion)
+        try persist(computers+[computer])
         computers.append(computer)
         try accept(state,id:computer.id)
         if active {start(computer)}
     }
     func forget(_ id:String) throws {
         let next=computers.filter{$0.id != id}
-        if !demo {try PairingVault.save(next)}
+        if !demo {try persist(next)}
         pause(id);computers=next;states.removeValue(forKey:id);links.removeValue(forKey:id);expectedHosts.removeValue(forKey:id)
         if lastUndoComputer==id {lastUndoComputer=nil}
     }
     func reconnect() {if !demo && active {for computer in computers {start(computer)}}}
+    private func isCurrent(_ id:String,generation:UUID?,connection:UUID?) -> Bool {
+        generation != nil && connection != nil && generations[id]==generation && connections[id]==connection && computers.contains{$0.id==id}
+    }
     @discardableResult func command(_ method:String,computerID:String,input:[String:JSONValue],lock:String="queue") async throws -> JSONValue {
         let key=computerID+":"+lock
         guard !busy.contains(key) else {throw PeerError.server("This action is already being sent.")}
@@ -144,9 +164,17 @@ struct LinkState {
         if demo {throw PeerError.server("This preview uses sample chats. Pair a computer to send real actions.")}
         guard let client=clients[computerID] else {throw PeerError.unpaired}
         let generation=generations[computerID]
+        let connection=connections[computerID]
         let result=try await client.command(method,input:input)
+        guard isCurrent(computerID,generation:generation,connection:connection) else {return result}
         // A successful POST is never retried when the subsequent state fetch fails.
-        if let state=try? await client.state(),generations[computerID]==generation {try? accept(state,id:computerID)}
+        do {
+            let state=try await client.state()
+            if isCurrent(computerID,generation:generation,connection:connection) {try accept(state,id:computerID)}
+        } catch PeerError.hostRestarted {
+            if isCurrent(computerID,generation:generation,connection:connection),let computer=computers.first(where:{$0.id==computerID}) {start(computer)}
+        } catch { /* A newer stream can still supply current state. Never repeat the POST. */ }
+        guard isCurrent(computerID,generation:generation,connection:connection) else {return result}
         if ["action","group"].contains(method) {lastUndoComputer=computerID}
         if method=="undo" {lastUndoComputer=nil}
         return result

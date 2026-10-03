@@ -51,6 +51,8 @@ Pairing is remembered through the OS keychain and reconnects after brief interru
 
 For access away from home, configure [Tailscale](https://tailscale.com/docs/use-cases/personal-or-at-home-use/access-nas-media-file-servers) on all devices and use each computer's private `100.x` address. Work Updates does not configure Tailscale or require a public server.
 
+The 0.4.1 iPhone candidate requires protocol v3 desktops with ordered snapshots. A host-run identity and increasing snapshot counter prevent a delayed HTTP response from restoring an older update after a newer stream event. Late commands from forgotten or replaced connections cannot restore Undo ownership. The earlier verified 0.4.0 desktop packages do not include this change; candidate Apple compilation and simulator checks remain a separate gate.
+
 On your Mac, install Xcode and run `bash ios/setup-mac.command`. Select your Apple account's Personal Team, connect your iPhone and Run. A regular-account installation requires renewal every seven days. Phone updates stream while the app is open and refresh when it returns to the foreground; background APNs notifications are not configured. See [iPhone setup](ios/README.md) and [connected-device details](docs/DEVICES.md).
 
 ## Privacy

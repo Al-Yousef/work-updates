@@ -33,7 +33,7 @@ public struct PairingCode: Codable, Equatable, Sendable {
     public var baseURL: URL { URL(string: "https://\(host):\(port)")! }
 }
 public enum PeerError: LocalizedError {
-    case invalidCode, unpaired, revoked, responseTooLarge, unsupportedState, redirect, uncertainDelivery
+    case invalidCode, unpaired, revoked, responseTooLarge, unsupportedState, redirect, uncertainDelivery, hostRestarted
     case server(String)
     public var errorDescription: String? {
         switch self {
@@ -42,6 +42,7 @@ public enum PeerError: LocalizedError {
         case .revoked: return "Pairing was revoked. Forget this connection and pair again."
         case .responseTooLarge: return "The computer returned too much data."
         case .unsupportedState: return "Update Work Updates on this computer to connect its queue."
+        case .hostRestarted: return "The computer restarted. Reconnecting to its current queue."
         case .redirect: return "The paired connection redirected. No action was forwarded."
         case .uncertainDelivery: return "Delivery is not confirmed. Check the latest chat before retrying; this action was not resent."
         case .server(let message): return message
@@ -165,6 +166,7 @@ public struct QueueState: Codable, Sendable {
     public var protocolVersion: Int?
     public var host: HostIdentity?
     public var servedAt: Double?
+    public var stateVersion: QueueStateVersion?
     public var cards: [TaskCard]
     public var done: [TaskCard]
     public var approvals: [Approval]

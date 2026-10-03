@@ -386,6 +386,14 @@ class RemotePeer extends EventEmitter {
     const delay = Math.min(30000, 1000 * 2 ** Math.min(this.attempt++, 5));
     this.timer = setTimeout(() => this.connect().catch(() => this.reconnect()), delay);
   }
+  resync() {
+    if (this.closed) return;
+    this.generation++;
+    this.connected = false;
+    this.stream?.destroy();
+    this.emit('connection', false);
+    this.reconnect();
+  }
   async command(method, input = {}) {
     if (!allowed.has(method)) throw new Error('Unknown paired action.');
     if (!this.connected) throw new Error('Reconnect to your desktop before sending this action.');
