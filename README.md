@@ -1,6 +1,6 @@
 # Work Updates
 
-A small native desktop queue for work spread across Codex chats. See what needs attention, queue the next task, and keep its conversation close.
+A native queue for work spread across Codex chats, with Windows and Mac desktop apps and an iPhone SwiftUI companion. See what needs attention, queue the next task, and keep its conversation close.
 
 ![Work Updates with synthetic demo tasks](assets/queue.png)
 
@@ -33,20 +33,25 @@ Get the packages from [Releases](https://github.com/Al-Yousef/work-updates/relea
 | Device            | Package                                  |
 | ----------------- | ---------------------------------------- |
 | Windows x64       | Windows .exe installer, or portable .zip |
-| Apple Silicon Mac | macOS-arm64 .dmg or .zip                 |
-| Intel Mac         | macOS-x64 .dmg or .zip                   |
+| Apple Silicon Mac | macOS-arm64 .zip                         |
+| Intel Mac         | macOS-x64 .zip                           |
+| iPhone            | Build `ios/` with Xcode on your Mac      |
 
 Install Codex and sign in on the desktop that will run your tasks. The observer is included; an installed copy of Python is not required. Move the Mac app into Applications. This is an unsigned development release; macOS may require its documented **Privacy & Security → Open Anyway** flow after an attempted launch. See [Apple's guidance](https://support.apple.com/en-us/102445). Windows can also show a publisher warning. Checksums accompany each package.
 
-## Pair a native Mac companion
+## Connect Windows, Mac and iPhone
 
-1. On the Windows host, open Settings and choose its private network address under Your other desktop. Copy the pairing code.
-2. On your Mac, open Work Updates, paste the code in Settings, and choose Connect to desktop.
-3. The Mac window now shows the Windows queue. New tasks and mini-chat messages run on that host using its Codex account and workspaces.
+1. On each desktop, open Settings → Your devices, choose its private network address and copy its pairing code.
+2. Add the Windows computer on your Mac and the Mac on Windows. Both retain their own local queues alongside paired queues.
+3. In the iPhone app's Your devices sheet, add both computers. New tasks choose their executing computer. Replies, approval decisions, Reviewed, Snooze and Done return to the card's owner and update every connected viewer.
 
 The host must be awake, with Work Updates running. The devices need to reach each other on the same private network or an existing private overlay network. No hosted relay or browser tab is used. If the firewall requests access, allow only the network you intend to pair over. The app does not alter firewall rules. A private overlay network must already be installed and configured to use it away from home.
 
-Pairing is remembered through the OS keychain and reconnects after brief interruptions. Revoke device pairing on the host to remove access. Keep the pairing code private: it grants access to task contents and task submission. Disconnect on the companion to remove its remembered connection.
+Pairing is remembered through the OS keychain and reconnects after brief interruptions. Offline cards show their computer and last sync; recorded context stays readable while commands are disabled. Revoke hosted pairing to remove every viewer's access. Keep the pairing code private: it grants access to task contents and task submission. Forget a paired computer to remove that viewer's remembered connection.
+
+For access away from home, configure [Tailscale](https://tailscale.com/docs/use-cases/personal-or-at-home-use/access-nas-media-file-servers) on all devices and use each computer's private `100.x` address. Work Updates does not configure Tailscale or require a public server.
+
+On your Mac, install Xcode and run `bash ios/setup-mac.command`. Select your Apple account's Personal Team, connect your iPhone and Run. A regular-account installation requires renewal every seven days. Phone updates stream while the app is open and refresh when it returns to the foreground; background APNs notifications are not configured. See [iPhone setup](ios/README.md) and [connected-device details](docs/DEVICES.md).
 
 ## Privacy
 
@@ -70,6 +75,7 @@ Demo mode is offline and uses invented tasks. To use your local Codex chats, run
 npm test
 python -m unittest discover -s tests -p "test_*.py"
 npm run test:ui
+npm run test:devices
 npm run audit:release
 python -m pip install -r requirements-build.txt
 npm run build:helper
@@ -81,7 +87,7 @@ npm run dist:mac  # on macOS
 
 ## How it works
 
-Electron provides native Windows and Mac app windows, tray controls, notifications and OS-keychain access. A read-only Python collector observes existing Codex chat storage. A Node client uses [Codex App Server](https://developers.openai.com/codex/app-server/) for new tasks, streamed replies and approval requests. A small pinned-TLS peer protocol lets the companion operate the host queue. The renderer receives a fixed IPC API and has no Node access.
+Electron provides native Windows and Mac app windows, tray controls, notifications and OS-keychain access. SwiftUI provides the installed iPhone app, with Keychain credentials and pinned HTTPS. A read-only Python collector observes existing Codex chat storage on each computer. A Node client uses [Codex App Server](https://developers.openai.com/codex/app-server/) for new tasks, streamed replies and approval requests. Each desktop publishes only its own queue through a pinned-TLS peer protocol. Viewers merge queues using distinct device identities and route actions back to the owning computer. The desktop renderer receives a fixed IPC API and has no Node access.
 
 The existing-chat observer depends on Codex's local storage schema (currently state_5 and thread_history_1). Future Codex changes may require an observer update. Tasks already running in the Codex desktop should be steered in that source chat; Work Updates does not take over a running external pass. Task titles use bounded excerpts of the current request; confirmations preserve the previous request. Missing readable requests appear as Current task unavailable, with chat names shown separately. This is not a semantic task classifier and adds no model calls.
 

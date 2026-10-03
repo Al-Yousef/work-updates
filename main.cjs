@@ -29,6 +29,7 @@ const taskbar = require('./src/taskbar.cjs');
 const { dataDirectory, startsVisible } = require('./src/background.cjs');
 const { createTray } = require('./src/tray.cjs');
 const { DiagnosticLog } = require('./src/diagnostics.cjs');
+const { Devices } = require('./src/devices.cjs');
 const args = process.argv;
 function argument(name) {
   const index = args.indexOf(name);
@@ -64,8 +65,6 @@ let window,
   corner,
   observer,
   hostPeer,
-  remotePeer,
-  remoteState,
   windowController,
   cornerTimer,
   concealTimer,
@@ -82,10 +81,17 @@ const client = demo
   ? new (require('./src/demo.cjs').DemoCodex)()
   : new Codex({ binary: queue.state.settings.codexBinary, log: diagnostics });
 const controller = new Controller(queue, client);
+const devices = new Devices({
+  directory: dataDir,
+  state: () => queue.snapshot(),
+  command: performLocal,
+  encrypt: (value) => safeStorage.encryptString(value),
+  decrypt: (value) => safeStorage.decryptString(value),
+});
 const csp =
   "default-src 'self'; script-src 'self'; style-src 'self'; img-src 'self' data:; connect-src 'none'; base-uri 'none'; object-src 'none'; form-action 'none'; frame-ancestors 'none'";
 function snapshot() {
-  const state = remoteState || queue.snapshot();
+  const state = devices.snapshot();
   return {
     ...state,
     settings: {
@@ -99,17 +105,10 @@ function snapshot() {
       .filter((a) => !a.startsWith('127.')),
     demo,
     platform: process.platform,
-    remote: !!remotePeer,
-    connected: !!remotePeer?.connected,
     version: app.getVersion(),
     hosting: !!hostPeer?.server,
     windowMode: windowController?.mode || 'hidden',
     launcher: { ...launcherInfo, active: !!corner && !corner.isDestroyed() },
-    connection: remotePeer?.connected
-      ? 'Connected to desktop'
-      : remotePeer
-        ? 'Reconnecting to desktop'
-        : 'Local desktop',
   };
 }
 function publish() {
@@ -118,8 +117,15 @@ function publish() {
   if (window && !window.isDestroyed()) window.webContents.send('work-updates:state', state);
   if (corner && !corner.isDestroyed())
     corner.webContents.send('work-updates:state', { windowMode: state.windowMode });
-  hostPeer?.broadcast(queue.snapshot());
+  hostPeer?.broadcast(devices.localState());
 }
+devices.on('change', () => {
+  previousRemote = incoming(
+    devices.snapshot().cards.filter((c) => !c.owner.local),
+    previousRemote,
+  );
+  publish();
+});
 let publication;
 queue.on('change', () => {
   if (!publication)
@@ -292,7 +298,6 @@ function configure() {
 }
 async function perform(method, input = {}) {
   if (
-    remotePeer &&
     [
       'create',
       'start',
@@ -304,9 +309,13 @@ async function perform(method, input = {}) {
       'details',
       'group',
       'refresh',
+      'open',
     ].includes(method)
   )
-    return remotePeer.command(method, input);
+    return devices.command(method, input);
+  return performLocal(method, input);
+}
+async function performLocal(method, input = {}) {
   if (method === 'state') return snapshot();
   if (method === 'create') {
     if (input.cwd && !(queue.state.settings.projects || []).includes(input.cwd))
@@ -326,16 +335,12 @@ async function perform(method, input = {}) {
   if (method === 'stop') return controller.stop(input.id);
   if (method === 'respond') return controller.respond(input.id, input.decision, input.answers);
   if (method === 'details') {
-    const card = queue.get(input.id);
+    const card = queue.get(input.id, input.taskKey);
     observer?.request(card.sources.filter((s) => !s.contextLoaded).map((s) => s.id));
     return card;
   }
   if (method === 'open') {
-    const card = remoteState
-      ? [...remoteState.done, ...remoteState.cards].find(
-          (c) => c.taskKey === input.id || c.id === input.id,
-        )
-      : queue.get(input.id, input.taskKey);
+    const card = queue.get(input.id, input.taskKey);
     if (input.taskKey && card?.taskKey !== input.taskKey)
       throw new Error('This task changed. Reopen its update.');
     const source = taskSource(card, input.sourceId);
@@ -397,12 +402,9 @@ async function perform(method, input = {}) {
   throw new Error('Unknown app action.');
 }
 async function connectionAction(method, input) {
-  const { HostPeer, RemotePeer } = require('./src/peer.cjs');
+  const { HostPeer } = require('./src/peer.cjs');
   if (method === 'disconnect') {
-    remotePeer?.close();
-    remotePeer = null;
-    remoteState = null;
-    fs.rmSync(path.join(dataDir, 'paired-remote.enc'), { force: true });
+    devices.remove(input.id);
     publish();
     return {};
   }
@@ -419,51 +421,21 @@ async function connectionAction(method, input) {
       directory: dataDir,
       encrypt: (v) => safeStorage.encryptString(v),
       decrypt: (v) => safeStorage.decryptString(v),
-      state: () => queue.snapshot(),
-      command: perform,
+      state: () => devices.localState(),
+      command: async (method, input) => {
+        const result = await performLocal(method, input);
+        return result?.cards && result?.done ? devices.localState() : result;
+      },
     });
-    if (remotePeer) throw new Error('Disconnect the companion before hosting another desktop.');
     const code = await hostPeer.start(input.host);
     clipboard.writeText(code);
     publish();
-    return { message: 'Pairing code copied. Paste it into Work Updates on your Mac.' };
+    return { message: 'Pairing code copied. Paste it into Work Updates on your Mac or iPhone.' };
   }
   if (method === 'connect') {
-    if (hostPeer?.server)
-      throw new Error('Revoke hosted pairing before connecting to another desktop.');
     if (!safeStorage.isEncryptionAvailable())
       throw new Error('Enable your operating system keychain before pairing.');
-    remotePeer?.close();
-    const peer = new RemotePeer(input.code);
-    remotePeer = peer;
-    remoteState = null;
-    previousRemote = null;
-    peer.on('state', (value) => {
-      remoteState = value;
-      previousRemote = incoming(value.cards, previousRemote);
-      publish();
-    });
-    peer.on('connection', () => publish());
-    try {
-      await peer.connect();
-      fs.writeFileSync(
-        path.join(dataDir, 'paired-remote.enc'),
-        safeStorage.encryptString(input.code),
-        { mode: 0o600 },
-      );
-    } catch (error) {
-      if (input.restore) {
-        peer.reconnect();
-      } else {
-        peer.close();
-        remotePeer = null;
-        remoteState = null;
-        publish();
-        throw error;
-      }
-    }
-    publish();
-    return { message: 'Connected to your desktop.' };
+    return devices.add(input.code);
   }
 }
 app.whenReady().then(async () => {
@@ -661,6 +633,9 @@ app.whenReady().then(async () => {
       launcher: { ...launcherInfo, active: !!corner && !corner.isDestroyed() },
       tray: tray.status(),
       codex: client.status?.() || null,
+      devices: devices
+        .snapshot()
+        .devices.map(({ id, name, kind, online }) => ({ id, name, kind, online })),
       diagnostics: { file: diagnostics.file, error: diagnostics.error },
       updatedAt: now(),
     });
@@ -673,20 +648,20 @@ app.whenReady().then(async () => {
       directory: dataDir,
       encrypt: (v) => safeStorage.encryptString(v),
       decrypt: (v) => safeStorage.decryptString(v),
-      state: () => queue.snapshot(),
-      command: perform,
+      state: () => devices.localState(),
+      command: async (method, input) => {
+        const result = await performLocal(method, input);
+        return result?.cards && result?.done ? devices.localState() : result;
+      },
     });
     if (hostPeer.saved())
       hostPeer
         .restore()
         .then(publish)
         .catch(() => {});
-    try {
-      const code = safeStorage.decryptString(
-        fs.readFileSync(path.join(dataDir, 'paired-remote.enc')),
-      );
-      connectionAction('connect', { code, restore: true }).catch(() => {});
-    } catch {}
+    devices
+      .restore()
+      .catch((error) => diagnostics.write('devices.restore.failed', { message: error.message }));
   }
   if (args.includes('--dev')) {
     let refresh;
@@ -725,7 +700,7 @@ app.on('before-quit', () => {
   observer?.close();
   client.close();
   hostPeer?.close();
-  remotePeer?.close();
+  devices.close();
   globalShortcut.unregisterAll();
   clearInterval(cornerTimer);
   clearTimeout(concealTimer);

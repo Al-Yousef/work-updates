@@ -58,6 +58,7 @@ const STATUS_SYMBOLS = {
   done: '✓',
 };
 function statusTone(card) {
+  if (card.owner?.online === false) return 'unknown';
   if (card.done || card.status === 'done') return 'done';
   if (['working', 'starting'].includes(card.status)) return 'working';
   if (card.status === 'needs' || card.waitingOn?.kind === 'you') return 'needs';
@@ -311,6 +312,7 @@ if ($('corner-toggle')) {
         card.waitingOn?.kind === 'you',
         card.urgent,
         card.sources.length,
+        card.owner?.online,
       ]),
     ]);
     // Window mode and watcher heartbeats don't change the cards. Keep their
@@ -343,7 +345,11 @@ if ($('corner-toggle')) {
               }
             : null,
         );
-        replacement.setAttribute('aria-label', card.title + ', ' + card.label);
+        const offline = card.owner?.online === false;
+        replacement.setAttribute(
+          'aria-label',
+          card.title + ', ' + (offline ? card.owner.name + ' offline' : card.label),
+        );
         replacement.setAttribute(
           'aria-description',
           sourceDevice(card).kind === 'unknown'
@@ -362,15 +368,24 @@ if ($('corner-toggle')) {
         meta.title = meta.textContent;
         const title = node('span', card.title, { class: 'card-title' });
         const line = node('span', '', { class: 'notification-line' });
-        line.append(meta, node('span', ago(card.doneAt || card.at), { class: 'card-age' }));
+        line.append(
+          meta,
+          node(
+            'span',
+            offline ? 'Last synced ' + ago(card.owner.lastSeen) : ago(card.doneAt || card.at),
+            { class: 'card-age' },
+          ),
+        );
         copy.append(
           line,
           title,
           node('span', notificationSummary(card), { class: 'card-summary' }),
         );
         const statuses = node('span', '', { class: 'card-statuses' });
-        const badge = node('span', card.label, { class: 'badge ' + card.status });
-        if (card.waitingOn?.kind === 'you') badge.classList.add('needs');
+        const badge = node('span', offline ? card.owner.name + ' offline' : card.label, {
+          class: 'badge ' + (offline ? 'unknown' : card.status),
+        });
+        if (!offline && card.waitingOn?.kind === 'you') badge.classList.add('needs');
         statuses.append(badge);
         if (card.urgent) statuses.append(node('span', ' · Urgent', { class: 'badge urgent' }));
         copy.append(statuses);
@@ -387,10 +402,9 @@ if ($('corner-toggle')) {
             'aria-label',
             showHidden ? 'Restore notification' : 'Mark update reviewed',
           );
-          tray.append(
-            button('Snooze 1h', () => runAction(card.id, 'snooze')),
-            dismiss,
-          );
+          const snooze = button('Snooze 1h', () => runAction(card.id, 'snooze'));
+          snooze.disabled = dismiss.disabled = offline;
+          tray.append(snooze, dismiss);
           surface.prepend(tray);
         }
         content.append(wrap);
@@ -435,7 +449,10 @@ if ($('corner-toggle')) {
     // icon, working ring and glass surface when only its age changes.
     visibleCards.forEach((card, index) => {
       const age = $('queue').children[index]?.querySelector('.card-age');
-      const value = ago(card.doneAt || card.at);
+      const value =
+        card.owner?.online === false
+          ? 'Last synced ' + ago(card.owner.lastSeen)
+          : ago(card.doneAt || card.at);
       if (age && age.textContent !== value) age.textContent = value;
     });
     $('show-all').hidden = cards.length <= 3;
@@ -443,16 +460,15 @@ if ($('corner-toggle')) {
       ? 'Show fewer'
       : 'Show all ' + cards.length + (view === 'done' ? ' completed tasks' : ' updates');
     $('undo').hidden = !state.undo;
-    $('connection').textContent =
-      state.remote && !state.connected
-        ? state.connection
-        : !state.health.ok
-          ? 'Sync paused · ' + state.health.message
-          : state.remote
-            ? state.connection
-            : state.collectedAt
-              ? 'Watching ' + state.monitoredCount + ' local chats · Up to date'
-              : 'Reading local Codex chats…';
+    $('connection').textContent = state.remote
+      ? state.connection
+      : !state.health.ok
+        ? 'Sync paused · ' + state.health.message
+        : state.remote
+          ? state.connection
+          : state.collectedAt
+            ? 'Watching ' + state.monitoredCount + ' local chats · Up to date'
+            : 'Reading local Codex chats…';
   }
   function openPanel(next, title) {
     if (!mode) returnFocus = document.activeElement;
@@ -563,8 +579,8 @@ if ($('corner-toggle')) {
       if (card.sources.length)
         actions.append(
           button(
-            state.remote ? 'View chat' : 'Open chat ↗',
-            () => (state.remote ? showCard(card.taskKey, true) : openSource(card)),
+            card.owner?.local === false ? 'View chat' : 'Open chat ↗',
+            () => (card.owner?.local === false ? showCard(card.taskKey, true) : openSource(card)),
             'quiet',
           ),
         );
@@ -580,8 +596,8 @@ if ($('corner-toggle')) {
       else if (card.sources.length)
         actions.append(
           button(
-            state.remote ? 'Chat here' : 'Open chat ↗',
-            () => (state.remote ? showCard(card.id, true) : openSource(card)),
+            card.owner?.local === false ? 'Chat here' : 'Open chat ↗',
+            () => (card.owner?.local === false ? showCard(card.id, true) : openSource(card)),
             'primary',
           ),
         );
@@ -889,7 +905,7 @@ if ($('corner-toggle')) {
     if (!card || !input) return;
     const source = selectedSource(card);
     const unavailable =
-      (state.remote && !state.connected) ||
+      card.owner?.online === false ||
       card.done ||
       !card.sources.length ||
       pendingSends.has(selectedSourceId || selected) ||
@@ -922,11 +938,17 @@ if ($('corner-toggle')) {
       ...card,
       device: source?.device || card.device,
     });
-    $('notification-age').textContent = ago(card.doneAt || card.at);
+    $('notification-age').textContent =
+      card.owner?.online === false ? 'Offline' : ago(card.doneAt || card.at);
+    $('panel-status').textContent =
+      card.label +
+      (card.urgent ? ' · Urgent' : '') +
+      (card.owner?.online === false ? ' · ' + card.owner.name + ' offline' : '');
     if ($('task-error')) $('task-error').textContent = card.replyError || card.error || '';
     const complete = $('complete-task');
     if (complete) {
       complete.disabled =
+        card.owner?.online === false ||
         ['working', 'starting'].includes(card.status) ||
         (card.status === 'needs' && !card.readyForReview);
       complete.title = complete.disabled
@@ -1053,9 +1075,14 @@ if ($('corner-toggle')) {
       card.threadId,
       state.remote,
       state.connected,
+      card.owner?.online,
     ]);
     if (actionSignature !== lastActions) {
       primaryActions(card, $('primary-actions'));
+      if (card.owner?.online === false)
+        $('primary-actions')
+          .querySelectorAll('button')
+          .forEach((b) => (b.disabled = true));
       lastActions = actionSignature;
     }
     updateSendState();
@@ -1095,29 +1122,46 @@ if ($('corner-toggle')) {
     workspace.className = 'workspace';
     const workspaceText = node('span', taskDraft.cwd || 'Dedicated task folder');
     workspaceText.className = 'workspace-text';
-    if (state.remote) {
-      const folders = node('select', '', { 'aria-label': 'Desktop workspace' });
-      folders.append(node('option', 'Dedicated task folder', { value: '' }));
-      for (const folder of state.settings.projects || [])
-        folders.append(node('option', folder, { value: folder }));
-      folders.value = taskDraft.cwd;
-      folders.addEventListener('change', () => (taskDraft.cwd = folders.value));
-      workspace.append(folders);
-    } else
-      workspace.append(
-        workspaceText,
-        button('Choose folder…', async () => {
-          try {
-            const chosen = await call('project');
-            if (chosen.cwd) {
-              taskDraft.cwd = chosen.cwd;
-              workspaceText.textContent = chosen.cwd;
+    const computers = state.devices || [];
+    const owner = node('select', '', { id: 'task-device', 'aria-label': 'Run on computer' });
+    for (const d of computers)
+      owner.append(node('option', d.name + (d.online ? '' : ' · offline'), { value: d.id }));
+    owner.value = taskDraft.ownerId || computers.find((d) => d.local)?.id || '';
+    if (computers.length > 1)
+      form.append(node('label', 'Run on', { class: 'field-label', for: 'task-device' }), owner);
+    function renderWorkspace() {
+      workspace.replaceChildren();
+      const computer = computers.find((d) => d.id === owner.value);
+      if (computer && !computer.local) {
+        const folders = node('select', '', { 'aria-label': 'Desktop workspace' });
+        folders.append(node('option', 'Dedicated task folder', { value: '' }));
+        for (const folder of computer.projects || [])
+          folders.append(node('option', folder, { value: folder }));
+        folders.value = taskDraft.cwd;
+        folders.addEventListener('change', () => (taskDraft.cwd = folders.value));
+        workspace.append(folders);
+      } else
+        workspace.append(
+          workspaceText,
+          button('Choose folder…', async () => {
+            try {
+              const chosen = await call('project');
+              if (chosen.cwd) {
+                taskDraft.cwd = chosen.cwd;
+                workspaceText.textContent = chosen.cwd;
+              }
+            } catch (error) {
+              notice(error.message, true);
             }
-          } catch (error) {
-            notice(error.message, true);
-          }
-        }),
-      );
+          }),
+        );
+    }
+    renderWorkspace();
+    owner.addEventListener('change', () => {
+      taskDraft.ownerId = owner.value;
+      taskDraft.cwd = '';
+      renderWorkspace();
+    });
     form.append(
       node('label', 'Workspace', { class: 'field-label' }),
       workspace,
@@ -1149,6 +1193,7 @@ if ($('corner-toggle')) {
           title: title.value,
           prompt: prompt.value,
           cwd: taskDraft.cwd,
+          ownerId: owner.value || undefined,
         });
         taskDraft = { title: '', prompt: '', cwd: '' };
         mode = 'saved';
@@ -1363,13 +1408,35 @@ if ($('corner-toggle')) {
       ),
     );
     panel.append(
-      node('div', 'Your other desktop', { class: 'setting-heading' }),
+      node('div', 'Your devices', { class: 'setting-heading' }),
       node(
         'p',
-        'Pair the native Mac app privately with this desktop. Your chats stay between the paired devices.',
+        'Connect your Mac and iPhone privately. Each computer keeps running its own chats. For access away from home, use the computers’ private overlay network addresses.',
         { class: 'field-note' },
       ),
     );
+    for (const d of state.devices || []) {
+      panel.append(
+        node(
+          'p',
+          d.name +
+            ' · ' +
+            (d.local ? 'This computer' : d.online ? 'Connected' : 'Offline; showing last update'),
+          { class: 'field-note' },
+        ),
+      );
+      if (!d.local)
+        panel.append(
+          button(
+            'Forget ' + d.name,
+            async () => {
+              await call('disconnect', { id: d.id });
+              closePanel();
+            },
+            'settings-button quiet',
+          ),
+        );
+    }
     const address = node('select', '', { 'aria-label': 'Private interface address' });
     if (!state.addresses?.length)
       address.append(node('option', 'No private network address available', { value: '' }));
@@ -1414,14 +1481,14 @@ if ($('corner-toggle')) {
         ),
       );
     const code = node('textarea', '', {
-      placeholder: 'Paste a pairing code from your other desktop…',
+      placeholder: 'Paste a pairing code from another computer…',
       'aria-label': 'Pairing code',
       rows: '2',
     });
     panel.append(
       code,
       button(
-        'Connect to desktop',
+        'Add computer',
         async () => {
           try {
             const result = await call('connect', { code: code.value });

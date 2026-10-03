@@ -20,3 +20,9 @@ runtime.json
 __pycache__/
 *.pyc
 .DS_Store
+.build/
+.swiftpm/
+DerivedData/
+*.xcresult/
+*.xcodeproj/
+ios/App/Info.plist

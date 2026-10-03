@@ -6,7 +6,7 @@ const fs = require('node:fs'),
   assert = require('node:assert/strict');
 const root = path.resolve(__dirname, '..'),
   dir = fs.mkdtempSync(path.join(os.tmpdir(), 'wu-native-pair-'));
-let host, companion, code;
+let host, companion, viewer, code;
 async function invoke(page, method, input) {
   const result = await page.evaluate(({ method, input }) => window.workUpdates[method](input), {
     method,
@@ -26,20 +26,43 @@ async function waitState(page, predicate) {
 }
 (async () => {
   try {
-    host = await electron.launch({ args: [root, '--demo', '--data-dir', path.join(dir, 'host')] });
-    const h = await host.firstWindow();
+    host = await electron.launch({
+      args: [root, '--demo', '--data-dir', path.join(dir, 'host')],
+      timeout: 30000,
+    });
+    const h = await host.firstWindow({ timeout: 30000 });
     await h.locator('.card-trigger').first().waitFor();
     await invoke(h, 'pair', { host: '127.0.0.1' });
     code = await host.evaluate(({ clipboard }) => clipboard.readText());
     assert.ok(code.startsWith('wu1:'));
     companion = await electron.launch({
       args: [root, '--demo', '--data-dir', path.join(dir, 'companion')],
+      timeout: 30000,
     });
-    const c = await companion.firstWindow();
+    const c = await companion.firstWindow({ timeout: 30000 });
     await c.locator('.card-trigger').first().waitFor();
     await invoke(c, 'connect', { code });
-    assert.equal((await invoke(c, 'state')).remote, true);
+    const paired = await invoke(c, 'state');
+    assert.equal(paired.remote, true);
+    assert.equal(
+      paired.cards.length,
+      6,
+      'Pairing preserves three local and three remote sample chats',
+    );
+    const hostId = paired.devices.find((d) => !d.local).id;
+    assert.equal(
+      new Set(paired.cards.map((c) => c.id)).size,
+      6,
+      'Equal sample chat IDs on two computers are namespaced',
+    );
+    viewer = await electron.launch({
+      args: [root, '--demo', '--data-dir', path.join(dir, 'viewer')],
+      timeout: 30000,
+    });
+    const v = await viewer.firstWindow({ timeout: 30000 });
+    await invoke(v, 'connect', { code });
     const task = await invoke(c, 'create', {
+      ownerId: hostId,
       title: 'Paired desktop sample',
       prompt: 'Complete this synthetic sample task.',
     });
@@ -57,15 +80,59 @@ async function waitState(page, predicate) {
         card.messages.filter((m) => m.role === 'user').length === 2
       );
     });
+    const remoteTaskId = task.id.slice(('peer:' + hostId + ':').length);
+    await waitState(v, (s) =>
+      s.cards.some((card) => card.id.endsWith(':' + remoteTaskId) && card.status === 'ready'),
+    );
+    await invoke(c, 'action', { id: task.id, action: 'reviewed' });
+    await waitState(
+      v,
+      (s) => s.cards.find((card) => card.id.endsWith(':' + remoteTaskId))?.reviewed,
+    );
+    assert.equal(
+      (await invoke(h, 'state')).cards.find((card) => card.id === remoteTaskId).reviewed,
+      true,
+    );
+    await invoke(c, 'action', { id: task.id, action: 'snooze' });
+    await waitState(
+      v,
+      (s) => s.cards.find((card) => card.id.endsWith(':' + remoteTaskId))?.snoozed,
+    );
+    await invoke(c, 'undo');
+    await waitState(
+      v,
+      (s) => !s.cards.find((card) => card.id.endsWith(':' + remoteTaskId))?.snoozed,
+    );
     await invoke(c, 'action', { id: task.id, action: 'done' });
-    assert.equal((await invoke(h, 'state')).done.find((t) => t.id === task.id).title, task.title);
+    assert.equal(
+      (await invoke(h, 'state')).done.find((t) => t.id === remoteTaskId).title,
+      task.title,
+    );
     await invoke(h, 'revoke');
-    await waitState(c, (state) => state.connection === 'Reconnecting to desktop');
+    await waitState(c, (state) => !state.devices.find((d) => d.id === hostId)?.online);
+    await c.waitForFunction(() =>
+      [...document.querySelectorAll('.badge.unknown')].some((e) =>
+        e.textContent.endsWith(' offline'),
+      ),
+    );
+    assert.ok(
+      await c.locator('.card-age').filter({ hasText: 'Last synced' }).count(),
+      'Offline cards label the age of their cached context',
+    );
+    assert.ok(
+      await c.locator('.swipe-actions button:disabled').count(),
+      'Offline swipe actions cannot be submitted',
+    );
+    const offline = await invoke(c, 'action', { id: task.id, action: 'reopen' }).then(
+      () => false,
+      () => true,
+    );
+    assert.equal(offline, true, 'Offline remote actions never mutate the companion local queue');
     assert.equal(fs.existsSync(path.join(dir, 'host', 'paired-host.enc')), false);
     await invoke(c, 'disconnect');
-    assert.equal(fs.existsSync(path.join(dir, 'companion', 'paired-remote.enc')), false);
+    assert.equal(fs.existsSync(path.join(dir, 'companion', 'paired-devices.enc')), false);
     process.stdout.write(
-      'Paired native windows: queue, dedicated chat, reply, Done and revoke passed.\n',
+      'Three native windows: merged queues, collision-safe reply, shared Reviewed/Snooze/Undo/Done, offline refusal and revoke passed.\n',
     );
   } finally {
     if (host && code)
@@ -75,6 +142,7 @@ async function waitState(page, predicate) {
         }, code)
         .catch(() => {});
     if (companion) await companion.close();
+    if (viewer) await viewer.close();
     if (host) await host.close();
     fs.rmSync(dir, { recursive: true, force: true });
   }

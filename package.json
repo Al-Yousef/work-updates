@@ -1,6 +1,6 @@
 {
   "name": "work-updates",
-  "version": "0.3.4",
+  "version": "0.4.0",
   "description": "A calm desktop queue for Codex tasks, updates, and conversations.",
   "author": "Al-Yousef",
   "license": "MIT",
@@ -14,11 +14,12 @@
     "demo": "electron . --demo",
     "test": "node --test tests/*.test.cjs",
     "test:ui": "node scripts/ui-audit.cjs",
+    "test:devices": "node scripts/pair-audit.cjs",
     "audit:release": "node scripts/audit-release.cjs",
     "build:helper": "python scripts/build-helper.py",
     "build:icons": "node scripts/build-icons.cjs",
     "dist:win": "electron-builder --win nsis zip --x64",
-    "dist:mac": "electron-builder --mac dmg zip",
+    "dist:mac": "electron-builder --mac zip",
     "pack": "electron-builder --dir"
   },
   "dependencies": {
@@ -74,7 +75,6 @@
     "mac": {
       "category": "public.app-category.productivity",
       "target": [
-        "dmg",
         "zip"
       ],
       "artifactName": "Work-Updates-${version}-macOS-${arch}.${ext}",

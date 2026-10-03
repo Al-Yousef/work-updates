@@ -26,7 +26,7 @@ async function waitFor(page, fn) {
       args: [...(!executablePath ? [root] : []), '--demo', '--hidden', '--data-dir', dir],
       timeout: 30000,
     });
-    const page = await app.firstWindow();
+    const page = await app.firstWindow({ timeout: 30000 });
     await page.locator('.card-trigger').first().waitFor({ state: 'attached' });
     check(
       (await page.evaluate(() => window.workUpdates.state())).value.windowMode === 'hidden',
@@ -1174,7 +1174,14 @@ async function waitFor(page, fn) {
       'Native desktop UI: ' + checks + ' checks passed. Synthetic screenshots: artifacts/ui\n',
     );
   } finally {
-    if (app) await app.close();
+    if (app) {
+      const timer = setTimeout(() => app.process().kill(), 10000);
+      try {
+        await app.close();
+      } finally {
+        clearTimeout(timer);
+      }
+    }
     fs.rmSync(dir, { recursive: true, force: true });
   }
 })().catch((error) => {

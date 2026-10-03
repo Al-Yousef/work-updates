@@ -53,6 +53,8 @@ if (process.argv.includes('--ui')) {
   const result = spawnSync(process.execPath, [path.join(__dirname, 'ui-audit.cjs')], {
     env: { ...process.env, WORK_UPDATES_EXECUTABLE: executable },
     stdio: 'inherit',
+    timeout: 180000,
+    killSignal: 'SIGTERM',
   });
   if (result.error) throw result.error;
   process.exit(result.status === null ? 1 : result.status);

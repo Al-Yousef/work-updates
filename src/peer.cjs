@@ -19,6 +19,7 @@ const allowed = new Set([
   'details',
   'group',
   'refresh',
+  'open',
 ]);
 const fingerprint = (raw) => crypto.createHash('sha256').update(raw).digest('hex');
 function privateAddress(host) {
@@ -243,6 +244,7 @@ class RemotePeer extends EventEmitter {
     this.closed = false;
     this.attempt = 0;
     this.requests = new Set();
+    this.generation = 0;
   }
   request(route, method = 'GET', body) {
     return new Promise((resolve, reject) => {
@@ -262,6 +264,7 @@ class RemotePeer extends EventEmitter {
           },
         },
         (res) => {
+          req.setTimeout(0);
           if (res.statusCode !== 200 && !(route === '/command' && res.statusCode === 400)) {
             res.resume();
             reject(
@@ -308,28 +311,46 @@ class RemotePeer extends EventEmitter {
     return JSON.parse(Buffer.concat(chunks).toString('utf8'));
   }
   async connect() {
+    if (this.connecting) return this.connecting;
     this.closed = false;
+    const generation = ++this.generation;
+    const pending = (async () => {
+      try {
+        const state = await this.json('/state');
+        if (this.closed || generation !== this.generation) throw new Error('Pairing was closed.');
+        this.connected = true;
+        this.attempt = 0;
+        this.emit('state', state);
+        this.emit('connection', true);
+        await this.events(generation);
+      } catch (error) {
+        if (generation === this.generation && !this.closed) {
+          this.connected = false;
+          this.emit('connection', false);
+        }
+        throw error;
+      }
+    })();
+    this.connecting = pending;
     try {
-      const state = await this.json('/state');
-      this.connected = true;
-      this.attempt = 0;
-      this.emit('state', state);
-      this.emit('connection', true);
-      await this.events();
-    } catch (error) {
-      this.connected = false;
-      this.emit('connection', false);
-      throw error;
+      return await pending;
+    } finally {
+      if (this.connecting === pending) this.connecting = null;
     }
   }
-  async events() {
+  async events(generation = this.generation) {
     if (this.closed) return;
     const res = await this.request('/events');
+    if (this.closed || generation !== this.generation) {
+      res.destroy();
+      return;
+    }
     this.stream = res;
     res.setTimeout(45000, () => res.destroy());
     let buffer = '';
     const decoder = new StringDecoder('utf8');
     res.on('data', (chunk) => {
+      if (this.closed || generation !== this.generation) return;
       buffer += decoder.write(chunk);
       if (buffer.length > 16e6) {
         res.destroy();
@@ -350,6 +371,7 @@ class RemotePeer extends EventEmitter {
     const end = () => {
       if (ended) return;
       ended = true;
+      if (this.closed || generation !== this.generation) return;
       this.connected = false;
       this.emit('connection', false);
       this.reconnect();
@@ -372,6 +394,7 @@ class RemotePeer extends EventEmitter {
     return out.value;
   }
   close() {
+    this.generation++;
     this.closed = true;
     this.connected = false;
     clearTimeout(this.timer);

@@ -6,6 +6,37 @@ const test = require('node:test'),
   path = require('node:path'),
   https = require('node:https');
 const { HostPeer, RemotePeer, privateAddress, parseCode } = require('../src/peer.cjs');
+test('a closed pairing cannot accept a late initial state', async (t) => {
+  const { code } = await setup(t),
+    client = new RemotePeer(code);
+  let release;
+  client.json = () =>
+    new Promise((resolve) => {
+      release = resolve;
+    });
+  const connecting = client.connect();
+  client.close();
+  release({ cards: [] });
+  await assert.rejects(connecting, /closed/);
+  assert.equal(client.connected, false);
+});
+test('an old stream close cannot mark a replacement generation offline', async (t) => {
+  const { code } = await setup(t),
+    client = new RemotePeer(code);
+  t.after(() => client.close());
+  const { EventEmitter } = require('node:events');
+  const response = new EventEmitter();
+  response.setTimeout = () => {};
+  response.destroy = () => {};
+  client.request = async () => response;
+  client.generation = 1;
+  await client.events(1);
+  client.generation = 2;
+  client.connected = true;
+  response.emit('close');
+  assert.equal(client.connected, true);
+  assert.equal(client.timer, undefined);
+});
 async function setup(t) {
   const dir = fs.mkdtempSync(path.join(os.tmpdir(), 'wu-peer-'));
   const calls = [];

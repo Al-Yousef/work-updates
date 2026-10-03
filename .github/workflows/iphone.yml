@@ -1,0 +1,62 @@
+name: iPhone app checks
+on:
+  push:
+    branches: [main]
+  pull_request:
+  workflow_dispatch:
+permissions:
+  contents: read
+jobs:
+  iphone:
+    runs-on: macos-15
+    timeout-minutes: 25
+    steps:
+      - uses: actions/checkout@v4
+      - uses: actions/setup-node@v4
+        with:
+          node-version: '24'
+          cache: npm
+      - run: npm ci --no-fund
+      - run: brew install xcodegen
+      - name: Generate native iPhone project
+        working-directory: ios
+        run: xcodegen generate
+      - name: Core and real TLS checks
+        run: |
+          node scripts/ios-fixture.cjs > /tmp/work-updates-ios-fixture.log 2>&1 &
+          fixture_pid=$!
+          trap 'kill "$fixture_pid" 2>/dev/null || true' EXIT
+          for attempt in {1..30}; do
+            test -f /tmp/work-updates-ios-pairing-code && break
+            sleep 1
+          done
+          test -f /tmp/work-updates-ios-pairing-code
+          swift test --package-path ios/Core
+      - name: Native iPhone simulator tests
+        run: |
+          set -euo pipefail
+          node scripts/ios-fixture.cjs > /tmp/work-updates-ios-fixture.log 2>&1 &
+          fixture_pid=$!
+          trap 'kill "$fixture_pid" 2>/dev/null || true' EXIT
+          for attempt in {1..30}; do
+            test -f /tmp/work-updates-ios-pairing-code && break
+            sleep 1
+          done
+          test -f /tmp/work-updates-ios-pairing-code
+          simulator_id=$(xcrun simctl list devices available -j | python3 -c 'import json,sys; print(next(d["udid"] for ds in json.load(sys.stdin)["devices"].values() for d in ds if d["name"].startswith("iPhone")))')
+          xcodebuild -project ios/WorkUpdates.xcodeproj -scheme WorkUpdates -destination "platform=iOS Simulator,id=$simulator_id" -derivedDataPath artifacts/iphone-derived -resultBundlePath artifacts/iphone-tests.xcresult CODE_SIGNING_ALLOWED=NO test
+          xcrun simctl boot "$simulator_id" || true
+          xcrun simctl bootstatus "$simulator_id" -b
+          xcrun simctl launch "$simulator_id" io.workupdates.iphone --demo
+          sleep 3
+          xcrun simctl io "$simulator_id" screenshot artifacts/iphone-demo.png
+      - uses: actions/upload-artifact@v4
+        if: always()
+        with:
+          name: iphone-simulator-evidence
+          path: |
+            artifacts/iphone-tests.xcresult
+            artifacts/iphone-demo.png
+            artifacts/iphone-derived/Build/Products/Debug-iphonesimulator/WorkUpdates.app
+          if-no-files-found: warn
+          retention-days: 14

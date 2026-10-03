@@ -5,7 +5,17 @@ const fs = require('node:fs'),
   crypto = require('node:crypto'),
   { execFileSync } = require('node:child_process');
 const root = path.resolve(__dirname, '..');
-const roots = new Set(['src', 'ui', 'bridge', 'tests', 'scripts', 'docs', 'assets', '.github']);
+const roots = new Set([
+  'src',
+  'ui',
+  'bridge',
+  'tests',
+  'scripts',
+  'docs',
+  'assets',
+  '.github',
+  'ios',
+]);
 const files = new Set([
   'package.json',
   'package-lock.json',
@@ -24,6 +34,8 @@ function walk(dir, prefix = '') {
     const rel = prefix + e.name;
     if (
       e.name === '__pycache__' ||
+      ['.build', '.swiftpm', 'DerivedData'].includes(e.name) ||
+      e.name.endsWith('.xcodeproj') ||
       (!prefix && ['node_modules', 'dist', 'build', 'artifacts', '.git'].includes(e.name))
     )
       return [];
@@ -55,7 +67,11 @@ for (const file of tracked) {
     violations.push(file + ': private or generated file');
   const bytes = fs.readFileSync(absolute);
   if (file.endsWith('.png')) {
-    if (!file.startsWith('assets/') || bytes.subarray(1, 4).toString() !== 'PNG')
+    if (
+      (!file.startsWith('assets/') &&
+        file !== 'ios/App/Assets.xcassets/AppIcon.appiconset/icon.png') ||
+      bytes.subarray(1, 4).toString() !== 'PNG'
+    )
       violations.push(file + ': unexpected image');
     continue;
   }

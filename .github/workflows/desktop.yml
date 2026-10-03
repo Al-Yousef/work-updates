@@ -44,6 +44,7 @@ jobs:
           WORK_UPDATES_PYTHON: ${{ steps.python.outputs.python-path }}
       - run: python -m unittest discover -s tests -p "test_*.py"
       - run: npm run test:ui
+      - run: npm run test:devices
       - run: python -m pip install -r requirements-build.txt
       - run: python scripts/build-helper.py
       - run: npx electron-builder --${{ matrix.target }} --${{ matrix.arch }} --publish never
