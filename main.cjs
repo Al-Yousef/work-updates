@@ -500,7 +500,7 @@ async function connectionAction(method, input) {
 }
 function startCollection() {
   if (argument('--legacy-root')) queue.importLegacy(path.resolve(argument('--legacy-root')));
-  if (demo) queue.setFeed(require('./src/demo.cjs').feed());
+  if (demo) observer = require('./src/demo.cjs').startDemoObserver(queue);
   else {
     summaries = new Summaries(queue, { log: diagnostics });
     const helper = app.isPackaged
