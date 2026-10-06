@@ -81,6 +81,7 @@ let window,
   hostPeer,
   windowController,
   cornerTimer,
+  runtimeTimer,
   concealTimer,
   quitting = false;
 let launcherInfo = {
@@ -577,7 +578,9 @@ app.whenReady().then(async () => {
     });
     await nativeControl.start();
     restoreDevices();
-    const runtime = () => atomic(path.join(dataDir, 'runtime.json'), {
+    const runtime = () => {
+      if (quitting) return;
+      atomic(path.join(dataDir, 'runtime.json'), {
       appPid:process.pid, version:app.getVersion(), mode:'native-backend',
       windowCount:BrowserWindow.getAllWindows().length,
       rendererCount:app.getAppMetrics().filter(p => p.type === 'Tab').length,
@@ -589,9 +592,10 @@ app.whenReady().then(async () => {
       assistant:{active:assistant.active,model:assistant.provider.model,messages:assistant.state.messages.length,memoryCount:assistant.state.notes.length,error:assistant.error},
       cornerOwner:nativeControl.claimed?'native':'none',
       updatedAt:now(), diagnostics:{file:diagnostics.file, error:diagnostics.error},
-    });
+      });
+    };
     runtime();
-    const timer = setInterval(runtime, 3000); timer.unref();
+    runtimeTimer = setInterval(runtime, 3000); runtimeTimer.unref();
     diagnostics.write('native.backend.ready', {windowCount:0});
     return;
   }
@@ -783,7 +787,8 @@ app.whenReady().then(async () => {
     try { await nativeControl.start(); }
     catch (error) {nativeControl.close(); nativeControl = null; diagnostics.write('native.control.failed', {message:error.message});}
   }
-  const runtime = () =>
+  const runtime = () => {
+    if (quitting) return;
     atomic(path.join(dataDir, 'runtime.json'), {
       appPid: process.pid,
       version: app.getVersion(),
@@ -805,8 +810,9 @@ app.whenReady().then(async () => {
       diagnostics: { file: diagnostics.file, error: diagnostics.error },
       updatedAt: now(),
     });
+  };
   runtime();
-  const runtimeTimer = setInterval(runtime, 3000);
+  runtimeTimer = setInterval(runtime, 3000);
   runtimeTimer.unref();
   restoreDevices();
   if (args.includes('--dev')) {
@@ -841,6 +847,7 @@ app.on('activate', () => window && show());
 app.on('window-all-closed', () => {});
 app.on('before-quit', () => {
   quitting = true;
+  clearInterval(runtimeTimer);
   diagnostics.write('app.stopping', { pid: process.pid });
   queue.save();
   observer?.close();

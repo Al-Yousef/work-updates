@@ -29,6 +29,8 @@ Bootstrap verifies the pinned official archive digest. `-ArchivePath` accepts a 
 
 `npm run demo` launches the Electron compatibility UI using synthetic data. Real-account audits are opt-in and need separate human authorization. Do not use existing personal chats as fixtures. Native isolated fixtures require explicit bridge paths and disable automatic adapter attachment.
 
+With a desktop display available, `npm run test:shutdown` checks periodic-work cleanup while a synthetic quit is delayed. `npm run test:ui` and `npm run test:devices` exercise disposable compatibility apps and separately require normal clean shutdown. Forced audit termination fails the gate; it is not accepted as a successful quit.
+
 ## Integration and release
 
 Coordinate shared changes to `main.cjs`, queue/protocol schemas, lockfiles and the native window controller. In particular, weather lifecycle and composer branches merge sequentially while they share `main.cpp`. Record any temporary stacked-PR base; retarget and revalidate after the prerequisite merges.

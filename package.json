@@ -21,6 +21,7 @@
     "test": "node --test tests/*.test.cjs",
     "test:ui": "node scripts/ui-audit.cjs",
     "test:devices": "node scripts/pair-audit.cjs",
+    "test:shutdown": "node scripts/shutdown-audit.cjs",
     "audit:release": "node scripts/audit-release.cjs",
     "build:helper": "python scripts/build-helper.py",
     "build:icons": "node scripts/build-icons.cjs",
