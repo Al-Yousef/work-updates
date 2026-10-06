@@ -1,0 +1,115 @@
+{
+  "$schema": "http://json-schema.org/draft-07/schema#",
+  "title": "Hyphen sanitized diagnostic report v1",
+  "type": "object",
+  "additionalProperties": false,
+  "required": ["schema", "generatedAt", "metadata", "identityEncoding", "files"],
+  "properties": {
+    "schema": { "const": 1 },
+    "generatedAt": { "type": "string", "format": "date-time" },
+    "identityEncoding": { "const": "bundle-scoped HMAC aliases" },
+    "metadata": {
+      "type": "object",
+      "additionalProperties": false,
+      "properties": {
+        "version": { "type": "string", "maxLength": 50 },
+        "backendHash": { "type": "string", "pattern": "^[a-f0-9]{64}$" },
+        "nativeProtocol": { "const": "work-updates-native-v1" },
+        "snapshotProtocol": { "type": "integer", "minimum": 0 }
+      }
+    },
+    "health": {
+      "type": "object",
+      "additionalProperties": false,
+      "required": ["schema", "collector", "helper", "desktop", "pipe", "executionDevices"],
+      "properties": {
+        "schema": { "const": 1 },
+        "collector": { "$ref": "#/definitions/healthPart" },
+        "helper": { "$ref": "#/definitions/healthPart" },
+        "desktop": { "$ref": "#/definitions/healthPart" },
+        "pipe": { "$ref": "#/definitions/healthPart" },
+        "executionDevices": {
+          "type": "array",
+          "maxItems": 64,
+          "items": {
+            "type": "object",
+            "additionalProperties": false,
+            "required": ["kind", "online"],
+            "properties": {
+              "kind": { "enum": ["pc", "mac", "linux", "iphone", "unknown"] },
+              "online": { "type": "boolean" }
+            }
+          }
+        }
+      }
+    },
+    "files": {
+      "type": "array",
+      "maxItems": 3,
+      "items": {
+        "type": "object",
+        "additionalProperties": false,
+        "required": ["name", "records", "omittedRecords"],
+        "properties": {
+          "name": { "type": "string", "pattern": "^[a-zA-Z0-9-]+\\.log(?:\\.[12])?$" },
+          "omittedRecords": { "type": "integer", "minimum": 0 },
+          "records": { "type": "array", "items": { "$ref": "#/definitions/record" } }
+        }
+      }
+    }
+  },
+  "definitions": {
+    "healthPart": {
+      "type": "object",
+      "additionalProperties": false,
+      "required": ["state"],
+      "properties": {
+        "state": {
+          "enum": [
+            "fresh",
+            "stale",
+            "error",
+            "connected",
+            "disconnected",
+            "idle",
+            "listening",
+            "unavailable",
+            "unknown"
+          ]
+        },
+        "ageMs": { "type": "number", "minimum": 0 },
+        "pending": { "type": "number", "minimum": 0 },
+        "clients": { "type": "number", "minimum": 0 }
+      }
+    },
+    "record": {
+      "type": "object",
+      "additionalProperties": false,
+      "required": ["schema", "at", "event"],
+      "properties": {
+        "schema": { "const": 1 },
+        "at": { "type": "string", "format": "date-time" },
+        "event": { "type": "string", "pattern": "^[a-zA-Z0-9._-]{1,80}$" },
+        "code": {
+          "oneOf": [{ "type": "number" }, { "type": "string", "pattern": "^[A-Z][A-Z0-9_]{1,60}$" }]
+        }
+      },
+      "patternProperties": {
+        "^(messageId|assistantIntentId|sourceId|threadId|turnId|cardId|taskKey|deviceId|ownerId|clientId|targetClientId|requestId|backendSessionId|nativeSessionId)$": {
+          "type": "string",
+          "pattern": "^id:[a-f0-9]{24}$"
+        },
+        "^(id|pid|exitCode|elapsedMs|timeoutMs|bytes|frameBytes|responseBytes|characters|count|links|queueDepth|pending|windowCount|snapshotProtocol|omittedFields)$": {
+          "type": "number",
+          "minimum": -2147483648,
+          "maximum": 2147483647
+        },
+        "^(demo|intentional|truncated|local|connected|noResend)$": { "type": "boolean" },
+        "^(method|phase|delivery|route|owner|mode|status|signal|version|model|key|backendHash|nativeProtocol|category)$": {
+          "type": "string",
+          "maxLength": 160
+        }
+      }
+    }
+  }
+}

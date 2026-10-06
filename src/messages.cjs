@@ -18,6 +18,7 @@ class Messages extends EventEmitter {
     this.state.receipts??={};
     for(const entry of this.state.entries)if(entry.status==='sending'){
       entry.status='uncertain';entry.code='APP_RESTARTED';entry.error='Delivery interrupted. Check this chat before sending again.';
+      this.record('recovered',entry,{code:'APP_RESTARTED',delivery:'uncertain'});
     }
     this.save();this.changed=()=>this.schedule();
     if(auto){queue.on('change',this.changed);this.timer=setInterval(()=>this.schedule(),2000);this.timer.unref();}
@@ -33,7 +34,7 @@ class Messages extends EventEmitter {
     const next={...this.state,entries:[...history,...keep],receipts};
     atomic(this.file,next);this.state=next;this.emit('change');
   }
-  record(event,entry,extra={}){this.log?.write('message.'+event,{messageId:entry.id,sourceId:entry.sourceId,cardId:entry.cardId,mode:entry.mode,...extra});}
+  record(event,entry,extra={}){this.log?.write('message.'+event,{messageId:entry.id,sourceId:entry.sourceId,cardId:entry.cardId,taskKey:entry.taskKey,mode:entry.mode,queueDepth:this.state.entries.filter(e=>!terminal.has(e.status)).length,...extra});}
   validate(input){
     const card=this.queue.get(input.id,input.taskKey),value=text(input.text,12000),source=taskSource(card,input.sourceId);
     const images=attachmentIds(input.attachmentIds||[]);this.attachments.resolve(images);

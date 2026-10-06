@@ -4,11 +4,13 @@ const fs = require('node:fs');
 const path = require('node:path');
 const os = require('node:os');
 const crypto = require('node:crypto');
+const { recovery } = require('./diagnostics.cjs');
 
 // A live pipe connection owns the corner. Closing/crashing releases ownership.
 // This does not change the user's saved launcher preference.
 class NativeControl {
-  constructor({ directory, changed, status, quit, state, command }) {
+  constructor({ directory, changed, status, quit, state, command, log }) {
+    this.log=log;
     this.file = path.join(directory, 'native-control.info');
     this.pipe = process.platform === 'win32'
       ? '\\\\.\\pipe\\work-updates-native-' + crypto.randomUUID()
@@ -37,12 +39,14 @@ class NativeControl {
       this.pipe = path.join(this.endpointDirectory, 'c.sock');
     }
     this.server = net.createServer(socket => {
+      const nativeSessionId=crypto.randomUUID();socket.diagnosticSession=nativeSessionId;
       this.clients.add(socket);
       socket.setTimeout(5000, () => socket.destroy());
       let buffer = '';
       socket.setEncoding('utf8');
       socket.on('error', () => {});
       socket.on('close', () => {
+        this.log?.write('native.pipe.disconnected',{nativeSessionId,connected:false},{context:null});
         this.clients.delete(socket);
         this.subscribers.delete(socket);
         if (this.owner === socket) {
@@ -67,6 +71,7 @@ class NativeControl {
         if (supplied.length !== expected.length || !crypto.timingSafeEqual(supplied, expected))
           return socket.end(JSON.stringify({ok:false, error:'Unauthorized'}) + '\n');
         handled = true;
+        this.log?.write('native.pipe.connected',{nativeSessionId,method:request.method,connected:true},{context:null});
         if (request.method === 'claimCorner') {
           if (this.owner && this.owner !== socket)
             return socket.end(JSON.stringify({ok:false, error:'Corner already has an owner'}) + '\n');
@@ -90,13 +95,20 @@ class NativeControl {
           // Reply preparation can initialize, resume and start a turn, each with
           // its own bounded RPC timeout. Let the backend report the outcome;
           // a five-second pipe timeout used to lose the acknowledgement.
-          socket.setTimeout(request.command === 'send' ? 240000 : 15000);
+          socket.setTimeout(request.command === 'send' ? 240000 : request.command==='logs'?240000:15000);
+          const started=Date.now(),correlation={nativeSessionId,messageId:request.input?.messageId,sourceId:request.input?.sourceId,cardId:request.input?.id,taskKey:request.input?.taskKey};
+          this.log?.write('native.command.started',{...correlation,method:request.command,phase:'native-command'},{context:null});
           try {
-            const value = await this.command(request.command, request.input || {});
+            const run=()=>this.command(request.command,request.input||{});
+            const value = await (this.log?.scope?this.log.scope(correlation,run):run());
+            this.log?.write('native.command.completed',{...correlation,method:request.command,elapsedMs:Date.now()-started,responseBytes:Buffer.byteLength(JSON.stringify(value)??'null')},{context:null});
             socket.end(JSON.stringify({ok:true, value}) + '\n');
           } catch (error) {
+            const diagnosis=recovery(error);
+            this.log?.write('native.command.failed',{...correlation,method:request.command,code:error.code,phase:error.phase,delivery:error.delivery,message:error.message,elapsedMs:Date.now()-started},{context:null});
             socket.end(JSON.stringify({ok:false, error:error.message,
-              code:error.code, taskId:error.taskId, messageId:error.messageId, delivery:error.delivery}) + '\n');
+              code:error.code, taskId:error.taskId, messageId:error.messageId, delivery:error.delivery,
+              category:diagnosis.category,recovery:diagnosis.guidance}) + '\n');
           }
         } else if (request.method === 'status') {
           socket.end(JSON.stringify({ok:true, value:{...this.status(), cornerOwner:this.claimed?'native':'electron', pid:process.pid}}) + '\n');
@@ -124,6 +136,7 @@ class NativeControl {
   sendState(socket, state) {
     const frame = JSON.stringify({event:'state', state}) + '\n';
     if (Buffer.byteLength(frame) > 2 * 1024 * 1024) {socket.destroy(); return;}
+    this.log?.write('native.frame',{nativeSessionId:socket.diagnosticSession,frameBytes:Buffer.byteLength(frame)},{context:null});
     // One in-flight frame and one latest frame. Slow readers cannot accumulate
     // an unbounded history, and always receive the newest queue after draining.
     if (socket.writableNeedDrain) socket.latestState = frame;

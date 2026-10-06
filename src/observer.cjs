@@ -125,6 +125,7 @@ function startObserver(root, options, onFeed) {
         ? 'error'
         : 'cached';
     if (feedStamp !== last || healthStamp !== lastHealth || status !== lastStatus) {
+      options.log?.write('observer.health',{status,connected:ok,elapsedMs:Math.max(0,Math.round(age*1000)),pid:child?.pid,phase:'collector-read'});
       const changed = feedStamp !== last;
       last = feedStamp;
       lastHealth = healthStamp;

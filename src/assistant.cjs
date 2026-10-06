@@ -160,11 +160,12 @@ class Assistant extends EventEmitter {
         const mode=value.action.mode==='queue'||['working','starting'].includes(source.lifecycle)||['working','starting'].includes(card.status)?'queue':'send';
         message.status='thinking';message.action={...ref,text:value.action.text.trim(),mode,messageId:crypto.randomUUID(),status:'dispatching'};this.save();
         let receipt;
-        try{receipt=await this.options.dispatch(mode,{id:ref.id,taskKey:ref.taskKey,sourceId:ref.sourceId,messageId:message.action.messageId,text:message.action.text});}
+        try{const dispatch=()=>this.options.dispatch(mode,{id:ref.id,taskKey:ref.taskKey,sourceId:ref.sourceId,messageId:message.action.messageId,text:message.action.text});
+          receipt=await (this.options.log?.scope?this.options.log.scope({assistantIntentId:message.id,messageId:message.action.messageId,sourceId:ref.sourceId,ownerId:ref.ownerId,taskKey:ref.taskKey},dispatch):dispatch());}
         catch(error){message.action.status=error.delivery==='not-sent'?'not-sent':'unconfirmed';throw new Error(message.action.status==='not-sent'?'The chat refused the message. It was not sent; your request is saved.':'Delivery is unconfirmed. Check the source chat before sending again.');}
         if(!['sent','queued'].includes(receipt?.delivery)){message.action.status='unconfirmed';throw new Error('Delivery is unconfirmed. Check the source chat before sending again.');}
         message.action.status=receipt.delivery;message.answer=(receipt.delivery==='queued'?'Queued for ':'Sent to ')+ref.chatName+':\n'+clip(message.action.text,5500);message.status='completed';
-        this.log('chat_message',{messageId:message.id,delivery:receipt.delivery,route:receipt.route||'',elapsedMs:Date.now()-started});
+        this.log('chat_message',{assistantIntentId:message.id,messageId:message.action.messageId,sourceId:ref.sourceId,ownerId:ref.ownerId,taskKey:ref.taskKey,turnId:receipt.turnId,delivery:receipt.delivery,route:receipt.route||'',elapsedMs:Date.now()-started});
       }
       message.contextAt=current.data.capturedAt;this.save();this.log('completed',{messageId:message.id,elapsedMs:Date.now()-started,links:links.length,model:message.model});
     } catch(error) {

@@ -47,8 +47,8 @@ class Codex extends EventEmitter {
     this.ready = false;
     this.lastFailure = null;
   }
-  log(event, details) {
-    this.options.log?.write(event, details);
+  log(event, details, context=null) {
+    this.options.log?.write(event, details, {context});
   }
   status() {
     return {
@@ -187,7 +187,9 @@ class Codex extends EventEmitter {
                 bytes: Buffer.byteLength(line),
                 code: m.error?.code,
                 message: m.error?.message,
-              });
+                phase:rpcPhase(pending.method),
+                delivery:m.error?'not-sent':messageMutation(pending.method)?'accepted':undefined,
+              },pending.context);
               if (m.error) {
                 const error = new Error(m.error.message);
                 error.code = m.error.code;
@@ -271,6 +273,7 @@ class Codex extends EventEmitter {
     return new Promise((resolve, reject) => {
       if (!this.proc) return reject(new Error('Install or open Codex, then try again.'));
       const proc = this.proc;
+      const context={...this.options.log?.capture?.(),...(params?.clientUserMessageId?{messageId:params.clientUserMessageId}:{}),sourceId:params?.threadId};
       const id = ++this.sequence,
         timer = setTimeout(() => {
           this.waiting.delete(id);
@@ -282,7 +285,7 @@ class Codex extends EventEmitter {
             delivery: messageMutation(method) ? 'uncertain' : 'not-sent',
             threadId: params?.threadId,
             timeoutMs: this.options.requestTimeoutMs || 60000,
-          });
+          },context);
           const error = new Error(
             'Codex took too long to confirm ' + method + '. Open chat to check before retrying.',
           );
@@ -308,8 +311,9 @@ class Codex extends EventEmitter {
         method,
         threadId: params?.threadId,
         startedAt: Date.now(),
+        context,
       });
-      this.log('codex.rpc.started', { pid: proc.pid, id, method, threadId: params?.threadId });
+      this.log('codex.rpc.started', { pid: proc.pid, id, method, threadId: params?.threadId,phase:rpcPhase(method),pending:this.waiting.size },context);
       try {
         this.write({ id, method, params }, proc);
       } catch (error) {
