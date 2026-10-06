@@ -22,6 +22,12 @@ Queued intents retain their source ID when that chat's displayed title or task c
 
 The deterministic suite covers receipt loss, storage failure, duplicate identities, restart, source changes, writer refusal and image-bearing drafts. These synthetic results do not replace issue #4's separately authorized disposable real-chat audit or native/device integration proof.
 
+## Disposable audit
+
+`node scripts/delivery-contract-audit.cjs --synthetic` verifies the harness with a disposable local transport and no account calls. After separate human authorization, `--allow-disposable-chat` creates one new read-only test chat using the existing small-model quota. It submits four synthetic turns: Send, a busy pass, its queued follow-up, and an accepted reply with an injected receipt-storage failure. It drops one panel acknowledgement, restarts its own helper/journal, checks duplicate identities, and reads only the newly created chat to verify each intent occurred once. A successful run archives that chat. A failed run preserves its private audit identity for review and never resends automatically.
+
+Shell tools, connectors, plugins, background agents and memory are disabled in that test chat. No existing chats or installed Hyphen data are fixtures. Reports separate synthetic transport from actual app-server acceptance and explicitly exclude native GUI, desktop-owner, device and physical input proof. Actual billed token/cost metadata is unavailable from this transport.
+
 ## October 4, 2026 failure
 
 Intent `080A1FF1-DD17-4CF0-B1DD-C344D86175B9` attempted to reopen a chat at 15:20:28 UTC. The helper logged invalid protocol lines of 143,953,945 and 48,119,512 bytes, then `thread/resume` timed out after 60 seconds. There was no `turn/start` or `turn/steer` for that attempt. The message had not been submitted, but Hyphen incorrectly classified every Codex timeout as uncertain. The user subsequently cleared this intent; the update does not resend or rewrite it.
