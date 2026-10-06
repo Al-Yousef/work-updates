@@ -201,7 +201,7 @@ int wmain(int argc,wchar_t** argv){
             selectSource(trace,fixture,"000002");check(draft()==L"Keep my draft if Codex owns this chat","Back and chat switches preserve the failed draft");
             selectSource(trace,fixture,"000001");
             RECT singleLineBox{};GetWindowRect(editor,&singleLineBox);
-            setDraft(L"First line\r\nSecond line æ¼¢å­— ðŸ˜€");
+            setDraft(L"First line\r\nSecond line 漢字 😀");
             RECT multilineBox{};GetWindowRect(editor,&multilineBox);
             check(multilineBox.bottom-multilineBox.top>singleLineBox.bottom-singleLineBox.top,"Multiline text grows the actual native editor before sending");
             SendMessageW(editor,WM_LBUTTONDOWN,MK_LBUTTON,MAKELPARAM(8,8));SendMessageW(editor,WM_LBUTTONUP,0,MAKELPARAM(8,8));
@@ -210,12 +210,12 @@ int wmain(int argc,wchar_t** argv){
             const auto heldSend=actionPoint(AuditAction::Send);SendMessageW(panel,WM_LBUTTONDOWN,MK_LBUTTON,clientPoint(LOWORD(heldSend),HIWORD(heldSend)));
             const auto beforeKeyboardSwitch=last(trace).value("composerKey","");for(int tab=0;tab<4;++tab)SendMessageW(panel,WM_KEYDOWN,VK_TAB,0);SendMessageW(panel,WM_KEYDOWN,VK_RETURN,0);
             await(trace,[beforeKeyboardSwitch](auto s){return s.value("composerKey","")!=beforeKeyboardSwitch&&s.value("selected",false)&&!s.value("pending",true)&&!s.value("detailPending",true);},"Keyboard navigation changes the chat during a held Send press");
-            check(draft()!=L"First line\r\nSecond line æ¼¢å­— ðŸ˜€","Keyboard selection during the press displays a different chat's draft");setDraft(L"Keep this new selected chat draft");
+            check(draft()!=L"First line\r\nSecond line 漢字 😀","Keyboard selection during the press displays a different chat's draft");setDraft(L"Keep this new selected chat draft");
             const auto repliesAfterSwitch=last(trace).value("commandReplies",0U);SendMessageW(panel,WM_LBUTTONUP,0,clientPoint(LOWORD(heldSend),HIWORD(heldSend)));
             // Native focus/capture changes can cancel before mouse-up; a later
             // navigation log must not turn that correct cancellation into a failure.
             check(last(trace).value("commandReplies",0U)==repliesAfterSwitch&&!last(trace).value("pending",true)&&!last(trace).value("pointerPressed",true)&&eventSince(trace,pressTraceOffset,"ui-press-cancelled")&&!std::filesystem::exists(fixture/L"sent.json")&&draft()==L"Keep this new selected chat draft","A canceled Send press cannot submit another source's draft");
-            selectSource(trace,fixture,"000001");check(draft()==L"First line\r\nSecond line æ¼¢å­— ðŸ˜€","Canceled Send preserves the original chat's draft too");
+            selectSource(trace,fixture,"000001");check(draft()==L"First line\r\nSecond line 漢字 😀","Canceled Send preserves the original chat's draft too");
             SendMessageW(editor,WM_LBUTTONDOWN,MK_LBUTTON,MAKELPARAM(8,8));SendMessageW(editor,WM_LBUTTONUP,0,MAKELPARAM(8,8));
             SendMessageW(editor,EM_SETSEL,3,8);const auto addPoint=actionPoint(AuditAction::AddMenu);
             SendMessageW(panel,WM_LBUTTONDOWN,MK_LBUTTON,clientPoint(LOWORD(addPoint),HIWORD(addPoint)));SendMessageW(panel,WM_APP+210,0,0);
@@ -225,7 +225,7 @@ int wmain(int argc,wchar_t** argv){
             check(actualFocus()==editor&&selectionStart==3&&selectionEnd==8,"Escape from a menu restores the composer and its exact selection");
             const auto repliesBeforeDismiss=last(trace).value("commandReplies",0U);clickAction(AuditAction::AddMenu);click(690,400);
             check(!last(trace).value("menuOpen",true)&&actualFocus()==editor&&last(trace).value("commandReplies",0U)==repliesBeforeDismiss,"Outside menu dismissal restores typing without dispatching a command");
-            SendMessageW(panel,WM_SETTINGCHANGE,0,0);check(draft()==L"First line\r\nSecond line æ¼¢å­— ðŸ˜€","Display/layout refresh preserves the editor text");
+            SendMessageW(panel,WM_SETTINGCHANGE,0,0);check(draft()==L"First line\r\nSecond line 漢字 😀","Display/layout refresh preserves the editor text");
             RECT editBox{},panelBox{};GetWindowRect(editor,&editBox);GetWindowRect(panel,&panelBox);
             check(editBox.left>panelBox.left+(panelBox.right-panelBox.left)*chatlayout::sidebarRight/chatlayout::width&&editBox.right<panelBox.right-25,"Layout refresh keeps the editor inside the conversation pane");
             const auto successReplies=last(trace).value("commandReplies",0U);enter();enter();
@@ -233,7 +233,7 @@ int wmain(int argc,wchar_t** argv){
             check(draft().empty(),"Confirmed send clears the submitted draft");
             auto sent=read(fixture/L"sent.json");check(sent.size()==1,"Repeated Enter sends exactly once");
             check(sent[0]["threadId"]=="10000000-0000-4000-8000-000000000001","Reply targets the displayed source chat");
-            check(sent[0]["text"]=="First line\r\nSecond line æ¼¢å­— ðŸ˜€","Multiline and Unicode input reaches the backend intact");
+            check(sent[0]["text"]=="First line\r\nSecond line 漢字 😀","Multiline and Unicode input reaches the backend intact");
             Sleep(700); // Complete the deterministic sample pass before the next send.
             setDraft(L"Send button follow-up");const auto buttonReplies=last(trace).value("commandReplies",0U);
             clickAction(AuditAction::Send);
