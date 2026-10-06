@@ -406,6 +406,7 @@ struct Renderer {
     }
     std::string statusNotice() const {
         if(!model.connected)return "Reconnecting… Your draft is saved. Send will be available when connected.";
+        if(!model.chatting()&&!model.selectedId.empty()&&model.sourceId.empty()&&model.selected().value("status","")=="queued")return "Locally queued · This task has not started.";
         if(!model.message.empty())return model.message;
         if(model.pending&&model.pendingOwner==model.composerKey())return model.pendingCommand=="queueMessage"?"Queueing…":model.pendingCommand=="assistantAsk"?"Sending to Hyphen…":model.pendingCommand=="send"?"Sending…":model.pendingCommand=="attachImages"?"Adding images…":"Updating…";
         if(!model.detailError.empty())return model.detailError;
