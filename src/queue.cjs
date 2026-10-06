@@ -5,6 +5,7 @@ const crypto = require('node:crypto');
 const { EventEmitter } = require('node:events');
 const { inferAttention, statusLabel, priorityRank } = require('./attention.cjs');
 const { device, executionDevice, shortSummary, taskSummary } = require('./presentation.cjs');
+const { summaryKey } = require('./summary-key.cjs');
 const now = () => Math.floor(Date.now() / 1000);
 const hash = (value) => crypto.createHash('sha256').update(value).digest('hex').slice(0, 24);
 const labels = {
@@ -35,6 +36,18 @@ function read(file, fallback) {
     return fallback;
   }
 }
+function conversation(observed=[],owned=[]) {
+  const messages=observed.map(message=>({...message})),matched=new Set();
+  for(const message of owned) {
+    const index=messages.findIndex((previous,i)=>!matched.has(i)&&
+      (message.id&&previous.id?message.id===previous.id:
+        previous.role===message.role&&previous.text===message.text&&Math.abs((previous.at||0)-(message.at||0))<=5));
+    if(index<0){messages.push(message);matched.add(messages.length-1);continue;}
+    matched.add(index);const previous=messages[index];
+    messages[index]={...previous,...message,images:[...new Map([...(previous.images||[]),...(message.images||[])].map(image=>[typeof image==='string'?image:image.path,image])).values()].slice(0,4)};
+  }
+  return messages.sort((a,b)=>(a.at||0)-(b.at||0)).slice(-12);
+}
 
 class Queue extends EventEmitter {
   constructor(directory) {
@@ -60,6 +73,8 @@ class Queue extends EventEmitter {
     this.undo = null;
     this.approvals = new Map();
     this.ownedThreads = new Set();
+    this.summaries = new Map();
+    this.aiSummary = { enabled: false, cached: 0, pending: 0, message: '' };
     // A crash must offer a retry, never create a second chat automatically.
     for (const task of this.state.tasks)
       if (
@@ -78,6 +93,16 @@ class Queue extends EventEmitter {
     this.feed = feed;
     this.health = health;
     this.emit('change', this.snapshot());
+  }
+  setSummaries(values, status) {
+    this.summaries = values;
+    this.aiSummary = status;
+    this.emit('change', this.snapshot());
+  }
+  presentation(source) {
+    return this.state.settings.aiSummaries === true
+      ? this.summaries.get(summaryKey(source))
+      : undefined;
   }
   importLegacy(root) {
     if (this.state.importedLegacy) return;
@@ -105,6 +130,7 @@ class Queue extends EventEmitter {
       )[0];
       const state = this.cardState(id);
       const taskTitle = display.taskTitle || 'Current task unavailable';
+      const presentation = this.presentation(display);
       const key = id + ':' + hash(taskTitle.toLowerCase());
       const fp = [...sources]
         .sort((a, b) => a.id.localeCompare(b.id))
@@ -123,10 +149,14 @@ class Queue extends EventEmitter {
       return {
         id,
         taskKey: key,
-        title: taskTitle,
+        title: presentation?.title || taskTitle,
         chatName: display.title,
         groupName: sources.length > 1 ? name : '',
-        summary: shortSummary(display.summary || display.body) || 'No recorded update yet.',
+        summary:
+          presentation?.summary ||
+          shortSummary(display.summary || display.body) ||
+          'No recorded update yet.',
+        summaryOrigin: presentation ? 'ai' : 'recorded',
         device: device(display.device || this.feed.device),
         primarySourceId: display.id,
         kind: 'observed',
@@ -142,10 +172,12 @@ class Queue extends EventEmitter {
         sources: sources.map((s) => ({
           id: s.id,
           title: s.title,
-          taskTitle: s.taskTitle || '',
-          summary: shortSummary(s.summary || s.body),
+          taskTitle: this.presentation(s)?.title || s.taskTitle || '',
+          summary: this.presentation(s)?.summary || shortSummary(s.summary || s.body),
           device: device(s.device || this.feed.device),
           body: s.body || '',
+          conversation: s.conversation || [],
+          conversationLoaded: !!s.conversationLoaded,
           contextLoaded: !!s.contextLoaded,
           cwd: s.cwd || '',
           lifecycle: s.lifecycle,
@@ -176,6 +208,9 @@ class Queue extends EventEmitter {
         !['queued', 'starting', 'done'].includes(task.status)
       ) {
         const card = make(task.id, observed.title, [observed]);
+        card.sources = card.sources.map(source=>({...source,
+          conversation:conversation(source.conversation,task.messages),
+          conversationLoaded:source.conversationLoaded||!!task.messages?.length}));
         result.push({
           ...card,
           taskKey: task.id,
@@ -198,11 +233,14 @@ class Queue extends EventEmitter {
       const sourceDevice = device(
         task.device || (observed && (observed.device || this.feed.device)),
       );
+      const presentation =
+        task.completedAt && task.turnId === observed?.turnId ? this.presentation(observed) : null;
       result.push({
         ...task,
-        title: observed?.taskTitle || task.title,
+        title: presentation?.title || observed?.taskTitle || task.title,
         chatName: observed?.title || (task.threadId ? task.title : 'New chat'),
-        summary,
+        summary: presentation?.summary || summary,
+        summaryOrigin: presentation ? 'ai' : 'recorded',
         device: sourceDevice,
         primarySourceId: task.threadId,
         kind: 'local',
@@ -236,6 +274,8 @@ class Queue extends EventEmitter {
                 summary,
                 device: sourceDevice,
                 body: task.messages?.filter((m) => m.role === 'assistant').at(-1)?.text || '',
+                conversation: conversation(observed?.conversation,task.messages),
+                conversationLoaded: observed?.conversationLoaded || !!task.messages?.length,
                 contextLoaded: true,
                 cwd: task.cwd,
                 lifecycle: task.status,
@@ -260,6 +300,7 @@ class Queue extends EventEmitter {
       monitoredCount: this.feed.monitoredCount || this.feed.threads.length,
       collectedAt: this.feed.collectedAt,
       health: this.health,
+      aiSummary: this.aiSummary,
       settings: this.state.settings,
       groups: this.state.groups,
       queued: cards.filter((c) => c.status === 'queued' && !c.done).length,
@@ -421,7 +462,7 @@ class Queue extends EventEmitter {
     this.save();
     return task;
   }
-  message(id, role, value, messageId) {
+  message(id, role, value, messageId, images=[]) {
     const task = this.state.tasks.find((t) => t.id === id);
     if (!task) return;
     const key = messageId || crypto.randomUUID();
@@ -431,6 +472,7 @@ class Queue extends EventEmitter {
       task.messages.push(msg);
     }
     msg.text = value.slice(0, 16000);
+    if(images.length)msg.images=images;
     task.messages = task.messages.slice(-60);
     this.save();
   }

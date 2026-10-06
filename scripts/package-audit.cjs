@@ -4,19 +4,23 @@ const fs = require('node:fs'),
   assert = require('node:assert/strict'),
   asar = require('@electron/asar');
 const root = path.resolve(__dirname, '..'),
-  dir = path.join(root, 'dist');
+  dir = process.env.WORK_UPDATES_PACKAGE_DIR || path.join(root, 'dist');
 let executable, resources;
 if (process.platform === 'win32') {
   resources = path.join(dir, 'win-unpacked', 'resources');
   executable = path.join(dir, 'win-unpacked', 'Work Updates.exe');
 } else {
+  // electron-builder uses executableName for both the bundle filename and its
+  // internal executable. productName remains the user-facing app name.
+  const build = require('../package.json').build;
+  const executableName = build.mac.executableName || build.productName;
   const candidates = fs.readdirSync(dir).filter((n) => n === 'mac' || n.startsWith('mac-'));
   const bundle = candidates
-    .map((n) => path.join(dir, n, 'Work Updates.app'))
+    .map((n) => path.join(dir, n, executableName + '.app'))
     .find((p) => fs.existsSync(p));
-  assert.ok(bundle, 'A native Mac app must be built');
+  assert.ok(bundle, 'The Electron Mac compatibility app must be built');
   resources = path.join(bundle, 'Contents', 'Resources');
-  executable = path.join(bundle, 'Contents', 'MacOS', 'Work Updates');
+  executable = path.join(bundle, 'Contents', 'MacOS', executableName);
 }
 const archive = path.join(resources, 'app.asar'),
   entries = asar.listPackage(archive).map((p) => p.replaceAll('\\', '/'));

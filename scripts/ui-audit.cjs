@@ -1,5 +1,6 @@
 'use strict';
 const { _electron: electron } = require('playwright');
+const {closeAuditApp,forceAuditApp}=require('./electron-audit-lifecycle.cjs');
 const { execFileSync } = require('node:child_process');
 const fs = require('node:fs'),
   path = require('node:path'),
@@ -11,9 +12,19 @@ const root = path.resolve(__dirname, '..'),
 fs.mkdirSync(output, { recursive: true });
 let app;
 let checks = 0;
+let lastCheck = 'launch';
+// Unsigned macOS audit builds must not wait for a real Keychain permission
+// dialog. Match Electron's own synthetic-test setup; production is unchanged.
+const auditFlags = process.platform === 'darwin' ? ['--use-mock-keychain'] : [];
+const deadline = setTimeout(() => {
+  process.stderr.write('Synthetic UI audit timed out after: ' + lastCheck + '\n');
+  process.exitCode = 1;
+  forceAuditApp(app);
+}, 150000);
 const check = (condition, message) => {
   assert.ok(condition, message);
   checks++;
+  lastCheck = message;
 };
 async function waitFor(page, fn) {
   await page.waitForFunction(fn, null, { timeout: 12000 });
@@ -23,7 +34,7 @@ async function waitFor(page, fn) {
     const executablePath = process.env.WORK_UPDATES_EXECUTABLE;
     app = await electron.launch({
       executablePath,
-      args: [...(!executablePath ? [root] : []), '--demo', '--hidden', '--data-dir', dir],
+      args: [...(!executablePath ? [root] : []), ...auditFlags, '--demo', '--hidden', '--data-dir', dir],
       timeout: 30000,
     });
     const page = await app.firstWindow({ timeout: 30000 });
@@ -1174,15 +1185,12 @@ async function waitFor(page, fn) {
       'Native desktop UI: ' + checks + ' checks passed. Synthetic screenshots: artifacts/ui\n',
     );
   } finally {
-    if (app) {
-      const timer = setTimeout(() => app.process().kill(), 10000);
-      try {
-        await app.close();
-      } finally {
-        clearTimeout(timer);
-      }
+    try {
+      await closeAuditApp(app);
+    } finally {
+      clearTimeout(deadline);
+      fs.rmSync(dir, { recursive: true, force: true });
     }
-    fs.rmSync(dir, { recursive: true, force: true });
   }
 })().catch((error) => {
   process.stderr.write(error.stack + '\n');

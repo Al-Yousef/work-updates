@@ -1,0 +1,11 @@
+'use strict';
+const fs=require('node:fs'),path=require('node:path'),crypto=require('node:crypto'),asar=require('@electron/asar');
+const repo=path.resolve(__dirname,'..'),stage=path.join(repo,'artifacts/native-migration');
+const installed=require('./dev-paths.cjs').installed('desktop/resources/app.asar');
+const manifest=JSON.parse(fs.readFileSync(path.join(stage,'package.json'),'utf8'));
+const digest=value=>crypto.createHash('sha256').update(value).digest('hex');
+const changed=manifest.replaced.filter(file=>digest(asar.extractFile(installed,file))!==digest(asar.extractFile(path.join(stage,'app.asar'),file)));
+if(changed.some(file=>file!=='package.json'))throw new Error('Unexpected backend change in UX release: '+changed.join(', '));
+if(JSON.parse(asar.extractFile(path.join(stage,'app.asar'),'package.json')).version!=='0.6.9')throw new Error('Release version mismatch');
+fs.writeFileSync(path.join(stage,'ux-package-verification.json'),JSON.stringify({verified:true,changed,backendLogicPreserved:true,archiveSha256:digest(fs.readFileSync(path.join(stage,'app.asar')))},null,2));
+console.log('Verified 0.6.9 backend package: version change only; native UX fixes are in the separate native binary.');

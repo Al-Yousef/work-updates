@@ -6,6 +6,7 @@ const { EventEmitter } = require('node:events');
 const { RemotePeer, parseCode } = require('./peer.cjs');
 const { priorityRank } = require('./attention.cjs');
 const { executionDevice } = require('./presentation.cjs');
+const { StatePublisher, StateOrder } = require('./state-order.cjs');
 const now = () => Math.floor(Date.now() / 1000);
 const prefix = (id) => 'peer:' + id + ':';
 const validId = (id) => typeof id === 'string' && id.length > 0 && id.length <= 2048;
@@ -53,9 +54,28 @@ class Devices extends EventEmitter {
     this.peers = new Map();
     this.file = path.join(options.directory, 'paired-devices.enc');
     this.lastUndo = null;
+    this.publisher = new StatePublisher();
   }
   localState() {
-    return { ...this.options.state(), protocolVersion: 2, host: this.local, servedAt: now() };
+    return this.publisher.stamp({ ...this.options.state(), host: this.local });
+  }
+  receive(entry, value) {
+    validState(value);
+    if (value.host?.id === this.local.id)
+      throw new Error('This is this computer’s own pairing code.');
+    if (entry.hostId && value.host?.id && entry.hostId !== value.host.id)
+      throw new Error('The paired computer identity changed. Pair it again.');
+    const generation = entry.peer.generation || 0;
+    if (entry.generation !== generation) {
+      entry.generation = generation;
+      entry.order.reset();
+    }
+    if (!entry.order.accept(value.stateVersion)) return false;
+    if (value.host?.id) entry.hostId = value.host.id;
+    entry.state = structuredClone(value);
+    entry.name = value.host?.name || entry.name;
+    entry.lastSeen = now();
+    return true;
   }
   owner(entry) {
     return {
@@ -164,24 +184,22 @@ class Devices extends EventEmitter {
       name,
       state: null,
       lastSeen: 0,
+      generation: null,
+      order: new StateOrder(),
+      eventCount: 0,
     };
     this.peers.set(entry.id, entry);
     peer.on('state', (value) => {
       if (this.peers.get(entry.id) !== entry) return;
       try {
-        validState(value);
-        if (value.host?.id === this.local.id)
-          throw new Error('This is this computer’s own pairing code.');
-        if (entry.hostId && value.host?.id && entry.hostId !== value.host.id)
-          throw new Error('The paired computer identity changed. Pair it again.');
-        entry.hostId = value.host?.id;
-        entry.state = structuredClone(value);
-        entry.name = value.host?.name || entry.name;
-        entry.lastSeen = now();
-        this.emit('change');
+        entry.eventCount++;
+        if (this.receive(entry, value)) this.emit('change');
       } catch (error) {
-        entry.error = error;
-        peer.close();
+        if (error.code === 'STATE_RESTARTED' && peer.resync) peer.resync();
+        else {
+          entry.error = error;
+          peer.close();
+        }
         this.emit('change');
       }
     });
@@ -237,7 +255,7 @@ class Devices extends EventEmitter {
       this.peers.delete(e.id);
       e.peer.close();
     }
-    if (id && this.lastUndo === id) this.lastUndo = null;
+    if (entries.some((e) => e.id === this.lastUndo)) this.lastUndo = null;
     this.persist();
     this.emit('change');
   }
@@ -263,6 +281,7 @@ class Devices extends EventEmitter {
     if (targets.some((t) => t.id !== owner))
       throw new Error('This action includes a chat from another computer.');
     for (const target of targets) next[target.field] = target.value;
+    if(owner&&input.attachmentIds?.length)throw new Error('Image delivery to another computer is not connected yet. Open this chat on its computer to attach images.');
     if (Array.isArray(input.ids)) {
       const targets = input.ids.map(infer);
       if (targets.some((t) => t.id !== owner)) throw new Error('Group chats on the same computer.');
@@ -290,18 +309,30 @@ class Devices extends EventEmitter {
     }
     if (entry && !entry.peer.connected)
       throw new Error(entry.name + ' is offline. Reconnect before sending this action.');
+    const generation = entry?.peer.generation || 0,
+      eventCount = entry?.eventCount;
     const result = entry
       ? await entry.peer.command(method, next)
       : await this.options.command(method, next);
-    if (['action', 'group'].includes(method)) this.lastUndo = owner;
-    if (method === 'undo') this.lastUndo = null;
+    const current = () =>
+      !entry || (this.peers.get(owner) === entry && generation === (entry.peer.generation || 0));
+    const recordUndo = () => {
+      if (current() && ['action', 'group'].includes(method)) this.lastUndo = owner;
+      if (current() && method === 'undo') this.lastUndo = null;
+    };
     if (result?.cards && result?.done) {
-      if (entry) {
-        validState(result);
-        entry.state = structuredClone(result);
+      if (entry && current() && (result.stateVersion || eventCount === entry.eventCount)) {
+        try {
+          this.receive(entry, result);
+        } catch (error) {
+          if (error.code === 'STATE_RESTARTED' && entry.peer.resync) entry.peer.resync();
+          else throw error;
+        }
       }
+      recordUndo();
       return this.snapshot();
     }
+    recordUndo();
     if (method === 'details' && entry) return this.card(result, entry);
     if (entry && result && typeof result === 'object') {
       const p = prefix(entry.id),

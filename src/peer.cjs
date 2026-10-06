@@ -14,6 +14,8 @@ const allowed = new Set([
   'action',
   'undo',
   'send',
+  'queueMessage',
+  'clearMessages',
   'stop',
   'respond',
   'details',
@@ -385,6 +387,14 @@ class RemotePeer extends EventEmitter {
     clearTimeout(this.timer);
     const delay = Math.min(30000, 1000 * 2 ** Math.min(this.attempt++, 5));
     this.timer = setTimeout(() => this.connect().catch(() => this.reconnect()), delay);
+  }
+  resync() {
+    if (this.closed) return;
+    this.generation++;
+    this.connected = false;
+    this.stream?.destroy();
+    this.emit('connection', false);
+    this.reconnect();
   }
   async command(method, input = {}) {
     if (!allowed.has(method)) throw new Error('Unknown paired action.');

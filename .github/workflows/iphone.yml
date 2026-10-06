@@ -2,6 +2,14 @@ name: iPhone app checks
 on:
   push:
     branches: [main]
+    paths:
+      [
+        'ios/**',
+        '.github/workflows/iphone.yml',
+        'src/**',
+        'scripts/ios-fixture.cjs',
+        'package*.json',
+      ]
   pull_request:
   workflow_dispatch:
 permissions:
@@ -10,6 +18,8 @@ jobs:
   iphone:
     runs-on: macos-15
     timeout-minutes: 25
+    env:
+      WU_TEST_CODE_FILE: /tmp/work-updates-ios-pairing-code
     steps:
       - uses: actions/checkout@v4
       - uses: actions/setup-node@v4
@@ -17,6 +27,7 @@ jobs:
           node-version: '24'
           cache: npm
       - run: npm ci --no-fund
+      - run: npm run audit:release
       - run: brew install xcodegen
       - name: Generate native iPhone project
         working-directory: ios
@@ -30,7 +41,7 @@ jobs:
             test -f /tmp/work-updates-ios-pairing-code && break
             sleep 1
           done
-          test -f /tmp/work-updates-ios-pairing-code
+          test -f /tmp/work-updates-ios-pairing-code || { cat /tmp/work-updates-ios-fixture.log; exit 1; }
           swift test --package-path ios/Core
       - name: Native iPhone simulator tests
         run: |
@@ -42,7 +53,7 @@ jobs:
             test -f /tmp/work-updates-ios-pairing-code && break
             sleep 1
           done
-          test -f /tmp/work-updates-ios-pairing-code
+          test -f /tmp/work-updates-ios-pairing-code || { cat /tmp/work-updates-ios-fixture.log; exit 1; }
           simulator_id=$(xcrun simctl list devices available -j | python3 -c 'import json,sys; print(next(d["udid"] for ds in json.load(sys.stdin)["devices"].values() for d in ds if d["name"].startswith("iPhone")))')
           xcodebuild -project ios/WorkUpdates.xcodeproj -scheme WorkUpdates -destination "platform=iOS Simulator,id=$simulator_id" -derivedDataPath artifacts/iphone-derived -resultBundlePath artifacts/iphone-tests.xcresult CODE_SIGNING_ALLOWED=NO test
           xcrun simctl boot "$simulator_id" || true

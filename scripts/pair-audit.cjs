@@ -1,5 +1,6 @@
 'use strict';
 const { _electron: electron } = require('playwright');
+const {closeAuditApp,forceAuditApp}=require('./electron-audit-lifecycle.cjs');
 const fs = require('node:fs'),
   os = require('node:os'),
   path = require('node:path'),
@@ -7,7 +8,15 @@ const fs = require('node:fs'),
 const root = path.resolve(__dirname, '..'),
   dir = fs.mkdtempSync(path.join(os.tmpdir(), 'wu-native-pair-'));
 let host, companion, viewer, code;
+let lastOperation = 'launch';
+const auditFlags = process.platform === 'darwin' ? ['--use-mock-keychain'] : [];
+const deadline = setTimeout(() => {
+  process.stderr.write('Synthetic pairing audit timed out during: ' + lastOperation + '\n');
+  process.exitCode = 1;
+  for (const app of [companion, viewer, host]) forceAuditApp(app);
+}, 150000);
 async function invoke(page, method, input) {
+  lastOperation = method;
   const result = await page.evaluate(({ method, input }) => window.workUpdates[method](input), {
     method,
     input,
@@ -16,6 +25,7 @@ async function invoke(page, method, input) {
   return result.value;
 }
 async function waitState(page, predicate) {
+  lastOperation = 'wait for paired snapshot';
   const end = Date.now() + 15000;
   while (Date.now() < end) {
     const state = await invoke(page, 'state');
@@ -27,7 +37,7 @@ async function waitState(page, predicate) {
 (async () => {
   try {
     host = await electron.launch({
-      args: [root, '--demo', '--data-dir', path.join(dir, 'host')],
+      args: [root, ...auditFlags, '--demo', '--data-dir', path.join(dir, 'host')],
       timeout: 30000,
     });
     const h = await host.firstWindow({ timeout: 30000 });
@@ -36,7 +46,7 @@ async function waitState(page, predicate) {
     code = await host.evaluate(({ clipboard }) => clipboard.readText());
     assert.ok(code.startsWith('wu1:'));
     companion = await electron.launch({
-      args: [root, '--demo', '--data-dir', path.join(dir, 'companion')],
+      args: [root, ...auditFlags, '--demo', '--data-dir', path.join(dir, 'companion')],
       timeout: 30000,
     });
     const c = await companion.firstWindow({ timeout: 30000 });
@@ -56,7 +66,7 @@ async function waitState(page, predicate) {
       'Equal sample chat IDs on two computers are namespaced',
     );
     viewer = await electron.launch({
-      args: [root, '--demo', '--data-dir', path.join(dir, 'viewer')],
+      args: [root, ...auditFlags, '--demo', '--data-dir', path.join(dir, 'viewer')],
       timeout: 30000,
     });
     const v = await viewer.firstWindow({ timeout: 30000 });
@@ -135,16 +145,20 @@ async function waitState(page, predicate) {
       'Three native windows: merged queues, collision-safe reply, shared Reviewed/Snooze/Undo/Done, offline refusal and revoke passed.\n',
     );
   } finally {
+    try {
     if (host && code)
       await host
         .evaluate(({ clipboard }, value) => {
           if (clipboard.readText() === value) clipboard.writeText('');
         }, code)
         .catch(() => {});
-    if (companion) await companion.close();
-    if (viewer) await viewer.close();
-    if (host) await host.close();
-    fs.rmSync(dir, { recursive: true, force: true });
+      const closed=await Promise.allSettled([companion,viewer,host].map(closeAuditApp));
+      const errors=closed.filter(result=>result.status==='rejected').map(result=>result.reason);
+      if(errors.length) throw new AggregateError(errors,'Synthetic pairing apps did not shut down cleanly\n'+errors.map(error=>error.stack).join('\n'));
+    } finally {
+      clearTimeout(deadline);
+      fs.rmSync(dir, { recursive: true, force: true });
+    }
   }
 })().catch((error) => {
   process.stderr.write(error.stack + '\n');

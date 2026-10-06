@@ -57,7 +57,7 @@ struct QueueView: View {
                     }.padding(.horizontal,18).padding(.bottom,24)
                 }.refreshable {store.reconnect()}
             }
-            .navigationTitle("Work Updates").navigationBarTitleDisplayMode(.inline)
+            .navigationTitle("Hyphen").navigationBarTitleDisplayMode(.inline)
             .toolbar {
                 ToolbarItem(placement:.topBarLeading){Button{showDevices=true}label:{Image(systemName:"desktopcomputer").frame(minWidth:44,minHeight:44)}.accessibilityLabel("Your devices").accessibilityIdentifier("devices")}
                 ToolbarItem(placement:.topBarTrailing){Button{showComposer=true}label:{Image(systemName:"plus").frame(minWidth:44,minHeight:44)}.accessibilityLabel("New task").accessibilityIdentifier("new-task")}
@@ -118,7 +118,7 @@ struct StatusIcon:View {
 
 extension View {
     func workErrorAlert(_ store:WorkStore,when visible:Bool=true) -> some View {
-        alert("Work Updates",isPresented:Binding(get:{visible && store.error != nil},set:{if !$0 {store.error=nil}})) {
+        alert("Hyphen",isPresented:Binding(get:{visible && store.error != nil},set:{if !$0 {store.error=nil}})) {
             Button("OK"){store.error=nil}
         } message:{Text(store.error ?? "")}
     }

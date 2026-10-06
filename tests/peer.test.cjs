@@ -57,6 +57,27 @@ async function setup(t) {
   const code = await host.start('127.0.0.1');
   return { host, code, calls };
 }
+
+test('a mutation accepted before the TLS response breaks is never automatically resent', async (t) => {
+  const { host, code, calls } = await setup(t),
+    peer = new RemotePeer(code);
+  t.after(() => peer.close());
+  await peer.connect();
+  const send = host.json.bind(host);
+  host.json = (res, status, value) => {
+    if (value?.ok === true) {
+      res.destroy();
+      return;
+    }
+    return send(res, status, value);
+  };
+  await assert.rejects(
+    peer.command('create', { title: 'Uncertain sample', prompt: 'Synthetic only.' }),
+  );
+  assert.equal(calls.length, 1);
+  await peer.json('/state');
+  assert.equal(calls.length, 1, 'A fresh read does not repeat the accepted POST');
+});
 test('private pairing streams state and restricts commands', async (t) => {
   const { host, code, calls } = await setup(t);
   const client = new RemotePeer(code);

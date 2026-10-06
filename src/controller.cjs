@@ -18,10 +18,11 @@ function statusFromText(value) {
   return 'ready';
 }
 class Controller extends EventEmitter {
-  constructor(queue, client) {
+  constructor(queue, client, options = {}) {
     super();
     this.queue = queue;
     this.client = client;
+    this.desktop = options.desktop;
     client.on('created', ({ taskId, threadId }) => {
       queue.ownedThreads.add(threadId);
       queue.patch(taskId, { threadId });
@@ -77,11 +78,12 @@ class Controller extends EventEmitter {
       q.busy.delete(id);
     }
   }
-  async send(id, input, sourceId, expectedTaskKey) {
+  async send(id, input, sourceId, expectedTaskKey, options = {}) {
     const q = this.queue,
       card = q.get(id, expectedTaskKey),
       value = text(input, 12000);
-    if (!value) throw new Error('Write a message first.');
+    const images=options.images||[];
+    if (!value&&!images.length) throw new Error('Write a message or attach an image first.');
     if (card.done) throw new Error('Reopen this task before sending another message.');
     const source = card.sources.length ? taskSource(card, sourceId) : null;
     const lock = source?.id || id;
@@ -91,12 +93,28 @@ class Controller extends EventEmitter {
     if ([...q.approvals.values()].some((r) => r.taskId === id))
       throw new Error('Answer the pending request before sending another message.');
     if (!source) throw new Error('Choose a source chat.');
-    if (!q.ownedThreads.has(source.id) && source.lifecycle === 'working')
+    if (!this.desktop && !q.ownedThreads.has(source.id) && source.lifecycle === 'working')
       throw new Error('This chat is working in Codex. Open it there to steer the current pass.');
     if (task && q.busy.has(task.id)) throw new Error('A message is already being sent.');
     q.busy.add(lock);
     if (task) q.busy.add(task.id);
+    let dispatchStarted = false;
     try {
+      if (this.desktop && !q.ownedThreads.has(source.id)) {
+        // Ask the existing desktop owner to submit the reply. Observed chats
+        // remain observed; do not create a local task or claim their writer.
+        const owner = await this.desktop.owner(source.id);
+        if (owner) {
+          dispatchStarted = true;
+          const receipt=await this.desktop.send(source.id, value, {
+            owner, working: source.lifecycle === 'working', messageId: options.messageId, images,
+          });
+          if(task?.error)q.patch(task.id,{error:''});
+          return receipt;
+        }
+        if (source.lifecycle === 'working')
+          throw new Error('Codex is working in this chat. Queue the reply or open its chat.');
+      }
       // Resume must succeed before an observed chat becomes an app-owned task.
       // A writer-lock rejection leaves its update and context intact.
       if (this.client.prepare) await this.client.prepare(source.id);
@@ -107,16 +125,22 @@ class Controller extends EventEmitter {
       }
       q.ownedThreads.add(source.id);
       q.busy.add(task.id);
-      q.message(task.id, 'user', value);
+      q.message(task.id, 'user', value, options.messageId, images);
       q.patch(task.id, {
         status: 'working',
         error: '',
         reviewedVersion: '',
         device: executionDevice(),
       });
-      await this.client.send(task.threadId, value);
-      return { taskId: task.id };
+      dispatchStarted = true;
+      const result = await this.client.send(task.threadId, value, images);
+      return { taskId: task.id, messageId: options.messageId, delivery: 'sent', route: 'app-server',
+        turnId: result?.turn?.id || result?.turnId || task.turnId };
     } catch (error) {
+      if (!dispatchStarted) {
+        error.delivery = 'not-sent';
+        error.phase = 'preparing-chat';
+      }
       if (task) {
         q.patch(task.id, { status: 'blocked', error: error.message });
         error.taskId = task.id;

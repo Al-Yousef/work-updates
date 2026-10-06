@@ -12,6 +12,7 @@ const methods = [
   'details',
   'group',
   'refresh',
+  'retrySummaries',
   'open',
   'project',
   'settings',

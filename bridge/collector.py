@@ -10,12 +10,14 @@ import sqlite3
 import sys
 import time
 import atexit
+import uuid
 
 MAX_TAIL = 4 * 1024 * 1024
 MAX_LINE = 256 * 1024
 TAIL_CACHE = {}
 SOURCE_CACHE = {}
 TASK_TITLE_VERSION = 5
+DETAIL_IDS = []
 TASK_VERBS = r'(?:fix|update|build|add|remove|check|review|compare|test|verify|find|locate|search|research|apply|access|request|implement|move|rename|investigate|organize|create|design|publish|rewrite|draft|send|upload|download|install|develop|plan|finish|complete|adjust|change|improve|resolve|repair|rebuild)'
 NEEDS_PATTERN = r'\b(need your|needs your|waiting on you|waiting for you|(?:requires?|awaiting|waiting for|blocked on|blocked by|blocked until) your\b|please (send|provide|upload|confirm))\b'
 
@@ -30,6 +32,7 @@ def timestamp(value):
 def plain(text):
     # Local text is data; never render HTML or execute embedded links/commands.
     text = re.sub(r'<oai-mem-citation>[\s\S]*?</oai-mem-citation>', '', text)
+    text = re.sub(r'</?image\b[^>]*>', '', text)
     text = re.sub(r':{1,2}[\w-]+\{[^\n]*\}', '', text)
     text = re.sub(r'[^]*', '', text)
     text = re.sub(r'!\[([^\]]*)\]\([^\n]*?\)', r'\1', text)
@@ -79,10 +82,15 @@ def rollout_tail(path):
                     parts = [x.get('text', '') for x in p.get('content', [])
                              if x.get('type') in ('output_text', 'input_text', 'text')]
                     value = '\n'.join(parts).strip()
-                    if value:
+                    images = re.findall(r'!\[[^\]]*\]\(([^)]+)\)', value)
+                    images += re.findall(r'<image\b[^>\n]*\bpath="([^"]+)"[^>]*>', value)
+                    images += [x.get('path', '') for x in p.get('content', [])
+                               if x.get('type') in ('localImage', 'local_image')]
+                    images = [x.strip('<>') for x in images if os.path.isabs(x.strip('<>'))][:4]
+                    if value or images:
                         events.append({'kind': 'message' if role == 'assistant' else 'request', 'at': when,
                                        'phase': p.get('phase') or 'commentary',
-                                       'text': value})
+                                       'text': value, 'conversation': True, 'role': role, 'images': images})
         TAIL_CACHE[path] = (key, events)
     except (OSError, ValueError):
         pass
@@ -91,9 +99,17 @@ def rollout_tail(path):
 
 def readonly(path):
     c = sqlite3.connect(Path(path).as_uri() + '?mode=ro', uri=True, timeout=2)
-    c.row_factory = sqlite3.Row
-    c.execute('PRAGMA query_only=ON')
-    return c
+    try:
+        c.row_factory = sqlite3.Row
+        c.execute('PRAGMA query_only=ON')
+        # ORDER BY can spill to the host temp directory. Keep read-only query
+        # intermediates in memory, including inside a restricted review process.
+        c.execute('PRAGMA temp_store=MEMORY')
+        c.execute('PRAGMA schema_version').fetchone()
+        return c
+    except Exception:
+        c.close()
+        raise
 
 
 def history_latest(con, thread_id):
@@ -237,7 +253,10 @@ def collect(config):
     warnings = []
     try:
         if (home / 'thread_history_1.sqlite').exists():
-            history = readonly(home / 'thread_history_1.sqlite')
+            try:
+                history = readonly(home / 'thread_history_1.sqlite')
+            except sqlite3.Error:
+                warnings.append('Chat history database unavailable; context uses recorded rollout events.')
         # The entire local catalogue stays watched, including older CLI sessions.
         columns = {r['name'] for r in state.execute('PRAGMA table_info(threads)')}
         extra = " AND COALESCE(thread_source,'user') NOT IN ('subagent','guardian_review')" if 'thread_source' in columns else ''
@@ -246,6 +265,14 @@ def collect(config):
                              ' ORDER BY updated_at DESC').fetchall()
         ignored = set(config.get('ignoredThreadIds', []))
         requested = set(config.get('_requestedIds', []))
+        # Conversations belong to opened chats, not every queue notification.
+        # Remember only eight recently opened destinations and keep them fresh.
+        for id in config.get('_requestedIds', [])[:32]:
+            if id in DETAIL_IDS:
+                DETAIL_IDS.remove(id)
+            DETAIL_IDS.insert(0, id)
+        del DETAIL_IDS[8:]
+        requested.update(DETAIL_IDS)
         context_since = int(config.get('_contextSince', now - 7 * 86400))
         result = []
         for r in rows:
@@ -259,9 +286,13 @@ def collect(config):
             signature = [int(r['updated_at']), r['rollout_path'], *file_key]
             cached = SOURCE_CACHE.get(r['id'])
             requested_context = r['id'] in requested
-            if cached and cached.get('signature') == signature and not (requested_context and not cached['record'].get('contextLoaded')):
+            if cached and cached.get('signature') == signature and not (requested_context and (not cached['record'].get('contextLoaded') or not cached['record'].get('conversationLoaded'))):
                 record = dict(cached['record'])
                 record['title'] = r['name'] or r['title'][:120]
+                if not requested_context:
+                    record['conversation'] = []
+                    record['conversationLoaded'] = False
+                    cached['record'] = record
                 if cached.get('taskTitleVersion') != TASK_TITLE_VERSION:
                     record['taskTitle'] = current_task(history, r['id'], r['rollout_path']) if record.get('contextLoaded') else ''
                     cached['record'] = record; cached['taskTitleVersion'] = TASK_TITLE_VERSION
@@ -347,6 +378,9 @@ def collect(config):
             record = {'id': r['id'], 'title': r['name'] or r['title'][:120],
                            'taskTitle': current_task(history, r['id'], r['rollout_path'], cached['record'].get('taskTitle', '') if cached else ''),
                            'summary': summary, 'body': body, 'updatedAt': when,
+                           'conversation': [{'role': e['role'], 'text': plain(e['text'])[:6000], 'at': e['at'], 'images': e.get('images', [])}
+                                            for e in rollout_tail(r['rollout_path']) if e.get('conversation')][-12:] if requested_context else [],
+                           'conversationLoaded': requested_context,
                            'notificationAt': int(completed_at or evidence_at), 'completedAt': int(completed_at),
                            'readyForReview': ready, 'lifecycle': lifecycle, 'contextLoaded': True, 'turnId': turn_id,
                            'status': status, 'label': label, 'fingerprint': fp,
@@ -358,7 +392,7 @@ def collect(config):
         for id in list(SOURCE_CACHE):
             if id not in live_ids:
                 del SOURCE_CACHE[id]
-        return {'schemaVersion': 2, 'collectorVersion': TASK_TITLE_VERSION, 'collectedAt': now, 'scope': 'Local Codex chats',
+        return {'schemaVersion': 2, 'collectorVersion': TASK_TITLE_VERSION, 'collectedAt': int(time.time()), 'scope': 'Local Codex chats',
                 'threads': result, 'monitoredCount': len(result), 'warnings': warnings,
                 'device': {'kind': {'win32': 'pc', 'darwin': 'mac', 'linux': 'linux'}.get(sys.platform, 'unknown')}}
     finally:
@@ -376,16 +410,38 @@ def atomic(path, payload):
 
 def main():
     ap = argparse.ArgumentParser()
-    ap.add_argument('--root', required=True)
+    ap.add_argument('--root')
     ap.add_argument('--once', action='store_true')
     ap.add_argument('--parent-pid', type=int)
+    ap.add_argument('--stdio', action='store_true')
+    ap.add_argument('--codex-home')
+    ap.add_argument('--session')
+    ap.add_argument('--source-id')
+    ap.add_argument('--poll-seconds', type=float, default=3)
     args = ap.parse_args()
-    root = Path(args.root)
-    cache_path = root / 'data' / 'source-cache.json'
-    try:
-        SOURCE_CACHE.update(json.loads(cache_path.read_text(encoding='utf-8')))
-    except (OSError, ValueError):
-        pass
+    if args.stdio:
+        if not args.codex_home or not args.session:
+            ap.error('--stdio requires --codex-home and --session')
+        session = str(uuid.UUID(args.session))
+        home = Path(args.codex_home).resolve()
+        if args.source_id and not re.fullmatch(r'[a-f0-9]{64}', args.source_id):
+            ap.error('--source-id must be a lowercase SHA-256 identity')
+        # The parent already canonicalized and selected this source before
+        # opening the private pipe. Python and Node can resolve Windows path
+        # aliases differently; do not recalculate the parent's receipt identity.
+        source_id = args.source_id or hashlib.sha256(os.path.normcase(str(home)).encode('utf-8')).hexdigest()
+        root = cache_path = None
+        config = {'codexHome': str(home), 'pollSeconds': max(.05, args.poll_seconds)}
+    else:
+        if not args.root:
+            ap.error('--root is required for file collection')
+        root = Path(args.root)
+        cache_path = root / 'data' / 'source-cache.json'
+        try:
+            SOURCE_CACHE.update(json.loads(cache_path.read_text(encoding='utf-8')))
+        except (OSError, ValueError):
+            pass
+    sequence = 0
     parent_alive = lambda: True
     if args.parent_pid and os.name != 'nt':
         def parent_alive():
@@ -412,27 +468,47 @@ def main():
     while True:
         if not parent_alive():
             return 0
+        sequence += 1
+        started = time.monotonic()
         try:
-            config = json.loads((root / 'config.json').read_text(encoding='utf-8-sig'))
-            requests = root / 'data' / 'details-request.json'
-            if requests.exists():
-                try:
-                    config['_requestedIds'] = json.loads(requests.read_text(encoding='utf-8')).get('threadIds', [])
-                    requests.unlink(missing_ok=True)
-                except (OSError, ValueError):
-                    pass
+            if not args.stdio:
+                config = json.loads((root / 'config.json').read_text(encoding='utf-8-sig'))
+                requests = root / 'data' / 'details-request.json'
+                if requests.exists():
+                    try:
+                        config['_requestedIds'] = json.loads(requests.read_text(encoding='utf-8')).get('threadIds', [])
+                        requests.unlink(missing_ok=True)
+                    except (OSError, ValueError):
+                        pass
             feed = collect(config)
-            atomic(root / 'data' / 'feed.json', feed)
-            atomic(cache_path, SOURCE_CACHE)
-            atomic(root / 'data' / 'health.json', {'ok': True, 'at': int(time.time()), 'message': ''})
+            if args.stdio:
+                # Private content crosses a local pipe only. This mode never reads
+                # requests, persists a feed/cache, or writes to the Codex source.
+                print(json.dumps({'session': session, 'sourceId': source_id,
+                                  'sequence': sequence, 'ok': True, 'feed': feed,
+                                  'completedAt': time.time(),
+                                  'durationMs': round((time.monotonic() - started) * 1000)}), flush=True)
+            else:
+                atomic(root / 'data' / 'feed.json', feed)
+                atomic(cache_path, SOURCE_CACHE)
+                atomic(root / 'data' / 'health.json', {'ok': True, 'at': int(time.time()), 'message': ''})
         except Exception as e:
             # Keep last good feed; health makes disconnection visible.
-            atomic(root / 'data' / 'health.json', {'ok': False, 'at': int(time.time()),
-                                                  'message': type(e).__name__ + ': ' + str(e)[:180]})
+            if args.stdio:
+                # Error paths may include private source filenames; emit a safe code.
+                print(json.dumps({'session': session, 'sourceId': source_id,
+                                  'sequence': sequence, 'ok': False,
+                                  'completedAt': time.time(), 'error': type(e).__name__}), flush=True)
+            else:
+                atomic(root / 'data' / 'health.json', {'ok': False, 'at': int(time.time()),
+                                                      'message': type(e).__name__ + ': ' + str(e)[:180]})
             if args.once:
                 return 1
         if args.once:
             return 0
+        if args.stdio:
+            time.sleep(config['pollSeconds'])
+            continue
         for _ in range(max(1, int(config.get('pollSeconds', 3)))):
             time.sleep(1)
             if not parent_alive():

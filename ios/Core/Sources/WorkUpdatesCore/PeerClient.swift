@@ -9,6 +9,14 @@ private final class PinnedDelegate: NSObject, URLSessionDelegate, URLSessionTask
     init(_ pairing: PairingCode) {self.pairing=pairing}
     func urlSession(_ session: URLSession, didReceive challenge: URLAuthenticationChallenge,
                     completionHandler: @escaping (URLSession.AuthChallengeDisposition, URLCredential?) -> Void) {
+        authenticate(challenge, completionHandler:completionHandler)
+    }
+    func urlSession(_ session: URLSession, task: URLSessionTask, didReceive challenge: URLAuthenticationChallenge,
+                    completionHandler: @escaping (URLSession.AuthChallengeDisposition, URLCredential?) -> Void) {
+        authenticate(challenge, completionHandler:completionHandler)
+    }
+    private func authenticate(_ challenge: URLAuthenticationChallenge,
+                    completionHandler: @escaping (URLSession.AuthChallengeDisposition, URLCredential?) -> Void) {
         guard challenge.protectionSpace.authenticationMethod == NSURLAuthenticationMethodServerTrust,
               challenge.protectionSpace.host == pairing.host,
               challenge.protectionSpace.port == pairing.port,
@@ -25,7 +33,13 @@ private final class PinnedDelegate: NSObject, URLSessionDelegate, URLSessionTask
                     willPerformHTTPRedirection response: HTTPURLResponse, newRequest request: URLRequest,
                     completionHandler: @escaping (URLRequest?) -> Void) {completionHandler(nil)}
 }
-public final class PeerClient: @unchecked Sendable {
+public protocol PeerConnection: AnyObject, Sendable {
+    func state() async throws -> QueueState
+    func events(_ receive: @escaping @Sendable (QueueState) async throws -> Void) async throws
+    func command(_ method: String, input: [String:JSONValue]) async throws -> JSONValue
+    func close()
+}
+public final class PeerClient: PeerConnection, @unchecked Sendable {
     public let pairing: PairingCode
     private let session: URLSession
     private let delegate: PinnedDelegate
@@ -57,7 +71,7 @@ public final class PeerClient: @unchecked Sendable {
         return response.statusCode
     }
     public func state() async throws -> QueueState {
-        let (bytes,response) = try await session.bytes(for:request("state"))
+        let (bytes,response) = try await session.bytes(for:request("state"),delegate:delegate)
         guard try status(response) == 200 else {throw PeerError.server("The computer could not return its queue.")}
         var data = Data()
         for try await byte in bytes {
@@ -67,7 +81,7 @@ public final class PeerClient: @unchecked Sendable {
         return try QueueState.decode(data)
     }
     public func events(_ receive: @escaping @Sendable (QueueState) async throws -> Void) async throws {
-        let (bytes,response) = try await session.bytes(for:request("events"))
+        let (bytes,response) = try await session.bytes(for:request("events"),delegate:delegate)
         guard try status(response) == 200 else {throw PeerError.server("The computer could not stream updates.")}
         var frame = Data(), line = Data()
         for try await byte in bytes {
@@ -92,7 +106,7 @@ public final class PeerClient: @unchecked Sendable {
         let data = try JSONEncoder().encode(JSONValue.object(["method":.string(method),"input":.object(input)]))
         guard data.count <= 64_000 else {throw PeerError.server("This message is too long.")}
         do {
-            let (bytes,response) = try await session.bytes(for:request("command",method:"POST",body:data))
+            let (bytes,response) = try await session.bytes(for:request("command",method:"POST",body:data),delegate:delegate)
             let code = try status(response)
             guard code == 200 || code == 400 else {throw PeerError.uncertainDelivery}
             var result = Data()

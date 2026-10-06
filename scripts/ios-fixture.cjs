@@ -7,18 +7,20 @@ const { Queue } = require('../src/queue.cjs');
 const { Controller } = require('../src/controller.cjs');
 const { DemoCodex, feed } = require('../src/demo.cjs');
 const { HostPeer } = require('../src/peer.cjs');
+const { StatePublisher } = require('../src/state-order.cjs');
 const directory = fs.mkdtempSync(path.join(os.tmpdir(), 'wu-ios-fixture-'));
-const codeFile = path.join(os.tmpdir(), 'work-updates-ios-pairing-code');
+const codeFile =
+  process.env.WU_TEST_CODE_FILE || path.join(os.tmpdir(), 'work-updates-ios-pairing-code');
 const queue = new Queue(directory),
   client = new DemoCodex(),
   controller = new Controller(queue, client);
 queue.setFeed(feed(), { ok: true });
-const state = () => ({
-  ...queue.snapshot(),
-  protocolVersion: 2,
-  host: { id: '11111111-1111-4111-8111-111111111111', name: 'Synthetic desktop', kind: 'mac' },
-  servedAt: Math.floor(Date.now() / 1000),
-});
+const publisher = new StatePublisher();
+const state = () =>
+  publisher.stamp({
+    ...queue.snapshot(),
+    host: { id: '11111111-1111-4111-8111-111111111111', name: 'Synthetic desktop', kind: 'mac' },
+  });
 const host = new HostPeer({
   directory,
   encrypt: (v) => Buffer.from(v),
@@ -29,8 +31,14 @@ const host = new HostPeer({
     if (method === 'start') return controller.start(input.id);
     if (method === 'send')
       return controller.send(input.id, input.text, input.sourceId, input.taskKey);
-    if (method === 'action') return queue.action(input.id, input.action, input.taskKey);
-    if (method === 'undo') return queue.undoLast();
+    if (method === 'action') {
+      queue.action(input.id, input.action, input.taskKey);
+      return state();
+    }
+    if (method === 'undo') {
+      queue.undoLast();
+      return state();
+    }
     if (method === 'details') return queue.get(input.id, input.taskKey);
     if (method === 'respond') return controller.respond(input.id, input.decision, input.answers);
     if (method === 'refresh') return state();

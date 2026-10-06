@@ -510,7 +510,8 @@ footer button {
   min-height: 34px;
   padding: 5px 10px;
 }
-#connection {
+#connection,
+#ai-progress {
   margin-top: 4px;
 }
 .gesture-hint {

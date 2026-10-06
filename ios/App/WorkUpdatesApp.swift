@@ -15,7 +15,7 @@ private struct PreviewPreferences:ViewModifier {
     @ViewBuilder func body(content:Content) -> some View {
         #if DEBUG
         if ProcessInfo.processInfo.arguments.contains("--large-type") {
-            content.dynamicTypeSize(.accessibility2).environment(\.accessibilityReduceMotion,true)
+            content.dynamicTypeSize(.accessibility2)
         } else {content}
         #else
         content
