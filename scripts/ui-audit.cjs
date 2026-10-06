@@ -11,9 +11,19 @@ const root = path.resolve(__dirname, '..'),
 fs.mkdirSync(output, { recursive: true });
 let app;
 let checks = 0;
+let lastCheck = 'launch';
+// Unsigned macOS audit builds must not wait for a real Keychain permission
+// dialog. Match Electron's own synthetic-test setup; production is unchanged.
+const auditFlags = process.platform === 'darwin' ? ['--use-mock-keychain'] : [];
+const deadline = setTimeout(() => {
+  process.stderr.write('Synthetic UI audit timed out after: ' + lastCheck + '\n');
+  process.exitCode = 1;
+  app?.process().kill();
+}, 150000);
 const check = (condition, message) => {
   assert.ok(condition, message);
   checks++;
+  lastCheck = message;
 };
 async function waitFor(page, fn) {
   await page.waitForFunction(fn, null, { timeout: 12000 });
@@ -23,7 +33,7 @@ async function waitFor(page, fn) {
     const executablePath = process.env.WORK_UPDATES_EXECUTABLE;
     app = await electron.launch({
       executablePath,
-      args: [...(!executablePath ? [root] : []), '--demo', '--hidden', '--data-dir', dir],
+      args: [...(!executablePath ? [root] : []), ...auditFlags, '--demo', '--hidden', '--data-dir', dir],
       timeout: 30000,
     });
     const page = await app.firstWindow({ timeout: 30000 });
@@ -1183,6 +1193,7 @@ async function waitFor(page, fn) {
       }
     }
     fs.rmSync(dir, { recursive: true, force: true });
+    clearTimeout(deadline);
   }
 })().catch((error) => {
   process.stderr.write(error.stack + '\n');
