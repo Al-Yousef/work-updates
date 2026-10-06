@@ -154,7 +154,7 @@ async function waitState(page, predicate) {
         .catch(() => {});
       const closed=await Promise.allSettled([companion,viewer,host].map(closeAuditApp));
       const errors=closed.filter(result=>result.status==='rejected').map(result=>result.reason);
-      if(errors.length) throw new AggregateError(errors,'Synthetic pairing apps did not shut down cleanly');
+      if(errors.length) throw new AggregateError(errors,'Synthetic pairing apps did not shut down cleanly\n'+errors.map(error=>error.stack).join('\n'));
     } finally {
       clearTimeout(deadline);
       fs.rmSync(dir, { recursive: true, force: true });

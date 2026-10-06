@@ -22,14 +22,12 @@ async function closeAuditApp(app) {
   let forced=false;
   const timer=setTimeout(()=>{forced=true;forceAuditApp(app);},12000);
   try {
-    // Return the inspector evaluation before beginning quit. Calling app.quit()
-    // inside the synchronous evaluation can leave that evaluation waiting for
-    // the same debugger connection which Playwright still needs to disconnect.
+    // Observe the real quit path; do not bypass window or backend cleanup.
     await app.evaluate(({app})=>{
+      process.once('uncaughtExceptionMonitor',error=>console.error('audit.uncaught',error.stack));
       app.prependOnceListener('before-quit',()=>console.error('audit.before-quit'));
       app.prependOnceListener('will-quit',()=>console.error('audit.will-quit'));
       app.once('quit',()=>console.error('audit.quit'));
-      setImmediate(()=>app.quit());
     }).catch(()=>{});
     await app.close();
     if (forced || child.exitCode !== 0)
