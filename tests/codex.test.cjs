@@ -45,6 +45,28 @@ test('the durable client message identity reaches both start and steer mutations
   processes[0].respond({id:request.id,result:{turnId:'test-turn'}});await second;client.close();
 });
 
+test('RPC acceptance makes the writer active before turn-start, and an older completion cannot clear it',async()=>{
+  const {client,processes}=fixture();await client.connect();client.loaded.add('test-source');
+  const send=client.send('test-source','Synthetic audit');await new Promise(resolve=>setImmediate(resolve));
+  const proc=processes[0],request=proc.messages.at(-1);proc.respond({id:request.id,result:{turn:{id:'new-turn',status:'inProgress'}}});await send;
+  assert.equal(client.status().active,1);assert.equal(client.active.get('test-source'),'new-turn');
+  proc.respond({method:'turn/completed',params:{threadId:'test-source',turn:{id:'old-turn',status:'completed'}}});
+  assert.equal(client.active.get('test-source'),'new-turn');
+  proc.respond({method:'turn/completed',params:{threadId:'test-source',turn:{id:'new-turn',status:'completed'}}});
+  assert.equal(client.status().active,0);client.close();
+});
+
+test('a delayed acknowledgement or duplicate start cannot resurrect an already completed writer',async()=>{
+  const {client,processes}=fixture();await client.connect();client.loaded.add('test-source');
+  const send=client.send('test-source','Synthetic audit');await new Promise(resolve=>setImmediate(resolve));
+  const proc=processes[0],request=proc.messages.at(-1);
+  proc.respond({method:'turn/started',params:{threadId:'test-source',turn:{id:'fast-turn'}}});
+  proc.respond({method:'turn/completed',params:{threadId:'test-source',turn:{id:'fast-turn',status:'completed'}}});
+  proc.respond({id:request.id,result:{turn:{id:'fast-turn',status:'inProgress'}}});await send;
+  assert.equal(client.status().active,0);
+  proc.respond({method:'turn/started',params:{threadId:'test-source',turn:{id:'fast-turn'}}});assert.equal(client.status().active,0);client.close();
+});
+
 test('one crashed process rejects pending RPCs once and a late exit cannot disconnect its replacement', async () => {
   const { client, processes, logs } = fixture();
   let failures = 0;
