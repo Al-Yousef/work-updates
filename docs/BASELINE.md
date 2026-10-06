@@ -19,6 +19,10 @@ The baseline branch imports the current local implementation into one repository
 
 The backend and native source are independently versioned components of the installed app. A version string alone cannot establish source/binary identity. The baseline does not distribute these reference binaries or their private profiles.
 
+A file-by-file comparison of 53 application files in the installed backend ASAR matches the original imported runtime source except `package.json` metadata. The original collector script also matches the installed helper script. The baseline subsequently changes `src/native-control.cjs`, `src/read-only-observer.cjs` and `bridge/collector.py` to fix platform failures exposed by clean CI. These fixes have not been installed.
+
+The fresh native candidate has SHA-256 `cac022e6defbc4fbce48bf0bb5d180ecf4a2b4dfbd6a0649e124f61c857e6fe3`; every source hash in its build manifest matches the baseline checkout. Its isolated GUI audit passes 302 queue checks, 45 adapter checks and 266 UX checks at each of 96/120/144/192 DPI, plus the responsiveness suite. This uses simulated input to owned Win32 windows and synthetic backends, with no signed-in chats or Explorer injection. Build and test artifacts stay local; the PR records clean CI results separately.
+
 ## Release boundaries
 
 The Windows interface is C++; the background backend still uses Electron/Node and Python collection. The entire app is not a C++ runtime replacement. Existing workflow packages the Electron compatibility desktop. Native clean CI and integrated packaging are issue #3; safe partial-update recovery is issue #5.

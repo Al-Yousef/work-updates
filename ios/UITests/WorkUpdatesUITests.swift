@@ -37,7 +37,7 @@ final class WorkUpdatesUITests:XCTestCase {
         capture("Landscape queue")
         XCUIDevice.shared.orientation = .portrait
     }
-    func testLargeTypeAndReducedMotionRemainUsable() {
+    func testLargeTypeRemainsUsable() {
         let app=XCUIApplication();app.launchArguments=["--demo","--large-type"];app.launch()
         XCTAssertTrue(app.buttons["notification-choice"].waitForExistence(timeout:10))
         capture("Accessibility text queue")

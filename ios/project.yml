@@ -28,7 +28,7 @@ targets:
     info:
       path: App/Info.plist
       properties:
-        CFBundleDisplayName: Work Updates
+        CFBundleDisplayName: Hyphen
         UILaunchScreen: {}
         NSLocalNetworkUsageDescription: Connect privately to your computers to view their work queues and send chat replies.
         NSAppTransportSecurity:
