@@ -45,14 +45,21 @@ struct LinkState {
         #endif
     }
     var cards:[DisplayCard] {
-        computers.flatMap {computer in
+        let result:[DisplayCard] = computers.flatMap {computer in
             (states[computer.id]?.cards ?? []).map{DisplayCard(computerID:computer.id,task:$0)}
-        }.sorted {a,b in a.task.priorityRank != b.task.priorityRank ?
-            a.task.priorityRank < b.task.priorityRank : (a.task.at ?? 0) > (b.task.at ?? 0)}
+        }
+        return result.sorted {a,b in
+            if a.task.priorityRank != b.task.priorityRank {
+                return a.task.priorityRank < b.task.priorityRank
+            }
+            return (a.task.at ?? 0) > (b.task.at ?? 0)
+        }
     }
     var done:[DisplayCard] {
-        computers.flatMap{computer in (states[computer.id]?.done ?? []).map{DisplayCard(computerID:computer.id,task:$0)}}
-            .sorted{($0.task.at ?? 0)>($1.task.at ?? 0)}
+        let result:[DisplayCard] = computers.flatMap{computer in
+            (states[computer.id]?.done ?? []).map{DisplayCard(computerID:computer.id,task:$0)}
+        }
+        return result.sorted{($0.task.at ?? 0)>($1.task.at ?? 0)}
     }
     func current(_ selection:DisplayCard) -> DisplayCard? {
         (cards+done).first{$0.computerID==selection.computerID && $0.task.taskKey==selection.task.taskKey}
