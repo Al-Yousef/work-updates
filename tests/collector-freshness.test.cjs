@@ -142,16 +142,22 @@ test('error receipt and disconnected process cannot claim an old success as curr
     false,
   );
 });
-test('Python collector identifies the same canonical source as its Node parent', t => {
-  const s = source(t), session = crypto.randomUUID();
+test('Python collector binds receipts to the parent-selected source despite runtime path aliases', t => {
+  const s = source(t), session = crypto.randomUUID(), expectedSource = sourceIdentity(s.home);
   const output = execFileSync(python, ['-X','utf8',path.join(__dirname,'../bridge/collector.py'),
-    '--stdio','--once','--codex-home',s.home,'--session',session,'--parent-pid',String(process.pid)],
+    '--stdio','--once','--codex-home',s.home,'--session',session,'--source-id',expectedSource,
+    '--parent-pid',String(process.pid)],
     {windowsHide:true,encoding:'utf8'});
   const envelope = JSON.parse(output);
   assert.equal(envelope.session,session);
-  assert.equal(envelope.sourceId,sourceIdentity(s.home));
+  assert.equal(envelope.sourceId,expectedSource);
   assert.equal(envelope.ok,true,'Synthetic collector failed: ' + envelope.error);
   assert.equal(envelope.feed.threads.length,1);
+  const invalid = require('node:child_process').spawnSync(python, ['-X','utf8',path.join(__dirname,'../bridge/collector.py'),
+    '--stdio','--once','--codex-home',s.home,'--session',session,'--source-id','not-a-source'],
+    {windowsHide:true,encoding:'utf8'});
+  assert.notEqual(invalid.status,0);
+  assert.match(invalid.stderr,/lowercase SHA-256 identity/);
 });
 
 test('actual in-memory Python collector reads unchanged chats, restarts after exit and writes no source/cache files', async (t) => {

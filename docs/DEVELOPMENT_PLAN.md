@@ -58,7 +58,7 @@ Hyphen needs a reliable development and release process around the app already b
 | [#13](https://github.com/Al-Yousef/work-updates/issues/13) | P1 | Measure and enforce whole-app idle and interaction performance budgets | `perf/process-budget-audit` | #2, #3, #8, #12 |
 | [#14](https://github.com/Al-Yousef/work-updates/issues/14) | P2 | Specify connected-device parity and verify Mac/iPhone contracts before expansion | `feat/connected-device-contract` | #2, #4, #5, #9, #11 |
 
-Only `chore/source-baseline` has been created: [baseline branch](https://github.com/Al-Yousef/work-updates/tree/chore/source-baseline). It starts from the existing remote `main` and still needs the reviewed source import. Later branches are planned here and should be created from the baseline after it merges.
+The current implementation is on `chore/source-baseline`: [source baseline PR #15](https://github.com/Al-Yousef/work-updates/pull/15). It imports the existing backend and native Windows source into one checkout. Later issue branches should be created from the baseline after it merges.
 
 ## Work that can progress independently
 

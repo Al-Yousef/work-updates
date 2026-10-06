@@ -158,6 +158,8 @@ function startReadOnlyObserver(options, onFeed = () => {}) {
         home,
         '--session',
         session,
+        '--source-id',
+        receipt.sourceId,
         '--parent-pid',
         String(process.pid),
         '--poll-seconds',

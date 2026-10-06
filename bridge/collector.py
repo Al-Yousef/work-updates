@@ -416,6 +416,7 @@ def main():
     ap.add_argument('--stdio', action='store_true')
     ap.add_argument('--codex-home')
     ap.add_argument('--session')
+    ap.add_argument('--source-id')
     ap.add_argument('--poll-seconds', type=float, default=3)
     args = ap.parse_args()
     if args.stdio:
@@ -423,7 +424,12 @@ def main():
             ap.error('--stdio requires --codex-home and --session')
         session = str(uuid.UUID(args.session))
         home = Path(args.codex_home).resolve()
-        source_id = hashlib.sha256(os.path.normcase(str(home)).encode('utf-8')).hexdigest()
+        if args.source_id and not re.fullmatch(r'[a-f0-9]{64}', args.source_id):
+            ap.error('--source-id must be a lowercase SHA-256 identity')
+        # The parent already canonicalized and selected this source before
+        # opening the private pipe. Python and Node can resolve Windows path
+        # aliases differently; do not recalculate the parent's receipt identity.
+        source_id = args.source_id or hashlib.sha256(os.path.normcase(str(home)).encode('utf-8')).hexdigest()
         root = cache_path = None
         config = {'codexHome': str(home), 'pollSeconds': max(.05, args.poll_seconds)}
     else:
