@@ -4,5 +4,23 @@
   "directory": "llvm-mingw-20260922-ucrt-x86_64",
   "url": "https://github.com/mstorsjo/llvm-mingw/releases/download/20260922/llvm-mingw-20260922-ucrt-x86_64.zip",
   "sha256": "e3ad77d117a4bea19a7a3b333341824d79a5a371004a10e25b8504e7b3047666",
-  "source": "https://github.com/mstorsjo/llvm-mingw/releases/tag/20260922"
+  "source": "https://github.com/mstorsjo/llvm-mingw/releases/tag/20260922",
+  "binaries": {
+    "clang-23.exe": "44ad563a8a8cb6509abb1686cf9e630ecf9ba8ecc4e6d999656adca5cb9b6666",
+    "ld.lld.exe": "3e09cb9b62298181c3e971ea7068a304bca5a5151a6a091f0a7e5c7bf03a014b",
+    "llvm-rc.exe": "a62666d54321585b56b285deda5b71990d8ea83d9cf91757f373b7862eb918be",
+    "mingw32-common.cfg": "0924577cab6fd9256fdd640f0ff5a7382446e968f2401a3df648d3bf4012bde6",
+    "x86_64-w64-windows-gnu.cfg": "ee12d9ca9abf3df1bd9312af1175c1751ca23dcbc2c67c70a326ff5679d439f5",
+    "libc++.dll": "9779d03d9bdb4bed763a5b18d0aa5b9002ce5dad6d0adc2d496e783a3f336e3f",
+    "libclang_rt.asan_dynamic-x86_64.dll": "75178608bf2dff8ac65a336562e0606f0f90e3276c671d9820a43e8176f6129e",
+    "libclang-cpp.dll": "2bbabf40b7e10b1d8ccf82b7ee70f04d3eaffd4a2b0e77a4aebfa5f483c482f5",
+    "libffi-8.dll": "07560c85cb167371e14d9e91e6cb48c360365764abe343c229ae3f11bc677f09",
+    "liblldb.dll": "762c1bbfc0b31844d99785a17de8918ef10311266ec32099d2d701bccb85a22e",
+    "libLLVM-23.dll": "d8da9444d0ff45bb61b34e3a9003caafd7f317df0550083140046fe05c857250",
+    "libomp.dll": "47619606767a9760a84d867e27ce0775940f3a1824bdf61ee33b45a1fbd77ea6",
+    "libpython3.14.dll": "4e745284eaf2f4e366f3b9ceea552bf07ab93a60679fd5b5a56140af62d4889a",
+    "libpython3.dll": "e296a54a4a62e44934dbd61ec25711d1f608e70d992d77cc3bb93ddf61723f44",
+    "libunwind.dll": "5de310284e361c8d10a92e0a18f8b17d2d5a0de1d091d9e3c0b92d86f9f6c7c2",
+    "libwinpthread-1.dll": "f50ee7828d41ce02eb8bf3ec1d59dedfd66126a753782ae2d7489a56d84f7816"
+  }
 }

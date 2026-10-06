@@ -17,4 +17,6 @@ $taskDestination=Join-Path $taskTools $taskManifest.directory
 if(Test-Path -LiteralPath $taskDestination){throw 'Toolchain directory already exists; inspect it before replacing it'}
 Expand-Archive -LiteralPath $ArchivePath -DestinationPath $taskTools
 if(-not (Test-Path -LiteralPath (Join-Path $taskDestination 'bin/clang-23.exe'))){throw 'The verified compiler archive did not extract as expected'}
+. (Join-Path $PSScriptRoot 'scripts/toolchain.ps1')
+$null=Get-HyphenToolchain -Directory $taskDestination
 Write-Output ('Verified toolchain ready: '+$taskManifest.tag)
