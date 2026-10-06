@@ -111,12 +111,13 @@ struct QueueModel {
     std::string draft() const {auto found=drafts.find(composerKey());return found==drafts.end()?"":found->second;}
     std::string pendingDestination() const {if(pendingOwner=="@hyphen")return "Hyphen";for(const char* key:{"cards","done"})for(const auto& card:state.value(key,Json::array()))for(const auto& source:card.value("sources",Json::array()))if(source.value("id","")==pendingOwner)return card.value("chatName",std::string("another chat"));return "another chat";}
     void draft(std::string value) {auto key=composerKey();if(!key.empty()){if(value!=draft())intentIds.erase(key);drafts[key]=std::move(value);}}
-    bool canReply() const {if(chatting()){auto ai=state.value("assistant",Json::object());return connected&&!pending&&!ai.value("responding",false)&&ai.value("error","").empty();}auto card=selected();return connected&&!pending&&!sourceId.empty()&&!card.empty()&&!card.value("done",false);}
+    bool sourceAvailable() const {const auto card=selected();const auto availability=card.value("availability",Json::object()).value("state","");return card.value("owner",Json::object()).value("online",true)&&availability!="offline"&&availability!="stale";}
+    bool canReply() const {if(chatting()){auto ai=state.value("assistant",Json::object());return connected&&!pending&&!ai.value("responding",false)&&ai.value("error","").empty();}auto card=selected();return connected&&!pending&&!sourceId.empty()&&!card.empty()&&!card.value("done",false)&&sourceAvailable();}
     bool canDraft() const {return chatting()||(!sourceId.empty()&&!selected().empty()&&!selected().value("done",false));}
     Json images() const {auto it=attachments.find(composerKey());return it==attachments.end()?Json::array():it->second;}
     Json imageIds(const std::string& key) const {Json ids=Json::array();auto it=attachments.find(key);if(it!=attachments.end())for(const auto& image:it->second)ids.push_back(image.value("id",""));return ids;}
     void removeImage(const std::string& id) {auto key=composerKey();auto& images=attachments[key];images.erase(std::remove_if(images.begin(),images.end(),[&](const Json& image){return image.value("id","")==id;}),images.end());intentIds.erase(key);}
-    bool defaultQueue() const {auto lifecycle=currentSource().value("lifecycle","");return !chatting()&&(lifecycle=="working"||lifecycle=="starting");}
+    bool defaultQueue() const {auto lifecycle=currentSource().value("lifecycle","");return !chatting()&&sourceAvailable()&&(lifecycle=="working"||lifecycle=="starting");}
     Json replyInput() const {auto value=chatting()?Json::object():input();value["text"]=draft();value["attachmentIds"]=imageIds(composerKey());auto id=intentIds.find(composerKey());if(id!=intentIds.end())value["messageId"]=id->second;return value;}
     bool hasDraft() const {auto value=draft();return !images().empty()||std::any_of(value.begin(),value.end(),[](unsigned char c){return !std::isspace(c);});}
     void acceptedDraft(const std::string& key,const Json& input) {if(drafts[key]==input.value("text","")&&imageIds(key)==input.value("attachmentIds",Json::array())){drafts.erase(key);attachments.erase(key);intentIds.erase(key);}}

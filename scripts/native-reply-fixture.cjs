@@ -53,7 +53,10 @@ function close(){uxWatch?.close();assistant.close();messages.close();control?.cl
       if(method==='openAttachment'){attachments.resolve([input.attachmentId]);return {opened:true};}
       if(method==='assistantAsk')return assistant.ask(input);
       if(method==='assistantUse'){const result=assistant.use(input);return {...result,card:cardView(result.card,true,attachments)};}
-      if(method==='details'){await pause(detailsDelay);if(detailFailures>0){detailFailures--;throw new Error('Synthetic detail failure');}return cardView(messages.decorate({cards:[queue.get(input.id,input.taskKey)]}).cards[0],true,attachments);}
+      if(method==='details'){await pause(detailsDelay);if(detailFailures>0){detailFailures--;throw new Error('Synthetic detail failure');}
+        if(process.argv.includes('--status-audit')){const fixture=(uxOverride.cards||[]).find(card=>card.id===input.id&&card.taskKey===input.taskKey);
+          if(fixture)return {...fixture,sources:fixture.sources.map(source=>({...source,body:fixture.summary,conversation:[],contextLoaded:true}))};}
+        return cardView(messages.decorate({cards:[queue.get(input.id,input.taskKey)]}).cards[0],true,attachments);}
       if(method==='send')return controller.send(input.id,input.text,input.sourceId,input.taskKey,{messageId:input.messageId,images:attachments.resolve(input.attachmentIds||[])});
       if(method==='queueMessage')return messages.enqueue(input);
       if(method==='clearMessages')return messages.clear(input.sourceId,input.checked);

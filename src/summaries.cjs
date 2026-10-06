@@ -89,6 +89,12 @@ class Summaries {
     const failed = current.filter(({ key }) => this.cache.entries[key]?.status === 'failed').length;
     const pending = this.pending.size + Number(this.running);
     const resumeAt = pending && !this.running ? this.resumeAt() : 0;
+    const states = new Map(current.map(({ key, source }) => [key,
+      this.cache.entries[key]?.status === 'ok' ? 'cached' :
+      this.cache.entries[key]?.status === 'failed' ? 'failed' :
+      resumeAt > this.now() ? 'rate_limited' :
+      this.cache.entries[key]?.status === 'pending' || this.pending.has(source.id) ? 'pending' : 'recorded',
+    ]));
     this.queue.setSummaries(values, {
       enabled: this.queue.state.settings.aiSummaries === true,
       model: this.provider.model || [...values.values()].at(-1)?.model || '',
@@ -102,7 +108,7 @@ class Summaries {
         this.error && (this.error === 'SUMMARY_CACHE_UNAVAILABLE' || resumeAt > this.now())
           ? 'AI summaries paused; recorded excerpts remain available.'
           : '',
-    });
+    }, states);
   }
   refresh() {
     if (this.closed) return;
