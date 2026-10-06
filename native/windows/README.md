@@ -13,9 +13,9 @@ From the repository root:
 ./native/windows/build.ps1 -OutputDirectory build/candidate
 ```
 
-`toolchain.json` pins LLVM-MinGW 20260922/LLVM 23.1.2 and the official archive digest. Bootstrap accepts `-ArchivePath` for a matching existing archive and verifies before extraction. Build accepts `-ToolchainDirectory` and an explicit `-LinkerPath` for a documented supported configuration. Record both when comparing candidates. A blocked compiler/test fails verification; do not change Windows protections or reuse older proof.
+`toolchain.json` pins LLVM-MinGW 20260922/LLVM 23.1.2, the official archive digest and compiler/linker/support-file hashes. Bootstrap accepts `-ArchivePath` for a matching existing archive and verifies before extraction. Build accepts `-ToolchainDirectory` and an explicit `-LinkerPath` only when they match the same lock. A blocked compiler/test fails verification; do not change Windows protections or reuse older proof.
 
-Ignored output contains the shell, launcher, adapter DLL/controller and test targets. Successful model checks write source/binary hashes to `build-verification.json`. Failed builds invalidate that marker. `-NativeIntegration` is an opt-in desktop lane; simulated commands do not prove physical pointer behavior. Native clean CI/packaging remains issue #3.
+Ignored output contains the shell, launcher, adapter DLL/controller and test targets. Successful model checks write source/binary/toolchain hashes and checkout identity to `build-verification.json`. Every attempted build invalidates older proof before toolchain checks. `-NativeIntegration` is an opt-in desktop lane; simulated commands do not prove physical pointer behavior. [Native CI and development packaging](../../docs/NATIVE_CI.md) run isolated checks and resource/identity audits on every PR. Transactional installation remains issue #5.
 
 ## Development and installed paths
 

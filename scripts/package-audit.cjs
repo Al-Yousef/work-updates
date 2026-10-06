@@ -24,6 +24,27 @@ if (process.platform === 'win32') {
 }
 const archive = path.join(resources, 'app.asar'),
   entries = asar.listPackage(archive).map((p) => p.replaceAll('\\', '/'));
+const packagedVersion = JSON.parse(asar.extractFile(archive, 'package.json').toString()).version;
+assert.equal(packagedVersion, require('../package.json').version, 'Stale packaged backend version');
+// Package contents must come from this checkout, rather than an older unpacked app.
+for (const file of [
+  'main.cjs',
+  'preload.cjs',
+  ...fs
+    .readdirSync(path.join(root, 'src'))
+    .filter((name) => name.endsWith('.cjs'))
+    .map((name) => 'src/' + name),
+])
+  assert.ok(
+    asar.extractFile(archive, file).equals(fs.readFileSync(path.join(root, file))),
+    'Stale packaged source: ' + file,
+  );
+assert.ok(
+  asar.extractFile(archive, 'src/native-control.cjs').toString().includes('work-updates-native-v1'),
+  'Unsupported native descriptor',
+);
+const { nativeView } = require('../src/native-view.cjs');
+assert.equal(nativeView({ cards: [], done: [] }).schema, 1, 'Unsupported native snapshot protocol');
 for (const file of entries) {
   const first = file.split('/').filter(Boolean)[0];
   assert.ok(
