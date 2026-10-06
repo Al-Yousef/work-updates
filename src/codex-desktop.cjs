@@ -4,14 +4,15 @@ const {EventEmitter}=require('node:events');
 const versions={'initialize':0,'thread-owner-discovery':1,'thread-follower-start-turn':2,'thread-follower-steer-turn':1};
 function frame(value){const data=Buffer.from(JSON.stringify(value)),header=Buffer.alloc(4);header.writeUInt32LE(data.length);return Buffer.concat([header,data]);}
 class DesktopError extends Error {
-  constructor(message,code,delivery='not-sent'){super(message);this.code=code;this.delivery=delivery;}
+  constructor(message,code,delivery='not-sent',phase=delivery==='uncertain'?'awaiting-receipt':'ownership-discovery'){super(message);this.code=code;this.delivery=delivery;this.phase=phase;this.route='desktop';}
 }
 // This is the installed desktop's existing same-user coordination channel.
 // Never claim ownership, resume a desktop thread, intercept stdio, or retry a
 // mutation after an uncertain result. This adapter is versioned and bounded.
 class CodexDesktop extends EventEmitter {
   constructor(options={}){super();this.options=options;this.pending=new Map();this.socket=null;this.connecting=null;this.clientId=null;}
-  log(event,fields){this.options.log?.write(event,fields);}
+  log(event,fields,context=null){this.options.log?.write(event,fields,{context});}
+  status(){return {connected:!!this.socket&&!this.socket.destroyed&&!!this.clientId,pending:this.pending.size};}
   async connect(){
     if(this.socket&&!this.socket.destroyed&&this.clientId)return;
     if(this.connecting)return this.connecting;
@@ -36,6 +37,7 @@ class CodexDesktop extends EventEmitter {
       socket.on('close',()=>{
         if(this.socket!==socket)return;this.socket=null;this.clientId=null;
         for(const [id,call] of this.pending){clearTimeout(call.timer);this.pending.delete(id);
+          this.log('desktop.rpc.disconnected',{requestId:id,method:call.method,threadId:call.threadId,phase:call.mutation?'awaiting-receipt':'ownership-discovery',code:'DESKTOP_DISCONNECTED',delivery:call.mutation?'uncertain':'not-sent'},call.context);
           call.reject(new DesktopError('Codex disconnected before confirming this request. Check the chat before retrying.','DESKTOP_DISCONNECTED',call.mutation?'uncertain':'not-sent'));}
         this.log('desktop.disconnected',{});
       });
@@ -62,22 +64,23 @@ class CodexDesktop extends EventEmitter {
       // Router-level absence is definitely unsent. Other forwarded errors can
       // hide a lost app-server acknowledgement, so fail conservatively.
       const definitelyUnsent=code==='DESKTOP_NO_OWNER'||/no active turn to steer|not being streamed|not found|invalid (?:params|request)|already.*in progress/i.test(reason);
-      call.reject(new DesktopError(reason,code,call.mutation&&!definitelyUnsent?'uncertain':'not-sent'));
-      this.log('desktop.rpc.failed',{requestId:message.requestId,method:call.method,threadId:call.threadId,code});return;
+      call.reject(new DesktopError(reason,code,call.mutation&&!definitelyUnsent?'uncertain':'not-sent',call.mutation?'awaiting-receipt':'ownership-discovery'));
+      this.log('desktop.rpc.failed',{requestId:message.requestId,method:call.method,threadId:call.threadId,code,phase:call.mutation?'awaiting-receipt':'ownership-discovery',delivery:call.mutation&&!definitelyUnsent?'uncertain':'not-sent'},call.context);return;
     }
     if(message.method!==call.method||(call.targetClientId&&message.handledByClientId!==call.targetClientId)){
       call.reject(new DesktopError('Codex returned a mismatched delivery receipt. Check chat before retrying.','DESKTOP_RECEIPT',call.mutation?'uncertain':'not-sent'));return;
     }
-    this.log('desktop.rpc.accepted',{requestId:message.requestId,method:call.method,threadId:call.threadId});call.resolve(message);
+    this.log('desktop.rpc.accepted',{requestId:message.requestId,method:call.method,threadId:call.threadId,ownerId:message.handledByClientId,responseBytes:Buffer.byteLength(JSON.stringify(message))},call.context);call.resolve(message);
   }
   request(method,params,{targetClientId,mutation=false,timeoutMs=10000}={}){
     const requestId=crypto.randomUUID(),version=versions[method];
+    const context={...this.options.log?.capture?.(),...(params.clientUserMessageId?{messageId:params.clientUserMessageId}:{}),sourceId:params.conversationId};
     if(version===undefined)throw new DesktopError('Unsupported desktop command.','DESKTOP_PROTOCOL');
     return new Promise((resolve,reject)=>{
       if(!this.socket||this.socket.destroyed)return reject(new DesktopError('Codex is unavailable.','DESKTOP_UNAVAILABLE'));
-      const timer=setTimeout(()=>{this.pending.delete(requestId);reject(new DesktopError('Codex did not confirm delivery. Check chat before retrying.','DESKTOP_TIMEOUT',mutation?'uncertain':'not-sent'));},timeoutMs);
-      this.pending.set(requestId,{resolve,reject,timer,method,targetClientId,mutation,threadId:params.conversationId});
-      this.log('desktop.rpc.started',{requestId,method,threadId:params.conversationId,targetClientId});
+      const timer=setTimeout(()=>{this.pending.delete(requestId);this.log('desktop.rpc.timeout',{requestId,method,threadId:params.conversationId,phase:mutation?'awaiting-receipt':'ownership-discovery',code:'DESKTOP_TIMEOUT',delivery:mutation?'uncertain':'not-sent',timeoutMs},context);reject(new DesktopError('Codex did not confirm delivery. Check chat before retrying.','DESKTOP_TIMEOUT',mutation?'uncertain':'not-sent'));},timeoutMs);
+      this.pending.set(requestId,{resolve,reject,timer,method,targetClientId,mutation,threadId:params.conversationId,context});
+      this.log('desktop.rpc.started',{requestId,method,threadId:params.conversationId,targetClientId,phase:mutation?'awaiting-receipt':'ownership-discovery',pending:this.pending.size},context);
       try{this.socket.write(frame({type:'request',requestId,method,params,version,...(targetClientId?{targetClientId}:{})}));}
       catch(error){clearTimeout(timer);this.pending.delete(requestId);reject(new DesktopError(error.message,'DESKTOP_WRITE',mutation?'uncertain':'not-sent'));}
     });

@@ -23,6 +23,7 @@ class Controller extends EventEmitter {
     this.queue = queue;
     this.client = client;
     this.desktop = options.desktop;
+    this.log = options.log;
     client.on('created', ({ taskId, threadId }) => {
       queue.ownedThreads.add(threadId);
       queue.patch(taskId, { threadId });
@@ -79,6 +80,12 @@ class Controller extends EventEmitter {
     }
   }
   async send(id, input, sourceId, expectedTaskKey, options = {}) {
+    const card=this.queue.get(id,expectedTaskKey),source=card.sources.length?taskSource(card,sourceId):null;
+    const correlation={messageId:options.messageId,sourceId:source?.id,cardId:card.id,taskKey:card.taskKey};
+    const run=()=>this.sendBound(id,input,sourceId,expectedTaskKey,options);
+    return this.log?.scope?this.log.scope(correlation,run):run();
+  }
+  async sendBound(id, input, sourceId, expectedTaskKey, options = {}) {
     const q = this.queue,
       card = q.get(id, expectedTaskKey),
       value = text(input, 12000);
@@ -99,17 +106,21 @@ class Controller extends EventEmitter {
     q.busy.add(lock);
     if (task) q.busy.add(task.id);
     let dispatchStarted = false;
+    const started=Date.now();
+    this.log?.write('dispatch.bound',{messageId:options.messageId,sourceId:source.id,cardId:card.id,taskKey:card.taskKey,phase:'ownership-discovery'});
     try {
       if (this.desktop && !q.ownedThreads.has(source.id)) {
         // Ask the existing desktop owner to submit the reply. Observed chats
         // remain observed; do not create a local task or claim their writer.
         const owner = await this.desktop.owner(source.id);
         if (owner) {
+          this.log?.write('dispatch.owner',{owner:'desktop',ownerId:owner,route:'desktop'});
           dispatchStarted = true;
           const receipt=await this.desktop.send(source.id, value, {
             owner, working: source.lifecycle === 'working', messageId: options.messageId, images,
           });
           if(task?.error)q.patch(task.id,{error:''});
+          this.log?.write('dispatch.accepted',{route:'desktop',turnId:receipt.turnId,delivery:receipt.delivery,elapsedMs:Date.now()-started});
           return receipt;
         }
         if (source.lifecycle === 'working')
@@ -118,6 +129,7 @@ class Controller extends EventEmitter {
       // Resume must succeed before an observed chat becomes an app-owned task.
       // A writer-lock rejection leaves its update and context intact.
       if (this.client.prepare) await this.client.prepare(source.id);
+      this.log?.write('dispatch.owner',{owner:'app-server',route:'app-server'});
       if (!task) {
         task = q.create({ title: card.title, prompt: value, cwd: source.cwd });
         q.patch(task.id, { threadId: source.id, adopted: true });
@@ -136,17 +148,19 @@ class Controller extends EventEmitter {
       const result = await this.client.send(task.threadId, value, images,{messageId:options.messageId});
       const turnId=result?.turn?.id||result?.turnId;
       if(typeof turnId!=='string'||!turnId.trim())throw Object.assign(new Error('Codex did not return an acceptance receipt. Check the chat before retrying.'),{code:'DELIVERY_RECEIPT',delivery:'uncertain'});
+      this.log?.write('dispatch.accepted',{route:'app-server',turnId,delivery:'sent',elapsedMs:Date.now()-started});
       return { taskId: task.id, messageId: options.messageId, delivery: 'sent', route: 'app-server',
         turnId };
     } catch (error) {
       if (!dispatchStarted) {
         error.delivery = 'not-sent';
-        error.phase = 'preparing-chat';
+        error.phase ||= 'preparing-chat';
       }
       if (task) {
         q.patch(task.id, { status: 'blocked', error: error.message });
         error.taskId = task.id;
       }
+      this.log?.write('dispatch.failed',{code:error.code,phase:error.phase,delivery:error.delivery,message:error.message,elapsedMs:Date.now()-started});
       throw error;
     } finally {
       if (task) q.busy.delete(task.id);

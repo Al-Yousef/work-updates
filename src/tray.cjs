@@ -73,7 +73,7 @@ function createTray({
           { label: 'Hide queue', enabled: visible, click: hide },
           { label: 'New task', click: create },
           { type: 'separator' },
-          ...(openLogs ? [{ label: 'Open diagnostic logs', click: openLogs }] : []),
+          ...(openLogs ? [{ label: 'Export diagnostic report', click: openLogs }] : []),
           { label: 'Quit Hyphen', click: quit },
         ]),
       );
