@@ -1,0 +1,88 @@
+<!doctype html>
+<html lang="en" class="revealed">
+  <head>
+    <meta charset="utf-8" />
+    <meta name="viewport" content="width=device-width,initial-scale=1,viewport-fit=cover" />
+    <title>Work Updates · Dot inbox preview</title>
+    <link rel="stylesheet" href="/base.css" />
+    <link rel="stylesheet" href="/style.css" />
+  </head>
+  <body>
+    <aside id="preview-tools" aria-label="Local preview controls">
+      <details>
+        <summary>Local preview controls</summary>
+        <p>All interactive chats, email and DMs are fixtures. Live Codex cards are read only.</p>
+        <label for="data-source">Data shown</label>
+        <select id="data-source">
+          <option value="fixtures">Synthetic conversations</option>
+          <option value="live">Local Codex · read only</option>
+          <option value="all">Both, with source labels</option>
+        </select>
+        <label for="scenario">Preview scenario</label>
+        <select id="scenario">
+          <option data-collector value="collector-stop">Stop isolated read-only collector</option>
+          <option data-collector value="collector-reconnect">Reconnect isolated collector</option>
+          <option value="quiet">Quiet dot</option>
+          <option value="active">Updates waiting on you</option>
+          <option value="offline">Sample Mac offline</option>
+          <option value="reconnect">Reconnect sample Mac</option>
+          <option value="changed">Change selected Mac task</option>
+          <option value="removed">Remove selected Mac task</option>
+          <option value="uncertain">Lost reply acceptance</option>
+          <option value="long">Long conversation text</option>
+          <option value="loading">Loading</option>
+          <option value="empty">Empty fixtures</option>
+          <option value="error">Connection error</option>
+          <option value="duplicate">Replay an older update</option>
+          <option value="context-changed">Change source context only</option>
+          <option value="forgotten-owner">Forget sample Mac</option>
+          <option value="receipt-loss">Lose next accepted response</option>
+          <option value="late-acceptance">Delay next accepted response</option>
+          <option value="storage-error">Local storage unavailable</option>
+          <option value="storage-retry">Restore local storage</option>
+          <option value="done">Complete sample Mac task</option>
+          <option data-protocol value="peer-response-loss">Lose accepted TLS owner response</option>
+          <option data-protocol value="peer-late-response">Hold accepted TLS owner response</option>
+          <option data-protocol value="release-response">Release held TLS response</option>
+          <option data-protocol value="replace-owner">Replace fixture owner pairing</option>
+          <option data-protocol value="pin-mismatch">Reject mismatched certificate</option>
+          <option data-protocol value="identity-mismatch">Reject changed peer identity</option>
+        </select>
+        <button id="apply-scenario">Apply scenario</button>
+        <button id="advance-clock">Preview 10 minutes unanswered</button>
+        <button id="export-recovery">Preserve local recovery copy</button>
+        <textarea id="recovery-export" readonly hidden aria-label="Local recovery copy"></textarea>
+        <div id="flow-ledger" role="status"></div>
+      </details>
+    </aside>
+    <button
+      id="dot"
+      aria-label="Open Work Updates inbox"
+      aria-controls="shell"
+      aria-expanded="false"
+    >
+      <span class="dot-core" aria-hidden="true"></span><span id="dot-badge" hidden></span>
+    </button>
+    <div id="dot-caption">Work Updates</div>
+    <main id="shell" hidden aria-label="Work Updates inbox">
+      <header class="toolbar">
+        <span class="brand">Work Updates <span class="preview-label">· Local preview</span></span>
+        <button id="hide" class="icon" aria-label="Collapse to dot">×</button>
+      </header>
+      <nav id="views" aria-label="Work Updates views">
+        <button data-view="inbox" aria-current="page">Inbox</button>
+        <button data-view="assistant">Assistant</button>
+        <button data-view="queue">Queue</button>
+        <button data-view="relationships">Relationships</button>
+      </nav>
+      <section id="content" tabindex="-1"></section>
+      <footer>
+        <div id="connection" role="status">Loading local preview…</div>
+        <div id="provenance-note">Email and DMs are synthetic examples.</div>
+      </footer>
+    </main>
+    <div id="notice" role="status" hidden></div>
+    <script src="/model.js"></script>
+    <script src="/app.js"></script>
+  </body>
+</html>

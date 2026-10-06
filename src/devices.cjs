@@ -281,6 +281,7 @@ class Devices extends EventEmitter {
     if (targets.some((t) => t.id !== owner))
       throw new Error('This action includes a chat from another computer.');
     for (const target of targets) next[target.field] = target.value;
+    if(owner&&input.attachmentIds?.length)throw new Error('Image delivery to another computer is not connected yet. Open this chat on its computer to attach images.');
     if (Array.isArray(input.ids)) {
       const targets = input.ids.map(infer);
       if (targets.some((t) => t.id !== owner)) throw new Error('Group chats on the same computer.');

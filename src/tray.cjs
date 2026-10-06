@@ -13,7 +13,7 @@ function tooltip(state) {
     working && working + ' working',
     ready && ready + ' ready to review',
   ].filter(Boolean);
-  return 'Work Updates\n' + (counts.join(' · ') || 'Monitoring your chats');
+  return 'Hyphen\n' + (counts.join(' · ') || 'Monitoring your chats');
 }
 
 function createTray({
@@ -74,7 +74,7 @@ function createTray({
           { label: 'New task', click: create },
           { type: 'separator' },
           ...(openLogs ? [{ label: 'Open diagnostic logs', click: openLogs }] : []),
-          { label: 'Quit Work Updates', click: quit },
+          { label: 'Quit Hyphen', click: quit },
         ]),
       );
     },

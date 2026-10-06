@@ -213,4 +213,70 @@ test('a reply resumes and sends to the same selected thread id', async () => {
     calls.map((c) => c.params.threadId),
     ['selected-thread', 'selected-thread'],
   );
+  assert.equal(calls[0].params.excludeTurns, true);
+});
+
+test('a stalled resume is definitely not sent, keeps the draft out of the protocol and retires only its empty helper', async () => {
+  const { client, processes, logs } = fixture({ requestTimeoutMs: 25 });
+  await assert.rejects(client.send('large-image-thread', 'Private stalled draft'), (error) => {
+    assert.equal(error.code, 'CODEX_TIMEOUT');
+    assert.equal(error.method, 'thread/resume');
+    assert.equal(error.delivery, 'not-sent');
+    assert.equal(error.phase, 'preparing-chat');
+    assert.match(error.message, /message was not sent/);
+    return true;
+  });
+  assert.equal(processes[0].messages.find(m => m.method === 'thread/resume').params.excludeTurns, true);
+  assert.ok(!processes[0].messages.some(m => ['turn/start', 'turn/steer'].includes(m.method)));
+  assert.ok(!JSON.stringify(processes[0].messages).includes('Private stalled draft'));
+  assert.equal(processes[0].killed, true);
+  assert.equal(client.waiting.size, 0);
+  assert.equal(client.loaded.size, 0);
+  assert.ok(logs.some(l => l.event === 'codex.rpc.timeout' && l.delivery === 'not-sent'));
+  client.close();
+});
+
+test('a resume timeout leaves another loaded or active chat intact', async () => {
+  for (const active of [false, true]) {
+    const { client, processes } = fixture({ requestTimeoutMs: 25 });
+    await client.connect();
+    client.loaded.add('existing-chat');
+    if (active) client.active.set('existing-chat', 'live-turn');
+    await assert.rejects(client.send('large-thread', 'Unsent draft'), error => error.delivery === 'not-sent');
+    assert.ok(!processes[0].killed);
+    assert.equal(client.ready, true);
+    assert.ok(client.loaded.has('existing-chat'));
+    assert.equal(client.active.has('existing-chat'), active);
+    client.close();
+  }
+});
+
+test('a single broken pipe distinguishes resume failure from a lost turn receipt', async () => {
+  const { client, processes } = fixture();
+  await client.connect();
+  client.loaded.add('owned-chat');
+  const resume = client.prepare('observed-chat');
+  const send = client.send('owned-chat', 'Private delivery body');
+  const checks = [
+    assert.rejects(resume, error => error.delivery === 'not-sent' && error.method === 'thread/resume'),
+    assert.rejects(send, error => error.delivery === 'uncertain' && error.method === 'turn/start'),
+  ];
+  await new Promise(resolve => setImmediate(resolve));
+  processes[0].emit('exit', 1, null);
+  await Promise.all(checks);
+  assert.equal(processes[0].messages.filter(m => m.method === 'turn/start').length, 1);
+});
+
+test('lost actual start and steer receipts remain uncertain and are never retried or retired', async () => {
+  for (const method of ['turn/start', 'turn/steer']) {
+    const { client, processes } = fixture({ requestTimeoutMs: 25 });
+    await client.connect();
+    client.loaded.add('owned-chat');
+    if (method === 'turn/steer') client.active.set('owned-chat', 'existing-turn');
+    await assert.rejects(client.send('owned-chat', 'Private draft'), error =>
+      error.code === 'CODEX_TIMEOUT' && error.method === method && error.delivery === 'uncertain');
+    assert.equal(processes[0].messages.filter(m => m.method === method).length, 1);
+    assert.ok(!processes[0].killed);
+    client.close();
+  }
 });

@@ -14,7 +14,7 @@ spec.loader.exec_module(collector)
 
 class FeedTests(unittest.TestCase):
     def setUp(self):
-        collector.SOURCE_CACHE.clear(); collector.TAIL_CACHE.clear()
+        collector.SOURCE_CACHE.clear(); collector.TAIL_CACHE.clear(); collector.DETAIL_IDS.clear()
         self.temp = tempfile.TemporaryDirectory()
         self.home = Path(self.temp.name)
         self.now = int(time.time())
@@ -39,6 +39,24 @@ class FeedTests(unittest.TestCase):
     def record(self, text, phase='commentary'):
         return {'timestamp': self.iso, 'type': 'response_item', 'payload': {'type': 'message', 'role': 'assistant', 'phase': phase, 'content': [{'type': 'output_text', 'text': text}]}}
 
+    def test_conversation_preserves_roles_and_local_images_with_bounded_history(self):
+        image = str(self.home / 'result.png')
+        records = [self.record('Earlier message ' + str(i)) for i in range(18)]
+        user = self.record('Explain this')
+        user['payload']['role'] = 'user'
+        user['payload']['content'].append({'type': 'localImage', 'path': image})
+        records += [user, self.record('Here is the result ![preview](' + image + ')')]
+        self.add('image-chat', 'Image chat', records)
+        overview = collector.collect(self.config)['threads'][0]
+        self.assertFalse(overview['conversationLoaded'])
+        self.config['_requestedIds'] = ['image-chat']
+        source = collector.collect(self.config)['threads'][0]
+        self.assertEqual(len(source['conversation']), 12)
+        self.assertEqual(source['conversation'][-2]['role'], 'user')
+        self.assertEqual(source['conversation'][-2]['images'], [image])
+        self.assertEqual(source['conversation'][-1]['images'], [image])
+        self.assertNotIn('![', source['conversation'][-1]['text'])
+
     def test_actual_name_latest_message_and_readonly(self):
         path = self.add('one', 'The actual chat name', [self.record('Earlier'), self.record('Still working')])
         before = (self.home / 'state_5.sqlite').read_bytes()
@@ -51,10 +69,32 @@ class FeedTests(unittest.TestCase):
         self.assertEqual(before, (self.home / 'state_5.sqlite').read_bytes())
         self.assertEqual(path.read_text().count('response_item'), 2)
 
+    def test_actual_image_wrapper_preserves_local_reference_without_displaying_protocol_markup(self):
+        image = str(self.home / 'attachment.png')
+        record = self.record('Describe it\n<image name=[Image #1] path="' + image + '">\n</image>')
+        record['payload']['role'] = 'user'
+        record['payload']['content'].append({'type': 'input_image', 'image_url': 'data:image/png;base64,ignored'})
+        self.add('wrapped-image', 'Wrapped image', [record])
+        self.config['_requestedIds'] = ['wrapped-image']
+        message = collector.collect(self.config)['threads'][0]['conversation'][0]
+        self.assertEqual(message['images'], [image])
+        self.assertEqual(message['text'], 'Describe it')
+
     def test_skip_ignored_archived_subagents(self):
         for id, source, archived in [('ignored','vscode',0), ('archived','cli',1), ('agent','{"subagent":{}}',0), ('visible','vscode',0)]:
             self.add(id, id, [self.record('Hi')], source, archived)
         self.assertEqual([t['id'] for t in collector.collect(self.config)['threads']], ['visible'])
+
+    def test_unavailable_optional_history_keeps_rollout_collection_and_reports_coverage(self):
+        self.add('one', 'One', [self.record('Ready from recorded events.', 'final_answer'),
+                               {'timestamp': self.iso, 'type': 'event_msg',
+                                'payload': {'type': 'task_complete', 'turn_id': 'turn'}}])
+        (self.home / 'thread_history_1.sqlite').write_bytes(b'not a sqlite database')
+        result = collector.collect(self.config)
+        self.assertEqual(result['threads'][0]['status'], 'ready')
+        self.assertTrue(result['threads'][0]['readyForReview'])
+        self.assertEqual(result['monitoredCount'], 1)
+        self.assertEqual(result['warnings'], ['Chat history database unavailable; context uses recorded rollout events.'])
 
     def test_completed_turn_is_update_not_completed_project(self):
         self.add('one', 'One', [self.record('Published the post. The next topic is still open.', 'final_answer'),

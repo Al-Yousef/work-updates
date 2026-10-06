@@ -1,6 +1,6 @@
 {
-  "name": "work-updates",
-  "version": "0.4.1",
+  "name": "hyphen",
+  "version": "0.6.9",
   "description": "A calm desktop queue for Codex tasks, updates, and conversations.",
   "author": "Al-Yousef",
   "license": "MIT",
@@ -12,6 +12,12 @@
     "start": "electron .",
     "dev": "electron . --dev",
     "demo": "electron . --demo",
+    "demo:notifications": "node scripts/notification-dry-run.cjs",
+    "demo:inbox": "node scripts/dot-inbox-preview.cjs",
+    "demo:inbox:desktop": "node scripts/dot-inbox-desktop.cjs",
+    "build:inbox:desktop": "node scripts/build-dot-review.cjs",
+    "test:inbox:desktop": "node scripts/dot-review-audit.cjs",
+    "test:notifications": "node --test tests/notification-*.test.cjs",
     "test": "node --test tests/*.test.cjs",
     "test:ui": "node scripts/ui-audit.cjs",
     "test:devices": "node scripts/pair-audit.cjs",
@@ -33,7 +39,7 @@
   },
   "build": {
     "appId": "io.workupdates.desktop",
-    "productName": "Work Updates",
+    "productName": "Hyphen",
     "directories": {
       "output": "dist"
     },
@@ -57,6 +63,7 @@
     ],
     "asar": true,
     "win": {
+      "executableName": "Work Updates",
       "target": [
         "nsis",
         "zip"
@@ -73,6 +80,7 @@
       "deleteAppDataOnUninstall": false
     },
     "mac": {
+      "executableName": "Work Updates",
       "category": "public.app-category.productivity",
       "target": [
         "zip"

@@ -22,6 +22,10 @@ __pycache__/
 .DS_Store
 .build/
 .swiftpm/
+native/windows/.tools/
+native/windows/build/
+native/windows/artifacts/
+native/windows/research/
 DerivedData/
 *.xcresult/
 *.xcodeproj/

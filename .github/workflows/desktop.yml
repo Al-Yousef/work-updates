@@ -81,4 +81,4 @@ jobs:
       - env:
           GH_TOKEN: ${{ github.token }}
           GH_REPO: ${{ github.repository }}
-        run: gh release create "$GITHUB_REF_NAME" packages/* --title "Work Updates $GITHUB_REF_NAME" --notes "Native Windows and macOS development release. Queue tasks, start dedicated Codex chats, review updates, mark Done, and pair desktops privately. Built and tested on clean Windows, Apple Silicon, and Intel Mac runners. Packages are unsigned; see README installation and pairing instructions. No personal chat data is included."
+        run: gh release create "$GITHUB_REF_NAME" packages/* --title "Hyphen $GITHUB_REF_NAME" --notes "Electron compatibility development packages for Windows and macOS. The C++ Windows interface is built separately from native/windows and is not included in these packages. See README for current capability, installation, and validation limits. Packages are unsigned. No personal chat data is included."

@@ -158,6 +158,17 @@ function model(t) {
   });
   return q;
 }
+test('owned image messages remain visible while observed history catches up, preserving repeated messages',t=>{
+  const q=model(t),at=now(),image={id:'image.png',path:'C:/private/image.png'};
+  q.feed.threads[0].conversation=[{role:'user',text:'Repeat',at:at-30},{role:'user',text:'Repeat',at:at-20},{role:'user',text:'Same message',at}];
+  const task=q.create({title:'Launch',prompt:'Continue'});q.patch(task.id,{threadId:'sample-chat',status:'working'});q.ownedThreads.add('sample-chat');
+  q.message(task.id,'user','Same message','same-id',[image]);q.message(task.id,'user','New image','new-id',[image]);
+  const messages=q.get(task.id).sources[0].conversation;
+  assert.equal(messages.filter(m=>m.text==='Repeat').length,2);assert.equal(messages.filter(m=>m.text==='Same message').length,1);
+  assert.equal(messages.find(m=>m.text==='Same message').images[0].path,image.path);assert.equal(messages.at(-1).text,'New image');assert.equal(messages.at(-1).images[0].id,image.id);
+  q.feed.threads[0].contextLoaded=true;q.ownedThreads.clear();
+  assert.equal(q.get(task.id).sources[0].conversation.at(-1).images[0].path,image.path);
+});
 test('Done closes the task across new passes, Reviewed only clears an update', (t) => {
   const q = model(t);
   q.action('sample-chat', 'reviewed');

@@ -127,6 +127,26 @@ function ago(at) {
         ? Math.floor(age / 3600) + 'h ago'
         : Math.floor(age / 86400) + 'd ago';
 }
+function aiProgress(value) {
+  if (!value?.enabled) return '';
+  const ready = 'AI titles: ' + (value.summarized || 0) + '/' + (value.eligible || 0) + ' ready';
+  if (value.pending) {
+    const remaining = value.pending + ' remaining';
+    return value.resumeAt > Date.now()
+      ? ready +
+          ' · ' +
+          remaining +
+          ' · resumes in ' +
+          Math.ceil((value.resumeAt - Date.now()) / 60000) +
+          'm'
+      : ready + ' · ' + remaining;
+  }
+  return value.failed
+    ? ready + ' · ' + value.failed + ' need retry'
+    : value.message
+      ? ready + ' · paused'
+      : '';
+}
 function clock() {
   const date = new Date();
   $('date').textContent = date.toLocaleDateString(undefined, {
@@ -460,6 +480,8 @@ if ($('corner-toggle')) {
       ? 'Show fewer'
       : 'Show all ' + cards.length + (view === 'done' ? ' completed tasks' : ' updates');
     $('undo').hidden = !state.undo;
+    $('ai-progress').textContent = aiProgress(state.aiSummary);
+    $('ai-progress').hidden = !aiProgress(state.aiSummary) || view !== 'updates';
     $('connection').textContent = state.remote
       ? state.connection
       : !state.health.ok
@@ -1346,6 +1368,7 @@ if ($('corner-toggle')) {
           : 'Bottom-left hover launcher',
       ],
       ['attention', 'Notify me when a task needs me'],
+      ['aiSummaries', 'AI task titles and summaries'],
     ]) {
       const row = node('div');
       row.className = 'setting-row';
@@ -1358,6 +1381,13 @@ if ($('corner-toggle')) {
       panel.append(row);
     }
     panel.append(
+      node(
+        'p',
+        aiProgress(state.aiSummary) ||
+          state.aiSummary?.message ||
+          'AI summarizes completed updates in your current queue using your Codex account. Unchanged updates use the local cache.',
+        { class: 'field-note' },
+      ),
       node('p', 'Toggle queue: ' + (state.settings.shortcut || 'Ctrl+Alt+Space'), {
         class: 'field-note',
       }),
@@ -1369,6 +1399,26 @@ if ($('corner-toggle')) {
         { class: 'field-note' },
       ),
     );
+    if (state.aiSummary?.enabled && state.aiSummary.failed && !state.remote)
+      panel.append(
+        button(
+          'Retry failed AI summaries',
+          async () => {
+            try {
+              const result = await call('retrySummaries');
+              closePanel();
+              notice(
+                result.queued
+                  ? 'Queued ' + result.queued + ' summaries to retry'
+                  : 'No failed summaries to retry',
+              );
+            } catch (error) {
+              notice(error.message, true);
+            }
+          },
+          'settings-button',
+        ),
+      );
     if (state.platform === 'win32')
       panel.append(node('p', state.launcher?.message || '', { class: 'field-note' }));
     panel.append(

@@ -1,0 +1,71 @@
+body.desktop-review {
+  background: transparent;
+  min-height: 0;
+  overflow: hidden;
+}
+.desktop-review #shell {
+  left: 8px;
+  top: 8px;
+  bottom: auto;
+  width: calc(100vw - 16px);
+  max-width: none;
+  height: calc(100dvh - 96px);
+  animation: none;
+}
+.desktop-review #dot {
+  left: 12px;
+  bottom: 12px;
+}
+.desktop-review #dot-caption {
+  display: none;
+}
+.desktop-review #preview-tools {
+  display: none;
+}
+.desktop-review.review-tools.inbox-open #preview-tools {
+  display: block;
+  left: 12px;
+  right: 12px;
+  top: 66px;
+  bottom: 96px;
+  width: auto;
+  max-width: none;
+  max-height: none;
+  z-index: 20;
+}
+.desktop-review #notice {
+  left: 12px;
+  bottom: 78px;
+  max-width: calc(100vw - 24px);
+}
+#dot-grip {
+  position: fixed;
+  left: 12px;
+  bottom: 64px;
+  width: 52px;
+  height: 12px;
+  -webkit-app-region: drag;
+}
+#dot-grip::after {
+  content: '';
+  display: block;
+  margin: 5px auto;
+  width: 20px;
+  height: 2px;
+  border-radius: 2px;
+  background: #d5e8ed66;
+}
+#recovery-export {
+  width: 100%;
+  min-height: 80px;
+}
+@media (max-width: 600px) {
+  .desktop-review #shell {
+    left: 8px;
+    right: auto;
+    top: 8px;
+    width: calc(100vw - 16px);
+    height: calc(100dvh - 96px);
+    max-height: none;
+  }
+}

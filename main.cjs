@@ -30,12 +30,21 @@ const { dataDirectory, startsVisible } = require('./src/background.cjs');
 const { createTray } = require('./src/tray.cjs');
 const { DiagnosticLog } = require('./src/diagnostics.cjs');
 const { Devices } = require('./src/devices.cjs');
+const { Summaries } = require('./src/summaries.cjs');
+const { NativeControl } = require('./src/native-control.cjs');
+const { CodexDesktop } = require('./src/codex-desktop.cjs');
+const { Messages } = require('./src/messages.cjs');
+const { Assistant } = require('./src/assistant.cjs');
+let nativeControl;
 const args = process.argv;
 function argument(name) {
   const index = args.indexOf(name);
   return index >= 0 ? args[index + 1] : undefined;
 }
 const demo = args.includes('--demo');
+const {nativeView, cardView} = require('./src/native-view.cjs');
+const {Attachments}=require('./src/attachments.cjs');
+let retryFailedSummaries = args.includes('--retry-failed-summaries');
 const dataDir = dataDirectory({
   explicit: argument('--data-dir'),
   platform: process.platform,
@@ -50,8 +59,12 @@ const dataDir = dataDirectory({
     }
   },
 });
+const nativeBackend = args.includes('--native-backend') ||
+  (process.platform === 'win32' && fs.existsSync(path.join(dataDir, 'native-backend.enabled')));
 fs.mkdirSync(dataDir, { recursive: true });
+const attachments=new Attachments(dataDir);
 app.setPath('userData', dataDir);
+app.setName('Hyphen');
 app.setAppUserModelId('io.workupdates.desktop');
 protocol.registerSchemesAsPrivileged([
   { scheme: 'work-updates', privileges: { standard: true, secure: true, supportFetchAPI: true } },
@@ -64,6 +77,7 @@ let window,
   tray,
   corner,
   observer,
+  summaries,
   hostPeer,
   windowController,
   cornerTimer,
@@ -80,20 +94,31 @@ const queue = new Queue(dataDir);
 const client = demo
   ? new (require('./src/demo.cjs').DemoCodex)()
   : new Codex({ binary: queue.state.settings.codexBinary, log: diagnostics });
-const controller = new Controller(queue, client);
+const desktop = demo ? null : new CodexDesktop({log:diagnostics});
+const controller = new Controller(queue, client, {desktop});
+const messages = new Messages(queue,controller,{log:diagnostics,attachments});
 const devices = new Devices({
   directory: dataDir,
-  state: () => queue.snapshot(),
+  state: () => messages.decorate(queue.snapshot()),
   command: performLocal,
   encrypt: (value) => safeStorage.encryptString(value),
   decrypt: (value) => safeStorage.decryptString(value),
 });
+const assistant = new Assistant({directory:dataDir,snapshot:()=>devices.snapshot(),attachments,
+  binary:queue.state.settings.codexBinary,log:diagnostics,
+  loadContext:targets=>require('./src/assistant-context.cjs').loadContext({
+    snapshot:()=>devices.snapshot(),
+    subscribe:changed=>{queue.on('change',changed);devices.on('change',changed);return()=>{queue.off('change',changed);devices.off('change',changed);};},
+    request:targets=>Promise.allSettled(targets.map(target=>devices.command('details',{id:target.id,taskKey:target.taskKey,sourceId:target.sourceId}))),
+  },targets),
+  dispatch:(mode,input)=>devices.command(mode==='queue'?'queueMessage':'send',input)});
 const csp =
   "default-src 'self'; script-src 'self'; style-src 'self'; img-src 'self' data:; connect-src 'none'; base-uri 'none'; object-src 'none'; form-action 'none'; frame-ancestors 'none'";
 function snapshot() {
   const state = devices.snapshot();
   return {
     ...state,
+    assistant: assistant.snapshot(),
     settings: {
       ...state.settings,
       ...Object.fromEntries(
@@ -118,8 +143,12 @@ function publish() {
   if (corner && !corner.isDestroyed())
     corner.webContents.send('work-updates:state', { windowMode: state.windowMode });
   hostPeer?.broadcast(devices.localState());
+  nativeControl?.broadcast(nativeView(state));
 }
+messages.on('change', () => publish());
+assistant.on('change', () => publish());
 devices.on('change', () => {
+  assistant.observe(devices.snapshot());
   previousRemote = incoming(
     devices.snapshot().cards.filter((c) => !c.owner.local),
     previousRemote,
@@ -128,6 +157,7 @@ devices.on('change', () => {
 });
 let publication;
 queue.on('change', () => {
+  assistant.observe(devices.snapshot());
   if (!publication)
     publication = setTimeout(() => {
       publication = null;
@@ -200,6 +230,9 @@ function toggle() {
 app.on('second-instance', (_event, argv) => {
   if (startsVisible(argv)) show();
 });
+function cornerAvailable() {
+  return !!queue.state.settings.corner && !nativeControl?.claimed;
+}
 function refreshCorner() {
   const previous = JSON.stringify(launcherInfo);
   const display = screen.getPrimaryDisplay();
@@ -212,9 +245,9 @@ function refreshCorner() {
           bounds: { width: 44, height: 44, x: area.x + 12, y: area.y + area.height - 56 },
           message: '',
         };
-  if (process.platform === 'win32' && !queue.state.settings.corner && launcherInfo.bounds)
+  if (process.platform === 'win32' && !cornerAvailable() && launcherInfo.bounds)
     launcherInfo.message = 'Weather shortcut off. Windows Widgets uses the weather area.';
-  if (!queue.state.settings.corner || !launcherInfo.bounds) {
+  if (!cornerAvailable() || !launcherInfo.bounds) {
     if (windowController.enabled) windowController.enable(false);
     corner?.destroy();
     corner = null;
@@ -265,7 +298,7 @@ function refreshCorner() {
 function cornerWindow() {
   clearInterval(cornerTimer);
   refreshCorner();
-  if (!queue.state.settings.corner) return;
+  if (!cornerAvailable()) return;
   let ticks = 0;
   cornerTimer = setInterval(() => {
     if (++ticks % 100 === 0) refreshCorner();
@@ -288,6 +321,7 @@ function configureWindowLevel() {
     window.setAlwaysOnTop(above, process.platform === 'win32' ? 'pop-up-menu' : 'floating');
 }
 function configure() {
+  if (nativeBackend) return;
   configureWindowLevel();
   cornerWindow();
   globalShortcut.unregisterAll();
@@ -304,6 +338,8 @@ async function perform(method, input = {}) {
       'action',
       'undo',
       'send',
+      'queueMessage',
+      'clearMessages',
       'stop',
       'respond',
       'details',
@@ -312,11 +348,26 @@ async function perform(method, input = {}) {
       'open',
     ].includes(method)
   )
-    return devices.command(method, input);
+    {
+      const result=await devices.command(method,input);
+      if(method==='details'){const card=[...devices.snapshot().cards,...devices.snapshot().done].find(c=>c.id===input.id&&(!input.taskKey||c.taskKey===input.taskKey));if(card)assistant.focus(card,input.sourceId);}
+      return result;
+    }
   return performLocal(method, input);
 }
 async function performLocal(method, input = {}) {
   if (method === 'state') return snapshot();
+  if (method === 'attachImages') return {images:attachments.import(input.paths)};
+  if (method === 'openAttachment') {
+    const image=attachments.resolve([input.attachmentId])[0];
+    const error=await shell.openPath(image.path);if(error)throw new Error('This image could not be opened.');return {opened:true};
+  }
+  if (method === 'assistantAsk') return assistant.ask(input);
+  if (method === 'assistantUse') {
+    const result=assistant.use(input);
+    assistant.focus(result.card,result.sourceId);
+    return {...result,card:cardView(result.card,true,attachments)};
+  }
   if (method === 'create') {
     if (input.cwd && !(queue.state.settings.projects || []).includes(input.cwd))
       throw new Error('Choose a workspace with the folder picker.');
@@ -330,13 +381,20 @@ async function performLocal(method, input = {}) {
     observer?.request([]);
     return {};
   }
+  if (method === 'retrySummaries') return { queued: summaries?.retryFailed() || 0 };
   if (method === 'send')
-    return controller.send(input.id, input.text, input.sourceId, input.taskKey);
+    return messages.send(input);
+  if (method === 'queueMessage') return messages.enqueue(input);
+  if (method === 'clearMessages') {
+    const source=taskSource(queue.get(input.id,input.taskKey),input.sourceId);
+    return messages.clear(source.id,input.checked===true);
+  }
+  if (method === 'logs') {await shell.openPath(diagnostics.directory);return {opened:true};}
   if (method === 'stop') return controller.stop(input.id);
   if (method === 'respond') return controller.respond(input.id, input.decision, input.answers);
   if (method === 'details') {
-    const card = queue.get(input.id, input.taskKey);
-    observer?.request(card.sources.filter((s) => !s.contextLoaded).map((s) => s.id));
+    const card = messages.decorate({cards:[queue.get(input.id, input.taskKey)]}).cards[0];
+    observer?.request(card.sources.filter((s) => !s.contextLoaded||!s.conversationLoaded).map((s) => s.id));
     return card;
   }
   if (method === 'open') {
@@ -362,9 +420,10 @@ async function performLocal(method, input = {}) {
     return { cwd };
   }
   if (method === 'settings') {
-    for (const key of ['pin', 'corner', 'attention'])
+    for (const key of ['pin', 'corner', 'attention', 'aiSummaries'])
       if (typeof input[key] === 'boolean') queue.state.settings[key] = input[key];
     queue.save();
+    summaries?.refresh();
     configure();
     return snapshot();
   }
@@ -430,7 +489,7 @@ async function connectionAction(method, input) {
     const code = await hostPeer.start(input.host);
     clipboard.writeText(code);
     publish();
-    return { message: 'Pairing code copied. Paste it into Work Updates on your Mac or iPhone.' };
+    return { message: 'Pairing code copied. Paste it into Hyphen on your Mac or iPhone.' };
   }
   if (method === 'connect') {
     if (!safeStorage.isEncryptionAvailable())
@@ -438,7 +497,105 @@ async function connectionAction(method, input) {
     return devices.add(input.code);
   }
 }
+function startCollection() {
+  if (argument('--legacy-root')) queue.importLegacy(path.resolve(argument('--legacy-root')));
+  if (demo) queue.setFeed(require('./src/demo.cjs').feed());
+  else {
+    summaries = new Summaries(queue, { log: diagnostics });
+    const helper = app.isPackaged
+      ? path.join(
+          process.resourcesPath,
+          'helper',
+          process.platform === 'win32' ? 'collector.exe' : 'collector',
+        )
+      : undefined;
+    const helperScript = app.isPackaged
+      ? path.join(process.resourcesPath, 'helper', 'collector.py')
+      : undefined;
+    observer = startObserver(
+      path.join(dataDir, 'observer'),
+      { helper, helperScript, log: diagnostics },
+      (feed, health) => {
+        queue.setFeed(feed || queue.feed, health);
+        if (feed && health.ok) {
+          summaries.refresh();
+          if (retryFailedSummaries) {
+            retryFailedSummaries = false;
+            summaries.retryFailed();
+          }
+        }
+        previousObserved = incoming(
+          queue.cards().filter((c) => c.kind === 'observed'),
+          previousObserved,
+        );
+      },
+    );
+  }
+}
+function restoreDevices() {
+  if (!demo && safeStorage.isEncryptionAvailable()) {
+    const { HostPeer } = require('./src/peer.cjs');
+    hostPeer = new HostPeer({
+      directory: dataDir,
+      encrypt: (v) => safeStorage.encryptString(v),
+      decrypt: (v) => safeStorage.decryptString(v),
+      state: () => devices.localState(),
+      command: async (method, input) => {
+        const result = await performLocal(method, input);
+        return result?.cards && result?.done ? devices.localState() : result;
+      },
+    });
+    if (hostPeer.saved())
+      hostPeer
+        .restore()
+        .then(publish)
+        .catch(() => {});
+    devices
+      .restore()
+      .catch((error) => diagnostics.write('devices.restore.failed', { message: error.message }));
+  }
+}
 app.whenReady().then(async () => {
+  if (nativeBackend) {
+    if (process.platform !== 'win32') throw new Error('The native backend currently requires Windows.');
+    startCollection();
+    nativeControl = new NativeControl({
+      directory: dataDir,
+      changed: claimed => {
+        diagnostics.write('native.corner.owner', {owner:claimed?'native':'none'});
+        publish();
+      },
+      state: () => nativeView(snapshot()),
+      command: async (method, input) => {
+        const result = await perform(method, input);
+        return method === 'details' ? cardView(result, true,attachments) : ['send','queueMessage','assistantAsk','assistantUse','attachImages','openAttachment'].includes(method) ? result : {};
+      },
+      status: () => ({activeWriters:Math.max(client.status?.().active ?? 0, client.status?.().pending ?? 0, queue.busy?.size ?? 0,assistant.active?1:0),
+        mode:'native-backend', windowCount:BrowserWindow.getAllWindows().length,
+        rendererCount:app.getAppMetrics().filter(p => p.type === 'Tab').length}),
+      quit: () => {quitting=true; app.quit();},
+    });
+    await nativeControl.start();
+    restoreDevices();
+    const runtime = () => atomic(path.join(dataDir, 'runtime.json'), {
+      appPid:process.pid, version:app.getVersion(), mode:'native-backend',
+      windowCount:BrowserWindow.getAllWindows().length,
+      rendererCount:app.getAppMetrics().filter(p => p.type === 'Tab').length,
+      collectorPid:observer?.pid || null, chats:queue.feed.monitoredCount || 0,
+      feedCollectedAt:queue.feed.collectedAt || 0, health:queue.health,
+      aiSummary:queue.aiSummary, codex:client.status?.() || {active:0, loaded:0},
+      productName:'Hyphen', desktop:{connected:!!desktop?.clientId,pending:desktop?.pending.size||0},
+      messages:{queued:messages.state.entries.filter(e=>e.status==='queued').length,uncertain:messages.state.entries.filter(e=>e.status==='uncertain').length,active:messages.active.size},
+      assistant:{active:assistant.active,model:assistant.provider.model,messages:assistant.state.messages.length,memoryCount:assistant.state.notes.length,error:assistant.error},
+      cornerOwner:nativeControl.claimed?'native':'none',
+      updatedAt:now(), diagnostics:{file:diagnostics.file, error:diagnostics.error},
+    });
+    runtime();
+    const timer = setInterval(runtime, 3000); timer.unref();
+    diagnostics.write('native.backend.ready', {windowCount:0});
+    return;
+  }
+
   protocol.handle('work-updates', (request) => {
     const url = new URL(request.url);
     const files = {
@@ -484,7 +641,7 @@ app.whenReady().then(async () => {
     skipTaskbar: true,
     hasShadow: false,
     backgroundColor: '#00000000',
-    title: 'Work Updates',
+    title: 'Hyphen',
     icon: path.join(__dirname, 'assets', 'icon.png'),
     webPreferences: {
       preload: path.join(__dirname, 'preload.cjs'),
@@ -543,11 +700,14 @@ app.whenReady().then(async () => {
     'action',
     'undo',
     'send',
+    'queueMessage',
+    'clearMessages',
     'stop',
     'respond',
     'details',
     'group',
     'refresh',
+    'retrySummaries',
     'open',
     'project',
     'settings',
@@ -592,44 +752,50 @@ app.whenReady().then(async () => {
     },
   });
   tray.update(snapshot());
-  if (argument('--legacy-root')) queue.importLegacy(path.resolve(argument('--legacy-root')));
-  if (demo) queue.setFeed(require('./src/demo.cjs').feed());
-  else {
-    const helper = app.isPackaged
-      ? path.join(
-          process.resourcesPath,
-          'helper',
-          process.platform === 'win32' ? 'collector.exe' : 'collector',
-        )
-      : undefined;
-    const helperScript = app.isPackaged
-      ? path.join(process.resourcesPath, 'helper', 'collector.py')
-      : undefined;
-    observer = startObserver(
-      path.join(dataDir, 'observer'),
-      { helper, helperScript, log: diagnostics },
-      (feed, health) => {
-        queue.setFeed(feed || queue.feed, health);
-        previousObserved = incoming(
-          queue.cards().filter((c) => c.kind === 'observed'),
-          previousObserved,
-        );
-      },
-    );
-  }
+  startCollection();
   configure();
   for (const event of ['display-added', 'display-removed', 'display-metrics-changed'])
     screen.on(event, refreshCorner);
   await window.loadURL('work-updates://app/index.html');
+  if (process.platform === 'win32') {
+    nativeControl = new NativeControl({
+      directory: dataDir,
+      state: () => nativeView(snapshot()),
+      command: async (method, input) => {
+        const result = await perform(method, input);
+        return method === 'details' ? cardView(result, true,attachments) : ['send','queueMessage','assistantAsk','assistantUse','attachImages','openAttachment'].includes(method) ? result : {};
+      },
+      changed: (claimed) => {
+        if (quitting) return;
+        cornerWindow();
+        if (claimed) windowController.hide();
+        diagnostics.write('native.corner.owner', {owner:claimed?'native':'electron'});
+        publish();
+      },
+      status: () => ({
+        cornerConfigured: !!queue.state.settings.corner,
+        launcherActive: !!corner && !corner.isDestroyed(),
+        activeWriters: Math.max(client.status?.().active ?? 0,assistant.active?1:0),
+        windowMode: windowController.mode,
+      }),
+      quit: () => {quitting = true; app.quit();},
+    });
+    try { await nativeControl.start(); }
+    catch (error) {nativeControl.close(); nativeControl = null; diagnostics.write('native.control.failed', {message:error.message});}
+  }
   const runtime = () =>
     atomic(path.join(dataDir, 'runtime.json'), {
       appPid: process.pid,
+      version: app.getVersion(),
       collectorPid: observer?.pid || null,
       chats: queue.feed.monitoredCount || 0,
       feedCollectedAt: queue.feed.collectedAt || 0,
+      health: queue.health,
+      aiSummary: queue.aiSummary,
       visible: windowController.mode !== 'hidden',
       windowMode: windowController.mode,
-      cornerEnabled: !!queue.state.settings.corner,
+      cornerEnabled: cornerAvailable(),
+      cornerOwner: nativeControl?.claimed ? 'native' : 'electron',
       launcher: { ...launcherInfo, active: !!corner && !corner.isDestroyed() },
       tray: tray.status(),
       codex: client.status?.() || null,
@@ -642,27 +808,7 @@ app.whenReady().then(async () => {
   runtime();
   const runtimeTimer = setInterval(runtime, 3000);
   runtimeTimer.unref();
-  if (!demo && safeStorage.isEncryptionAvailable()) {
-    const { HostPeer } = require('./src/peer.cjs');
-    hostPeer = new HostPeer({
-      directory: dataDir,
-      encrypt: (v) => safeStorage.encryptString(v),
-      decrypt: (v) => safeStorage.decryptString(v),
-      state: () => devices.localState(),
-      command: async (method, input) => {
-        const result = await performLocal(method, input);
-        return result?.cards && result?.done ? devices.localState() : result;
-      },
-    });
-    if (hostPeer.saved())
-      hostPeer
-        .restore()
-        .then(publish)
-        .catch(() => {});
-    devices
-      .restore()
-      .catch((error) => diagnostics.write('devices.restore.failed', { message: error.message }));
-  }
+  restoreDevices();
   if (args.includes('--dev')) {
     let refresh;
     fs.watch(path.join(__dirname, 'ui'), () => {
@@ -698,9 +844,14 @@ app.on('before-quit', () => {
   diagnostics.write('app.stopping', { pid: process.pid });
   queue.save();
   observer?.close();
+  summaries?.close();
   client.close();
+  desktop?.close();
+  messages.close();
+  assistant.close();
   hostPeer?.close();
   devices.close();
+  nativeControl?.close();
   globalShortcut.unregisterAll();
   clearInterval(cornerTimer);
   clearTimeout(concealTimer);

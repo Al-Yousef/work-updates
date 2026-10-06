@@ -1,0 +1,17 @@
+{
+  "tag": "v1.3.4",
+  "commit": "c3fcafdc10146beb5919319d0683e44e3c30d537",
+  "files": [
+    "LICENSE.txt",
+    "include/MinHook.h",
+    "src/buffer.c",
+    "src/buffer.h",
+    "src/hook.c",
+    "src/trampoline.c",
+    "src/trampoline.h",
+    "src/hde/hde64.c",
+    "src/hde/hde64.h",
+    "src/hde/table64.h",
+    "src/hde/pstdint.h"
+  ]
+}

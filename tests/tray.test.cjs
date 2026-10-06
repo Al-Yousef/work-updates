@@ -36,7 +36,7 @@ test('portable direct launches share the launcher queue; demos and generic insta
 });
 
 test('tray counts use actionable queue cards, identify waiting ownership and exclude muted updates', () => {
-  assert.equal(tooltip({ cards: [] }), 'Work Updates\nMonitoring your chats');
+  assert.equal(tooltip({ cards: [] }), 'Hyphen\nMonitoring your chats');
   assert.equal(
     tooltip({
       cards: [
@@ -51,7 +51,7 @@ test('tray counts use actionable queue cards, identify waiting ownership and exc
         { status: 'waiting', waitingOn: { kind: 'other' } },
       ],
     }),
-    'Work Updates\n2 waiting on you · 2 working · 1 ready to review',
+    'Hyphen\n2 waiting on you · 2 working · 1 ready to review',
   );
 });
 
@@ -138,7 +138,7 @@ test('native tray actions open idempotently, hide explicitly and remain stable o
     'Hide queue',
     'New task',
     'Open diagnostic logs',
-    'Quit Work Updates',
+    'Quit Hyphen',
   ])
     f.tray.menu.find((i) => i.label === label).click();
   assert.deepEqual(f.actions.slice(3), ['show', 'hide', 'create', 'logs', 'quit']);

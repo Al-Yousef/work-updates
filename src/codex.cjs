@@ -6,6 +6,9 @@ const { spawn } = require('node:child_process');
 const readline = require('node:readline');
 const { EventEmitter } = require('node:events');
 
+const messageMutation = (method) => ['turn/start', 'turn/steer'].includes(method);
+const rpcPhase = (method) => messageMutation(method) ? 'awaiting-receipt' : 'preparing-chat';
+
 function findCodex(override) {
   if (override && path.isAbsolute(override) && fs.existsSync(override)) return override;
   if (process.platform === 'win32') {
@@ -72,7 +75,14 @@ class Codex extends EventEmitter {
       if (pending.threadId) affected.add(pending.threadId);
       clearTimeout(pending.timer);
       this.waiting.delete(id);
-      pending.reject(error);
+      // Each pending request has its own delivery boundary. A broken resume
+      // cannot have sent the draft, even if another turn lost its receipt.
+      const failure = new Error(error.message);
+      failure.code = error.code;
+      failure.method = pending.method;
+      failure.phase = rpcPhase(pending.method);
+      failure.delivery = messageMutation(pending.method) ? 'uncertain' : 'not-sent';
+      pending.reject(failure);
     }
     this.log('codex.connection.closed', {
       pid: connection.proc.pid,
@@ -170,6 +180,7 @@ class Codex extends EventEmitter {
                 method: pending.method,
                 threadId: pending.threadId,
                 elapsedMs: Date.now() - pending.startedAt,
+                bytes: Buffer.byteLength(line),
                 code: m.error?.code,
                 message: m.error?.message,
               });
@@ -177,6 +188,8 @@ class Codex extends EventEmitter {
                 const error = new Error(m.error.message);
                 error.code = m.error.code;
                 error.method = pending.method;
+                error.phase = rpcPhase(pending.method);
+                error.delivery = 'not-sent';
                 pending.reject(error);
               } else pending.resolve(m.result);
             }
@@ -253,6 +266,8 @@ class Codex extends EventEmitter {
             pid: proc.pid,
             id,
             method,
+            phase: rpcPhase(method),
+            delivery: messageMutation(method) ? 'uncertain' : 'not-sent',
             threadId: params?.threadId,
             timeoutMs: this.options.requestTimeoutMs || 60000,
           });
@@ -261,7 +276,17 @@ class Codex extends EventEmitter {
           );
           error.code = 'CODEX_TIMEOUT';
           error.method = method;
+          error.phase = rpcPhase(method);
+          error.delivery = messageMutation(method) ? 'uncertain' : 'not-sent';
           reject(error);
+          // A late resume must not leave a hidden writer behind after its
+          // timeout. Retire only our helper, and only when it has no active
+          // turn or other outstanding RPC. Never retire a live send timeout.
+          if (method === 'thread/resume' && !this.waiting.size && !this.loaded.size && !this.active.size &&
+              this.connection?.proc === proc) {
+            this.connection.intentional = true;
+            this.fail(this.connection, 'idle preparation timed out', { method, code: error.code });
+          }
         }, this.options.requestTimeoutMs || 60000);
       this.waiting.set(id, {
         resolve,
@@ -320,24 +345,35 @@ class Codex extends EventEmitter {
     return { threadId: id, turnId: turn.turn.id };
   }
   async prepare(threadId) {
-    await this.connect();
-    if (!this.loaded.has(threadId)) {
-      const resumed = await this.call('thread/resume', { threadId });
-      if (resumed.thread?.id !== threadId)
-        throw new Error('Codex resumed an unexpected chat. No message was sent.');
-      this.loaded.add(threadId);
+    try {
+      await this.connect();
+      if (!this.loaded.has(threadId)) {
+        // Hyphen already reads the conversation from its collector. Returning
+        // image/tool history here can produce hundreds of MB of unused JSON.
+        const resumed = await this.call('thread/resume', { threadId, excludeTurns: true });
+        if (resumed.thread?.id !== threadId)
+          throw new Error('Codex resumed an unexpected chat. No message was sent.');
+        this.loaded.add(threadId);
+      }
+      this.emit('loaded', { threadId });
+    } catch (error) {
+      error.delivery = 'not-sent';
+      error.phase = 'preparing-chat';
+      if (['CODEX_TIMEOUT', 'CODEX_DISCONNECTED'].includes(error.code))
+        error.message = 'Could not reopen this chat in Codex. Your message was not sent. Try again.';
+      throw error;
     }
-    this.emit('loaded', { threadId });
   }
-  async send(threadId, value) {
+  async send(threadId, value, images=[]) {
     await this.prepare(threadId);
+    const input=[...(value?[{type:'text',text:value}]:[]),...images.map(image=>({type:'localImage',path:image.path}))];
     if (this.active.has(threadId))
       return this.call('turn/steer', {
         threadId,
         expectedTurnId: this.active.get(threadId),
-        input: [{ type: 'text', text: value }],
+        input,
       });
-    return this.call('turn/start', { threadId, input: [{ type: 'text', text: value }] });
+    return this.call('turn/start', { threadId, input });
   }
   async stop(threadId) {
     if (this.active.has(threadId))
