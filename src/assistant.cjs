@@ -155,7 +155,8 @@ class Assistant extends EventEmitter {
         if(!ref?.sourceId||typeof value.action.text!=='string'||!value.action.text.trim()||value.action.text.length>12000||!['send','queue'].includes(value.action.mode))throw new Error('Hyphen could not identify a valid chat message. No message was sent.');
         const latest=this.options.snapshot(),card=[...(latest.cards||[]),...(latest.done||[])].find(c=>c.id===ref.id&&c.taskKey===ref.taskKey&&(c.owner?.id||'local')===ref.ownerId&&revision(c)===ref.revision);
         const source=card?.sources?.find(s=>s.id===ref.sourceId);
-        if(!latest.health?.ok||Math.floor(Date.now()/1000)-(latest.collectedAt||latest.feedCollectedAt||0)>30||!card||card.done||card.owner?.online===false||!source||source.deliveryIssue)throw new Error('The source chat changed or is unavailable. No message was sent.');
+        const collectedAt=Number(latest.collectedAt||latest.feedCollectedAt||0),age=Date.now()/1000-collectedAt;
+        if(!latest.health?.ok||collectedAt<=0||!Number.isFinite(age)||age< -5||age>30||!card||card.done||card.owner?.online===false||!source||source.deliveryIssue)throw new Error('The source chat changed or is unavailable. No message was sent.');
         const mode=value.action.mode==='queue'||['working','starting'].includes(source.lifecycle)||['working','starting'].includes(card.status)?'queue':'send';
         message.status='thinking';message.action={...ref,text:value.action.text.trim(),mode,messageId:crypto.randomUUID(),status:'dispatching'};this.save();
         let receipt;
