@@ -23,6 +23,7 @@ class Assistant extends EventEmitter {
           m.links.some(l=>typeof l.chatName!=='string'||typeof l.draft!=='string'||l.draft.length>12000)))throw new Error();
       if(value.seen!==undefined&&value.seen!==null&&(typeof value.seen!=='object'||Array.isArray(value.seen)||Object.keys(value.seen).length>2048))throw new Error();
       if(value.focus!==undefined&&value.focus!==null&&(!value.focus.sourceId||!value.focus.id||!value.focus.ownerId))throw new Error();
+      if(value.historySelection!==undefined&&(!Array.isArray(value.historySelection)||value.historySelection.length>20||value.historySelection.some(id=>typeof id!=='string'||id.length>100)))throw new Error();
       value.seen??=null;value.focus??=null;
       this.state=value;let recovered=value.version!==2;value.version=2;
       for(const message of value.messages)if(message.status==='thinking'){message.status='failed';message.error=message.action?.status==='dispatching'?'Hyphen restarted during delivery. Check the source chat before retrying; delivery is unconfirmed.':'Hyphen restarted before answering. Send a new message to retry.';if(message.action?.status==='dispatching')message.action.status='unconfirmed';recovered=true;}
@@ -76,13 +77,44 @@ class Assistant extends EventEmitter {
     const message={id:input.messageId,text,images:this.attachments.resolve(ids),focus:this.state.focus?{...this.state.focus}:null,status:'thinking',at:Date.now(),links:[]};
     this.state.messages.push(message);this.trim();this.state.receipts[message.id]=messageHash(text,ids);
     const local=ids.length?null:this.local(text);
-    if(local!==null){message.answer=local;message.status='completed';}
+    if(local!==null){message.answer=local;message.status='completed';if(/^\/memory(?:\s|$)/i.test(text))message.kind='memory_inspection';}
     try {this.save();}catch{this.state=prior;throw new Error('Your message could not be saved. It was not submitted.');}
     this.log('accepted',{messageId:message.id,local:local!==null,characters:text.length});
     if(local===null){this.active=true;this.work=this.generate(message);}
     this.emit('change');return {accepted:true,messageId:message.id};
   }
   local(text) {
+    if(/^\/memory history$/i.test(text)){
+      const exchanges=this.state.messages.filter(m=>m.status==='completed'&&m.kind!=='memory_inspection'&&conversation(m)).slice(-20);
+      this.state.historySelection=exchanges.map(m=>m.id);
+      return 'Retained conversation: '+this.state.messages.filter(conversation).filter(m=>m.status==='completed').length+' exchanges, newest 20 shown.\n'+
+        exchanges.map((m,i)=>`${i+1}. You: ${clip(m.text,120)}\nHyphen: ${clip(m.answer,120)}`).join('\n')+
+        '\n\nUse /forget history N to remove a listed exchange or /forget history all. Pinned notes and source chats are separate. Message replay protection is retained.';
+    }
+    if(/^\/forget history all$/i.test(text)){
+      this.state.messages=this.state.messages.filter(m=>m.status==='thinking'||m.kind==='update');this.state.historySelection=[];
+      return 'Removed earlier retained conversation. This confirmation, pinned notes, update alerts, local images, source chats and message replay protection remain.';
+    }
+    const forgetHistory=text.match(/^\/forget history (\d+)$/i);
+    if(forgetHistory){
+      const id=this.state.historySelection?.[Number(forgetHistory[1])-1];
+      const entry=this.state.messages.find(m=>m.id===id&&m.status==='completed'&&conversation(m));
+      if(!entry)return 'That retained exchange is unavailable. Use /memory history to inspect the current list.';
+      this.state.messages=this.state.messages.filter(m=>m!==entry&&m.kind!=='memory_inspection');
+      return 'Removed that retained exchange and saved memory inspections. Pinned notes, source chats, local images and message replay protection remain.';
+    }
+    if(/^\/memory sources$/i.test(text)){
+      const selected=context(this.options.snapshot(),'');
+      return 'Source context is read-only and selected from connected chats; it is not a pinned note or a retained Hyphen exchange.\n'+
+        selected.data.cards.slice(0,20).map(c=>`${c.chatName}: ${c.sourceCoverage.state}${c.sourceCoverage.historical?', historical':''}${c.sourceCoverage.truncated?', truncated':''}`).join('\n')+
+        '\n\nDeleting a pinned note or Hyphen exchange does not delete source records or their reader cache. Manage source records in their owning chat.';
+    }
+    const correct=text.match(/^\/correct (\d+) ([\s\S]+)$/i);
+    if(correct){const index=Number(correct[1])-1,note=correct[2].trim();
+      if(index<0||index>=this.state.notes.length)return 'That pinned note does not exist. Use /memory to inspect it.';
+      if(!note||note.length>1000)return 'Use a replacement pinned note of up to 1,000 characters.';
+      this.state.notes[index]=note;return 'Corrected that pinned note. Earlier conversation and source records remain separate.';
+    }
     const remember=text.match(/^(?:\/remember\s+|remember(?:\s+that)?\s+)([\s\S]+)$/i);
     if(remember){const note=remember[1].trim();if(note.length>1000)return 'Use a shorter note, up to 1,000 characters.';
       if(this.state.notes.includes(note))return 'I already have that saved.';
@@ -91,10 +123,10 @@ class Assistant extends EventEmitter {
     if(/^\/memory$/i.test(text))return this.state.notes.length?
       'Saved in Hyphen:\n'+this.state.notes.map((n,i)=>`${i+1}. ${clip(n,150)}${n.length>150?'…':''}`).join('\n')+'\n\nUse /forget N to remove a note, or /forget all.':
       'Our conversation is saved across restarts and can be recalled when relevant. No pinned notes yet. Say “Remember that …” to pin a note, or ask what we discussed.';
-    if(/^\/forget all$/i.test(text)){this.state.notes=[];return 'Removed all saved notes from Hyphen.';}
+    if(/^\/forget all$/i.test(text)){this.state.notes=[];return 'Removed all pinned notes from Hyphen. Retained conversation and source records remain.';}
     const forget=text.match(/^\/forget (\d+)$/i);
     if(forget){const index=Number(forget[1])-1;if(index<0||index>=this.state.notes.length)return 'That note does not exist. Use /memory to see the list.';
-      this.state.notes.splice(index,1);return 'Removed that note from Hyphen.';}
+      this.state.notes.splice(index,1);return 'Removed that pinned note from Hyphen. Retained conversation and source records remain.';}
     return null;
   }
   async generate(message) {
@@ -107,7 +139,8 @@ class Assistant extends EventEmitter {
       const requestedRef=directMessageRequest(message.text)?messageTarget(current,message.text,selection):null;
       let images=message.images||[];
       if(!images.length&&/\b(image|photo|picture|screenshot|attachment|shown|left|right|colou?r|previous|earlier|that|this)\b/i.test(message.text)){const prior=recent.findLast(m=>m.imageIds.length);if(prior){try{images=this.attachments.resolve(prior.imageIds);}catch{prior.imagesUnavailable=true;}}}
-      const value=await this.provider.answer({question:message.text||'Describe the attached image and help me understand it.',images,imagesFromHistory:!(message.images||[]).length&&!!images.length,history:recent,recalledHistory:recalled.recalled,historyCoverage:recalled.coverage,savedNotes:this.state.notes,queue:current.data,canRequestChatMessage:!!this.options.dispatch&&!!requestedRef,requestedChatRef:requestedRef});
+      const value=await this.provider.answer({question:message.text||'Describe the attached image and help me understand it.',images,imagesFromHistory:!(message.images||[]).length&&!!images.length,history:recent,recalledHistory:recalled.recalled,userEvidence:recalled.userEvidence,historyCoverage:recalled.coverage,savedNotes:this.state.notes,
+        savedNotesProvenance:'explicit_pinned_notes',memoryCoverage:{retentionExchanges:500,retentionAlerts:40,pinnedNoteLimit:32,pinnedNoteCharacters:this.state.notes.join('').length},queue:current.data,canRequestChatMessage:!!this.options.dispatch&&!!requestedRef,requestedChatRef:requestedRef});
       if(this.closed)return;
       if(typeof value.answer!=='string'||!value.answer.trim()||value.answer.length>6000||!Array.isArray(value.links)||value.links.length>3)
         throw new Error('Hyphen returned an invalid answer.');
