@@ -137,7 +137,7 @@ test('native tray actions open idempotently, hide explicitly and remain stable o
     'Open queue',
     'Hide queue',
     'New task',
-    'Open diagnostic logs',
+    'Export diagnostic report',
     'Quit Hyphen',
   ])
     f.tray.menu.find((i) => i.label === label).click();

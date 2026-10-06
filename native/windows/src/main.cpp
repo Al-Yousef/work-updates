@@ -1256,7 +1256,7 @@ struct App {
         const HMENU menu=CreatePopupMenu();
         AppendMenuW(menu,MF_STRING,MENU_OPEN,L"Open Hyphen");
         AppendMenuW(menu,MF_STRING,MENU_HIDE,L"Hide Hyphen");
-        AppendMenuW(menu,MF_STRING,MENU_LOGS,L"Open diagnostic logs");
+        AppendMenuW(menu,MF_STRING,MENU_LOGS,L"Export diagnostic report");
         if(testTarget) AppendMenuW(menu,MF_STRING,MENU_TARGET,L"Close test target");
         AppendMenuW(menu,MF_SEPARATOR,0,nullptr);
         AppendMenuW(menu,MF_STRING,MENU_EXIT,L"Exit Hyphen");

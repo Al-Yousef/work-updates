@@ -28,7 +28,8 @@ const { taskSource } = require('./src/task-source.cjs');
 const taskbar = require('./src/taskbar.cjs');
 const { dataDirectory, startsVisible } = require('./src/background.cjs');
 const { createTray } = require('./src/tray.cjs');
-const { DiagnosticLog } = require('./src/diagnostics.cjs');
+const { DiagnosticLog, connectionHealth, recovery } = require('./src/diagnostics.cjs');
+const { exportDiagnosticReport:saveDiagnosticReport }=require('./src/diagnostic-export.cjs');
 const { Devices } = require('./src/devices.cjs');
 const { Summaries } = require('./src/summaries.cjs');
 const { NativeControl } = require('./src/native-control.cjs');
@@ -89,14 +90,15 @@ let launcherInfo = {
   bounds: null,
   message: '',
 };
-const diagnostics = new DiagnosticLog(path.join(dataDir, 'logs'));
+const diagnostics = new DiagnosticLog(path.join(dataDir, 'logs'),{protectedDirectory:dataDir,metadata:{version:app.getVersion(),nativeProtocol:'work-updates-native-v1',snapshotProtocol:1,
+  backendHash:require('node:crypto').createHash('sha256').update(fs.readFileSync(__filename)).digest('hex')}});
 diagnostics.write('app.started', { version: app.getVersion(), pid: process.pid, demo });
 const queue = new Queue(dataDir);
 const client = demo
   ? new (require('./src/demo.cjs').DemoCodex)()
   : new Codex({ binary: queue.state.settings.codexBinary, log: diagnostics });
 const desktop = demo ? null : new CodexDesktop({log:diagnostics});
-const controller = new Controller(queue, client, {desktop});
+const controller = new Controller(queue, client, {desktop,log:diagnostics});
 const messages = new Messages(queue,controller,{log:diagnostics,attachments});
 const devices = new Devices({
   directory: dataDir,
@@ -105,6 +107,7 @@ const devices = new Devices({
   encrypt: (value) => safeStorage.encryptString(value),
   decrypt: (value) => safeStorage.decryptString(value),
 });
+diagnostics.setContext({deviceId:devices.local.id});
 const assistant = new Assistant({directory:dataDir,snapshot:()=>devices.snapshot(),attachments,
   binary:queue.state.settings.codexBinary,log:diagnostics,
   loadContext:targets=>require('./src/assistant-context.cjs').loadContext({
@@ -120,6 +123,8 @@ function snapshot() {
   return {
     ...state,
     assistant: assistant.snapshot(),
+    connectionHealth:connectionHealth({collectedAt:state.collectedAt,collector:queue.health,helper:client.status?.(),desktopConnected:desktop?.status().connected,
+      pipeListening:!!nativeControl?.server?.listening,nativeClients:nativeControl?.clients.size,devices:state.devices}),
     settings: {
       ...state.settings,
       ...Object.fromEntries(
@@ -332,6 +337,10 @@ function configure() {
     : 'Shortcut unavailable';
 }
 async function perform(method, input = {}) {
+  const state=devices.snapshot(),card=[...state.cards,...state.done].find(c=>c.id===input.id&&(!input.taskKey||c.taskKey===input.taskKey));
+  return diagnostics.scope({messageId:input.messageId,sourceId:input.sourceId,cardId:card?.id,taskKey:card?.taskKey,ownerId:card?.owner?.id},()=>performBound(method,input));
+}
+async function performBound(method, input = {}) {
   if (
     [
       'create',
@@ -390,7 +399,7 @@ async function performLocal(method, input = {}) {
     const source=taskSource(queue.get(input.id,input.taskKey),input.sourceId);
     return messages.clear(source.id,input.checked===true);
   }
-  if (method === 'logs') {await shell.openPath(diagnostics.directory);return {opened:true};}
+  if (method === 'logs') return exportDiagnosticReport();
   if (method === 'stop') return controller.stop(input.id);
   if (method === 'respond') return controller.respond(input.id, input.decision, input.answers);
   if (method === 'details') {
@@ -460,6 +469,9 @@ async function performLocal(method, input = {}) {
     return connectionAction(method, input);
   }
   throw new Error('Unknown app action.');
+}
+async function exportDiagnosticReport() {
+  return saveDiagnosticReport(diagnostics,dialog,window,()=>snapshot().connectionHealth);
 }
 async function connectionAction(method, input) {
   const { HostPeer } = require('./src/peer.cjs');
@@ -562,6 +574,7 @@ app.whenReady().then(async () => {
     startCollection();
     nativeControl = new NativeControl({
       directory: dataDir,
+      log:diagnostics,
       changed: claimed => {
         diagnostics.write('native.corner.owner', {owner:claimed?'native':'none'});
         publish();
@@ -733,8 +746,9 @@ app.whenReady().then(async () => {
           taskId: error.taskId,
           code: error.code,
           message: error.message,
+          phase:error.phase,delivery:error.delivery,messageId:error.messageId,
         });
-        return { ok: false, error: error.message, taskId: error.taskId };
+        return { ok: false, error: recovery(error).guidance||error.message, taskId: error.taskId,code:error.code,phase:error.phase,delivery:error.delivery,messageId:error.messageId };
       }
     });
   if (process.platform === 'darwin') app.dock?.hide();
@@ -749,7 +763,7 @@ app.whenReady().then(async () => {
     show,
     hide: () => windowController.hide(),
     create: () => perform('window', { action: 'new' }),
-    openLogs: () => shell.openPath(diagnostics.directory),
+    openLogs: () => exportDiagnosticReport().catch(error=>diagnostics.write('app.command.failed',{method:'logs',code:error.code||'DIAGNOSTIC_EXPORT_FAILED'})),
     quit: () => {
       quitting = true;
       app.quit();
@@ -764,6 +778,7 @@ app.whenReady().then(async () => {
   if (process.platform === 'win32') {
     nativeControl = new NativeControl({
       directory: dataDir,
+      log:diagnostics,
       state: () => nativeView(snapshot()),
       command: async (method, input) => {
         const result = await perform(method, input);

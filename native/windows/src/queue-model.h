@@ -180,6 +180,7 @@ struct QueueModel {
             if(!result.value("ok",false)) {
                 if(result.value("delivery","")!="uncertain")intentIds.erase(input.value("sourceId",""));
                 message=result.value("error","Message was not sent. Your draft is saved.");
+                if(!result.value("recovery","").empty())message=result.value("recovery","");
                 if(message.find("active writer")!=std::string::npos)
                     message="Codex has this chat open. Reply there for now. Your draft is saved.";
                 return;

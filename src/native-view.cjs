@@ -45,6 +45,7 @@ function nativeView(state) {
     aiSummary: state.aiSummary, undo: !!state.undo,
     settings: {queueSince: state.settings?.queueSince || 0},
     connection: state.connection, version: state.version,
+    connectionHealth:state.connectionHealth,
     assistant: state.assistant && {...state.assistant,messages:state.assistant.messages.slice(-30).map(m=>({
       id:m.id,text:clipped(m.text,4000),answer:clipped(m.answer,6000),status:m.status,error:clipped(m.error,300),at:m.at,images:m.images||[],
       links:(m.links||[]).slice(0,3).map(link=>({index:link.index,chatName:clipped(link.chatName,180),hasDraft:!!link.draft}))

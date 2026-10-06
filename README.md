@@ -55,6 +55,6 @@ Legacy `Work Updates` executable/data/protocol/app-ID names remain internal comp
 
 ## Diagnostics and licensing
 
-Diagnostics and runtime records stay local. Bounded event metadata excludes chat bodies but may contain private paths/identifiers. Exclude private app data, pairing descriptors, real conversations and logs from commits. Redacted diagnostic export is [issue #12](https://github.com/Al-Yousef/work-updates/issues/12).
+Diagnostics and runtime records stay local. Typed event metadata excludes chat contents, credentials and private paths; local correlation identifiers remain private. **Export diagnostic report** previews a sanitized snapshot, then asks for a save location. Exported identifiers are anonymous aliases, and nothing is uploaded automatically. See [diagnostics and recovery](docs/DIAGNOSTICS.md). Exclude private app data, pairing descriptors, real conversations and raw logs from commits.
 
 MIT license; native dependencies have [third-party notices](native/windows/THIRD_PARTY_NOTICES.txt).
