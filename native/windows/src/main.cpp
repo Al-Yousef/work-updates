@@ -551,7 +551,8 @@ struct Renderer {
         float left=popover=="copy"?contextX:popover=="filters"?SIDEBAR_RIGHT-240:popover=="add"?CHAT_LEFT-8:chatlayout::contactCenter-160;
         float top=popover=="copy"?contextY:popover=="filters"?72:popover=="add"?composeY()-182:86;
         const float width=popover=="copy"?180:popover=="details"?320:224;
-        const float height=popover=="copy"?60:popover=="filters"?296:popover=="add"?164:assistant?164:382;
+        const auto source=model.currentSource();const bool recovery=!source.value("deliveryIssue","").empty()||source.value("queuedMessages",0)>0;
+        const float height=popover=="copy"?60:popover=="filters"?296:popover=="add"?164:assistant?164:recovery?426:382;
         const auto box=D2D1::RectF(left,top,left+width,top+height);
         for(int i=6;i>=1;--i){brush->SetColor(D2D1::ColorF(0,0,0,.013f));canvas->FillRoundedRectangle(D2D1::RoundedRect(D2D1::RectF(left-i,top+2-i,box.right+i,box.bottom+4+i),16+i,16+i),brush);}
         brush->SetColor(D2D1::ColorF(1,1,1,.995f));canvas->FillRoundedRectangle(D2D1::RoundedRect(box,16,16),brush);
@@ -578,11 +579,12 @@ struct Renderer {
             label(statusText(card),12,D2D1::RectF(left+16,top+78,box.right-16,top+98),statusColor(card));
             label(card.value("summaryNotice","Recorded update"),11,D2D1::RectF(left+16,top+106,box.right-16,top+128),chatstyle::secondary());
             item("Open chat","open",top+142,!model.pending&&!model.sourceId.empty());
-            const auto source=model.currentSource();const bool issue=!source.value("deliveryIssue","").empty(),queued=source.value("queuedMessages",0)>0,enabled=!model.pending&&!card.value("done",false);
-            item(issue?"Checked reply":queued?"Clear queue":"Reviewed",issue?"checked":queued?"clearQueue":"reviewed",top+186,enabled);
+            const bool issue=!source.value("deliveryIssue","").empty(),enabled=!model.pending&&!card.value("done",false);
+            item("Reviewed","reviewed",top+186,enabled&&card.value("status","")!="queued");
             item("Snooze 1h","snooze",top+230,enabled);
             item(card.value("done",false)?"Reopen task":"Mark task done",card.value("done",false)?"reopen":"done",top+274,!model.pending);
-            if(card.value("sources",Json::array()).size()>1)item("Switch source","source",top+318);
+            if(recovery)item(issue?"Checked reply":"Clear queue",issue?"checked":"clearQueue",top+318,enabled);
+            if(card.value("sources",Json::array()).size()>1)item("Switch source","source",top+(recovery?362:318));
         }
     }
     void queuePaint(ID2D1SolidColorBrush* brush) {
@@ -612,7 +614,7 @@ struct Renderer {
             transcript(top-model.detailOffset*32.0f,true);
             canvas->PopAxisAlignedClip();
             if(model.detailOffset<std::max(0,static_cast<int>(std::ceil((total-bottom+top)/32))))circleButton(brush,D2D1::Point2F(WIDTH-46,composeY()-25),"sourceLatest");
-            if(!card.value("done",false))composerPaint(brush);
+            if(!card.value("done",false)&&model.canDraft())composerPaint(brush);
         } else {
             label("Choose a conversation",24,D2D1::RectF(CHAT_LEFT+24,216,WIDTH-36,264),chatstyle::ink(),DWRITE_FONT_WEIGHT_SEMI_BOLD);
             label("Select a chat on the left, or talk to Hyphen.",15,D2D1::RectF(CHAT_LEFT+24,280,WIDTH-36,330),muted);

@@ -64,6 +64,7 @@ try {
             wait([&]{try{return named(visible)>0;}catch(...){return false;}},"Status has a meaningful accessible text label");
             click(180,static_cast<int>(chatlayout::listTop+chatlayout::rowHeight/2));
             wait([&]{auto actual=state();return actual.value("selected","")==card.value("id","")&&!actual.value("detailPending",true);},"Actual source header receives the selected fixture");
+            if(card.value("status","")=="queued")check(!IsWindowVisible(editor),"A never-started local task has no chat composer");
             action(AuditAction::DetailsMenu);check(named(L"Mark task done")>0,"Task completion is separate from Reviewed");
             const auto id=sample.value("id","");const auto image=L"status-"+std::wstring(id.begin(),id.end())+L"-"+std::to_wstring(dpi)+L".png";
             saveCapture(image.c_str());SendMessageW(panel,WM_KEYDOWN,VK_ESCAPE,0);
