@@ -206,6 +206,146 @@ test('a delayed completion does not reopen a task the user completed', (t) => {
   assert.equal(q.get(task.id).status, 'done');
   assert.equal(attention, 0);
 });
+test('acceptance binds the current turn before started and old updates cannot clear its request', async (t) => {
+  const { q, client, c } = setup(t);
+  const task = q.create({ title: 'Current pass', prompt: 'Check the fixture.' });
+  q.patch(task.id, { threadId: 'owned-chat', status: 'ready', turnId: 'old-turn' });
+  q.ownedThreads.add('owned-chat');
+  client.send = async () => ({ turn: { id: 'new-turn' } });
+  await c.send(task.id, 'Run the current pass');
+  assert.equal(task.turnId, 'new-turn');
+  q.approvals.set('current-request', { taskId: task.id });
+  q.patch(task.id, { status: 'needs' });
+  let attention = 0;
+  c.on('attention', () => attention++);
+  client.emit('notification', { method: 'turn/started', params: {
+    threadId: 'owned-chat', turn: { id: 'unrelated-turn' },
+  } });
+  client.emit('notification', { method: 'item/agentMessage/delta', params: {
+    threadId: 'owned-chat', turnId: 'old-turn', itemId: 'old-answer', delta: 'Obsolete answer.',
+  } });
+  client.emit('notification', { method: 'item/completed', params: {
+    threadId: 'owned-chat', turnId: 'old-turn', item: { id: 'old-answer', type: 'agentMessage', text: 'Obsolete final answer.' },
+  } });
+  client.emit('notification', { method: 'turn/completed', params: {
+    threadId: 'owned-chat', turn: { id: 'old-turn', status: 'completed' },
+  } });
+  assert.equal(task.status, 'needs');
+  assert.equal(task.turnId, 'new-turn');
+  assert.equal(task.messages.some((m) => m.id === 'old-answer'), false);
+  assert.equal(q.approvals.has('current-request'), true);
+  assert.equal(attention, 0);
+});
+test('completion and its answer before the RPC reply are applied only to the accepted turn', async (t) => {
+  const { q, client, c } = setup(t);
+  const task = q.create({ title: 'Current pass', prompt: 'Check the fixture.' });
+  q.patch(task.id, { threadId: 'owned-chat', status: 'ready', turnId: 'old-turn' });
+  q.ownedThreads.add('owned-chat');
+  let attention = 0;
+  c.on('attention', () => attention++);
+  client.send = async () => {
+    for (const turnId of ['old-turn', 'new-turn']) {
+      client.emit('notification', { method: 'item/completed', params: {
+        threadId: 'owned-chat', turnId, item: { id: turnId + '-answer', type: 'agentMessage',
+          text: turnId === 'new-turn' ? 'Waiting for the external fixture service.' : 'Obsolete answer.' },
+      } });
+      client.emit('notification', { method: 'turn/completed', params: {
+        threadId: 'owned-chat', turn: { id: turnId, status: 'completed' },
+      } });
+    }
+    return { turn: { id: 'new-turn' } };
+  };
+  const receipt = await c.send(task.id, 'Run the current pass');
+  assert.equal(receipt.turnId, 'new-turn');
+  assert.equal(task.status, 'waiting');
+  assert.equal(task.notificationVersion, 'new-turn');
+  assert.equal(task.messages.filter((m) => m.role === 'assistant').length, 1);
+  assert.equal(task.messages.at(-1).text, 'Waiting for the external fixture service.');
+  assert.equal(attention, 1);
+  client.emit('notification', { method: 'turn/started', params: {
+    threadId: 'owned-chat', turn: { id: 'old-turn' },
+  } });
+  assert.equal(task.turnId, 'new-turn');
+  client.emit('notification', { method: 'turn/completed', params: {
+    threadId: 'owned-chat', turn: { id: 'new-turn', status: 'completed' },
+  } });
+  client.emit('notification', { method: 'turn/started', params: {
+    threadId: 'owned-chat', turn: { id: 'new-turn' },
+  } });
+  assert.equal(task.status, 'waiting');
+  assert.equal(attention, 1);
+});
+test('a new task completed before start acknowledgement stays completed after acknowledgement', async (t) => {
+  const { q, client, c } = setup(t);
+  const task = q.create({ title: 'New pass', prompt: 'Check the fixture.' });
+  client.start = async () => {
+    client.emit('created', { taskId: task.id, threadId: 'owned-chat' });
+    client.emit('notification', { method: 'turn/started', params: {
+      threadId: 'owned-chat', turn: { id: 'new-turn' },
+    } });
+    client.emit('notification', { method: 'turn/completed', params: {
+      threadId: 'owned-chat', turn: { id: 'new-turn', status: 'completed' },
+    } });
+    return { threadId: 'owned-chat', turnId: 'new-turn' };
+  };
+  await c.start(task.id);
+  assert.equal(task.status, 'ready');
+  assert.equal(task.notificationVersion, 'new-turn');
+  assert.equal(c.awaitingAcceptance.size, 0);
+});
+test('buffered deltas preserve whitespace and a missing receipt cannot publish their answer', async (t) => {
+  const { q, client, c } = setup(t);
+  const task = q.create({ title: 'Current pass', prompt: 'Check the fixture.' });
+  q.patch(task.id, { threadId: 'owned-chat', status: 'ready' });
+  q.ownedThreads.add('owned-chat');
+  client.send = async () => {
+    for (const delta of ['Checks ', 'passed.']) client.emit('notification', {
+      method: 'item/agentMessage/delta', params: { threadId: 'owned-chat', turnId: 'new-turn', itemId: 'answer', delta },
+    });
+    return { turnId: 'new-turn' };
+  };
+  await c.send(task.id, 'Run the current pass');
+  assert.equal(task.messages.at(-1).text, 'Checks passed.');
+  client.send = async () => {
+    client.emit('notification', { method: 'item/completed', params: {
+      threadId: 'owned-chat', turnId: 'unconfirmed-turn',
+      item: { id: 'unconfirmed-answer', type: 'agentMessage', text: 'Cannot establish receipt ownership.' },
+    } });
+    return {};
+  };
+  await assert.rejects(c.send(task.id, 'Try another pass'), (error) => error.code === 'DELIVERY_RECEIPT');
+  assert.equal(task.messages.some((m) => m.id === 'unconfirmed-answer'), false);
+  assert.equal(c.awaitingAcceptance.size, 0);
+});
+test('an overflowing acceptance window preserves acceptance and asks for a source check', async (t) => {
+  const { q, client, c } = setup(t);
+  const task = q.create({ title: 'Current pass', prompt: 'Check the fixture.' });
+  q.patch(task.id, { threadId: 'owned-chat', status: 'ready' });
+  q.ownedThreads.add('owned-chat');
+  client.send = async () => {
+    for (let i = 0; i < 201; i++) client.emit('notification', {
+      method: 'item/agentMessage/delta', params: { threadId: 'owned-chat', turnId: 'new-turn', itemId: 'answer', delta: 'x' },
+    });
+    return { turnId: 'new-turn' };
+  };
+  const receipt = await c.send(task.id, 'Run the current pass');
+  assert.equal(receipt.delivery, 'sent');
+  assert.equal(task.turnId, 'new-turn');
+  assert.equal(task.status, 'blocked');
+  assert.match(task.error, /accepted.*Open the source chat/);
+  assert.equal(c.awaitingAcceptance.size, 0);
+  // A terminal event after restart cannot make incomplete reconstruction ready.
+  const reopened = new Queue(q.directory), reopenedClient = new EventEmitter();
+  new Controller(reopened, reopenedClient);
+  reopenedClient.emit('notification', { method: 'turn/completed', params: {
+    threadId: 'owned-chat', turn: { id: 'new-turn', status: 'completed' },
+  } });
+  assert.equal(reopened.state.tasks[0].status, 'blocked');
+  client.send = async () => ({ turnId: 'next-turn' });
+  await c.send(task.id, 'Start a later explicit pass');
+  assert.equal(task.presentationGapTurnId, '');
+  assert.equal(task.status, 'working');
+});
 test('approval requests remain pending until a human answers, and unknown requests fail closed', (t) => {
   const { q, client, c } = setup(t),
     task = q.create({ title: 'Verify queue behavior', prompt: 'Run the checks.' });

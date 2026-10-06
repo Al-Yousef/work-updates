@@ -23,6 +23,8 @@ class Controller extends EventEmitter {
     this.queue = queue;
     this.client = client;
     this.desktop = options.desktop;
+    this.completedTurns = new Set();
+    this.awaitingAcceptance = new Map();
     client.on('created', ({ taskId, threadId }) => {
       queue.ownedThreads.add(threadId);
       queue.patch(taskId, { threadId });
@@ -55,6 +57,31 @@ class Controller extends EventEmitter {
   taskFor(threadId) {
     return this.queue.state.tasks.find((t) => t.threadId === threadId);
   }
+  rememberCompletion(threadId, turnId) {
+    const key = threadId + '\0' + turnId;
+    this.completedTurns.add(key);
+    if (this.completedTurns.size > 200)
+      this.completedTurns.delete(this.completedTurns.values().next().value);
+  }
+  acceptTurn(task, turnId, fields = {}) {
+    const pending = this.awaitingAcceptance.get(task.id);
+    this.awaitingAcceptance.delete(task.id);
+    this.queue.patch(task.id, { ...fields, turnId, presentationGapTurnId: '' });
+    if (pending?.overflow) {
+      this.queue.patch(task.id, {
+        status: 'blocked',
+        presentationGapTurnId: turnId,
+        error: 'Codex accepted this pass, but its updates could not be reconstructed. Open the source chat to check progress.',
+      });
+      return;
+    }
+    for (const message of pending?.events || []) {
+      const eventTurnId = message.params.turn?.id || message.params.turnId;
+      if (eventTurnId === turnId) this.event(message);
+      else if (message.method === 'turn/completed')
+        this.rememberCompletion(message.params.threadId, eventTurnId);
+    }
+  }
   async start(id) {
     const q = this.queue,
       task = q.state.tasks.find((t) => t.id === id);
@@ -67,14 +94,18 @@ class Controller extends EventEmitter {
       fs.mkdirSync(cwd, { recursive: true });
       q.patch(id, { status: 'starting', cwd, error: '', device: executionDevice() });
       if (!task.messages.some((m) => m.role === 'user')) q.message(id, 'user', task.prompt);
+      this.awaitingAcceptance.set(id, { events: [] });
       const result = await this.client.start(task, cwd);
       q.ownedThreads.add(result.threadId);
-      q.patch(id, { ...result, ...(task.status === 'starting' ? { status: 'working' } : {}) });
+      this.acceptTurn(task, result.turnId, {
+        ...result, ...(task.status === 'starting' ? { status: 'working' } : {}),
+      });
       return task;
     } catch (error) {
       q.patch(id, { status: 'blocked', error: error.message });
       throw error;
     } finally {
+      this.awaitingAcceptance.delete(id);
       q.busy.delete(id);
     }
   }
@@ -133,9 +164,13 @@ class Controller extends EventEmitter {
         device: executionDevice(),
       });
       dispatchStarted = true;
+      this.awaitingAcceptance.set(task.id, { events: [] });
       const result = await this.client.send(task.threadId, value, images,{messageId:options.messageId});
       const turnId=result?.turn?.id||result?.turnId;
       if(typeof turnId!=='string'||!turnId.trim())throw Object.assign(new Error('Codex did not return an acceptance receipt. Check the chat before retrying.'),{code:'DELIVERY_RECEIPT',delivery:'uncertain'});
+      // Acceptance may precede turn/started. Bind presentation to the same
+      // authoritative turn immediately; preserve a completion already seen.
+      this.acceptTurn(task, turnId);
       return { taskId: task.id, messageId: options.messageId, delivery: 'sent', route: 'app-server',
         turnId };
     } catch (error) {
@@ -149,6 +184,7 @@ class Controller extends EventEmitter {
       }
       throw error;
     } finally {
+      if (task) this.awaitingAcceptance.delete(task.id);
       if (task) q.busy.delete(task.id);
       q.busy.delete(lock);
     }
@@ -169,14 +205,48 @@ class Controller extends EventEmitter {
     }
     if (!task) return;
     q.ownedThreads.add(p.threadId);
-    if (method === 'turn/started')
-      q.patch(task.id, { status: 'working', turnId: p.turn.id, error: '' });
-    else if (method === 'item/agentMessage/delta') {
+    const pending = this.awaitingAcceptance.get(task.id);
+    if (pending && ['turn/started', 'turn/completed', 'item/agentMessage/delta', 'item/completed'].includes(method)) {
+      if (pending.events.length >= 200) pending.overflow = true;
+      else if (method === 'turn/started' || method === 'turn/completed')
+        pending.events.push({ method, params: {
+          threadId: p.threadId,
+          turn: { id: p.turn?.id, status: p.turn?.status, error: p.turn?.error ? { message: String(p.turn.error.message || '').slice(0, 1000) } : undefined },
+        } });
+      else if (method === 'item/agentMessage/delta')
+        pending.events.push({ method, params: {
+          threadId: p.threadId, turnId: p.turnId, itemId: p.itemId, delta: String(p.delta || '').slice(0, 16000),
+        } });
+      else if (p.item?.type === 'agentMessage')
+        pending.events.push({ method, params: {
+          threadId: p.threadId, turnId: p.turnId,
+          item: { id: p.item.id, type: 'agentMessage', text: String(p.item.text || '').slice(0, 16000) },
+        } });
+      return;
+    }
+    const turnId = p.turn?.id || p.turnId;
+    const turnKey = p.threadId + '\0' + turnId;
+    if (task.presentationGapTurnId && turnId === task.presentationGapTurnId &&
+      ['turn/started', 'turn/completed', 'item/agentMessage/delta', 'item/completed'].includes(method)) return;
+    if (method === 'turn/completed') {
+      this.rememberCompletion(p.threadId, turnId);
+    }
+    // A chat may carry delayed notifications from an earlier pass. They must
+    // not replace the current answer, clear its requests or announce readiness.
+    if (
+      turnId && task.turnId && turnId !== task.turnId &&
+      ['turn/started', 'turn/completed', 'item/agentMessage/delta', 'item/completed'].includes(method)
+    ) return;
+    if (method === 'turn/started') {
+      if (this.completedTurns.has(turnKey) || task.notificationVersion === turnId) return;
+      q.patch(task.id, { status: task.status === 'done' ? 'done' : 'working', turnId: p.turn.id, error: '' });
+    } else if (method === 'item/agentMessage/delta') {
       const current = task.messages.find((m) => m.id === p.itemId);
       q.message(task.id, 'assistant', (current?.text || '') + (p.delta || ''), p.itemId);
     } else if (method === 'item/completed' && p.item?.type === 'agentMessage')
       q.message(task.id, 'assistant', p.item.text || '', p.item.id);
     else if (method === 'turn/completed') {
+      if (task.completedAt && task.notificationVersion === turnId) return;
       const latest = task.messages.filter((m) => m.role === 'assistant').at(-1)?.text || '';
       const status = p.turn.status === 'completed' ? statusFromText(latest) : 'blocked';
       const done = task.status === 'done';
