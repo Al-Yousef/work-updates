@@ -2,6 +2,7 @@
 const net = require('node:net');
 const fs = require('node:fs');
 const path = require('node:path');
+const os = require('node:os');
 const crypto = require('node:crypto');
 
 // A live pipe connection owns the corner. Closing/crashing releases ownership.
@@ -11,7 +12,7 @@ class NativeControl {
     this.file = path.join(directory, 'native-control.info');
     this.pipe = process.platform === 'win32'
       ? '\\\\.\\pipe\\work-updates-native-' + crypto.randomUUID()
-      : path.join(directory, 'native-' + crypto.randomUUID() + '.sock');
+      : null;
     this.token = crypto.randomBytes(32).toString('hex');
     this.changed = changed;
     this.status = status;
@@ -24,6 +25,17 @@ class NativeControl {
   }
   get claimed() { return this.owner !== null; }
   async start() {
+    if (this.server) throw new Error('Native control is already started');
+    if (process.platform !== 'win32') {
+      // Darwin limits the entire Unix socket path to 103 bytes. App data and
+      // runner temporary directories can be much longer than that.
+      const temporary = os.tmpdir();
+      const root = Buffer.byteLength(path.join(temporary, 'hyphen-XXXXXX', 'c.sock')) <= 103
+        ? temporary : '/tmp';
+      this.endpointDirectory = fs.mkdtempSync(path.join(root, 'hyphen-'));
+      fs.chmodSync(this.endpointDirectory, 0o700);
+      this.pipe = path.join(this.endpointDirectory, 'c.sock');
+    }
     this.server = net.createServer(socket => {
       this.clients.add(socket);
       socket.setTimeout(5000, () => socket.destroy());
@@ -95,13 +107,18 @@ class NativeControl {
         } else socket.end(JSON.stringify({ok:false, error:'Unknown native control command'}) + '\n');
       });
     });
-    await new Promise((resolve, reject) => {
+    try {
+      await new Promise((resolve, reject) => {
       this.server.once('error', reject);
       this.server.listen(this.pipe, () => {this.server.removeListener('error', reject); resolve();});
-    });
+      });
     this.server.on('error', () => {});
     fs.mkdirSync(path.dirname(this.file), {recursive:true});
     fs.writeFileSync(this.file, 'work-updates-native-v1\n' + this.pipe + '\n' + this.token + '\n' + process.pid + '\n', {mode:0o600});
+    } catch (error) {
+      this.close();
+      throw error;
+    }
     return this;
   }
   sendState(socket, state) {
@@ -121,7 +138,15 @@ class NativeControl {
   close() {
     this.owner = null;
     for (const socket of this.clients) socket.destroy();
-    this.server?.close();
+    const endpointDirectory = this.endpointDirectory;
+    const pipe = this.pipe;
+    const cleanup = () => {
+      if (!endpointDirectory) return;
+      try {fs.unlinkSync(pipe);} catch (error) {if (error.code !== 'ENOENT') return;}
+      try {fs.rmdirSync(endpointDirectory);} catch {}
+    };
+    if (this.server) this.server.close(cleanup);
+    else cleanup();
     try {
       // Never remove the descriptor of a newer app instance.
       if (fs.readFileSync(this.file, 'utf8').split('\n')[2] === this.token) fs.unlinkSync(this.file);

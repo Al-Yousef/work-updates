@@ -43,3 +43,23 @@ test('native ownership is exclusive, authenticated, and released on disconnect w
   const safeQuit=await request(control,'quitIfIdle'); assert.equal(safeQuit.response.ok,true);
   await new Promise(resolve=>setImmediate(resolve)); assert.equal(quit,true);
 });
+
+test('Unix control stays private and cleans up even with a long app-data path', {skip:process.platform === 'win32'}, async t => {
+  const root = fs.mkdtempSync(path.join(os.tmpdir(), 'hyphen-long-'));
+  const directory = path.join(root, 'a'.repeat(70), 'b'.repeat(70));
+  fs.mkdirSync(directory, {recursive:true});
+  const control = await new NativeControl({directory, changed:()=>{},
+    status:()=>({activeWriters:0}), quit:()=>{}}).start();
+  t.after(()=>{control.close();fs.rmSync(root,{recursive:true,force:true});});
+  const endpoint = control.endpointDirectory;
+  assert.ok(Buffer.byteLength(control.pipe) <= 103);
+  assert.equal(fs.statSync(endpoint).mode & 0o777, 0o700);
+  assert.equal(fs.statSync(control.file).mode & 0o777, 0o600);
+  assert.equal((await request(control, 'status', 'wrong')).response.ok,false);
+  assert.equal((await request(control, 'status')).response.ok,true);
+  const stopped = once(control.server, 'close');
+  control.close();
+  await stopped;
+  assert.equal(fs.existsSync(endpoint),false);
+  assert.equal(fs.existsSync(control.file),false);
+});

@@ -6,6 +6,7 @@ $taskRepo=[IO.Path]::GetFullPath((Join-Path $taskNative '../..'))
 $taskNode=Get-HyphenNode
 $taskRunId=Get-Date -Format 'yyyyMMdd-HHmmss'
 $taskResults=@()
+New-Item -ItemType Directory -Path (Join-Path $taskNative 'build/artifacts') -Force | Out-Null
 foreach($taskScale in $Scales){
     $taskFixture=Join-Path $taskRepo ('artifacts/ux-audit-'+$taskRunId+'-'+$taskScale)
     New-Item -ItemType Directory -Path $taskFixture -Force | Out-Null

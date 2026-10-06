@@ -26,10 +26,10 @@ const python =
     'python',
     'python.exe',
   );
-const wait = async (predicate) => {
+const wait = async (predicate, health = () => ({})) => {
   const limit = Date.now() + 20000;
   while (!predicate()) {
-    if (Date.now() > limit) throw new Error('Isolated collector did not reach the expected state.');
+    if (Date.now() > limit) throw new Error('Isolated collector did not reach the expected state: ' + JSON.stringify(health()));
     await new Promise((resolve) => setTimeout(resolve, 40));
   }
 };
@@ -142,6 +142,18 @@ test('error receipt and disconnected process cannot claim an old success as curr
     false,
   );
 });
+test('Python collector identifies the same canonical source as its Node parent', t => {
+  const s = source(t), session = crypto.randomUUID();
+  const output = execFileSync(python, ['-X','utf8',path.join(__dirname,'../bridge/collector.py'),
+    '--stdio','--once','--codex-home',s.home,'--session',session,'--parent-pid',String(process.pid)],
+    {windowsHide:true,encoding:'utf8'});
+  const envelope = JSON.parse(output);
+  assert.equal(envelope.session,session);
+  assert.equal(envelope.sourceId,sourceIdentity(s.home));
+  assert.equal(envelope.ok,true,'Synthetic collector failed: ' + envelope.error);
+  assert.equal(envelope.feed.threads.length,1);
+});
+
 test('actual in-memory Python collector reads unchanged chats, restarts after exit and writes no source/cache files', async (t) => {
   const s = source(t),
     receipts = [];
@@ -157,11 +169,11 @@ test('actual in-memory Python collector reads unchanged chats, restarts after ex
     },
   );
   t.after(() => watcher.close());
-  await wait(() => receipts.length >= 3);
+  await wait(() => receipts.length >= 3, watcher.health);
   assert.equal(new Set(receipts.map((r) => r.updatedAt)).size, 1);
   const pid = watcher.pid;
   process.kill(pid);
-  await wait(() => watcher.pid !== pid && watcher.health().ok);
+  await wait(() => watcher.pid !== pid && watcher.health().ok, watcher.health);
   assert.ok(watcher.health().restarts >= 1);
   assert.ok(receipts.some((r) => r.generation === 2));
   assert.equal(watcher.sourceId, sourceIdentity(s.home));
@@ -227,7 +239,7 @@ test('candidate keeps exact owner/source draft and receipts across stopped/read-
   });
   t.after(() => f.close());
   f.choose('active');
-  await wait(() => f.collector.health().ok);
+  await wait(() => f.collector.health().ok, f.collector.health);
   const model = new InboxModel();
   model.update(f.snapshot());
   const card = model.snapshot.cards.find((c) => c.provenance.mode === 'read-only');

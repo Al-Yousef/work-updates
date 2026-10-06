@@ -2,6 +2,7 @@ $ErrorActionPreference='Stop'
 $taskNative=Split-Path -Parent $PSScriptRoot
 $taskCandidate=Join-Path $taskNative 'build/candidate'
 $taskProof=Join-Path $taskCandidate 'native-validation.json'
+New-Item -ItemType Directory -Path (Join-Path $taskNative 'build/artifacts') -Force | Out-Null
 $taskHash=(Get-FileHash -LiteralPath (Join-Path $taskCandidate 'Native Hover.exe')).Hash
 $taskRecord=@{verified=$false;nativeSha256=$taskHash;startedAt=[DateTimeOffset]::Now.ToString('o');scope='Owned Win32 controls with synthetic backends; no signed-in messages or Explorer injection'}
 Remove-Item -LiteralPath $taskProof -ErrorAction SilentlyContinue
