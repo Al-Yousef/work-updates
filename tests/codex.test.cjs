@@ -33,6 +33,17 @@ function fixture(options = {}) {
   });
   return { client, processes, logs };
 }
+test('the durable client message identity reaches both start and steer mutations',async()=>{
+  const {client,processes}=fixture();await client.connect();client.loaded.add('test-source');
+  const first=client.send('test-source','Start',[],{messageId:'synthetic-start'});
+  await new Promise(resolve=>setImmediate(resolve));let request=processes[0].messages.at(-1);
+  assert.equal(request.method,'turn/start');assert.equal(request.params.clientUserMessageId,'synthetic-start');
+  processes[0].respond({id:request.id,result:{turn:{id:'test-turn'}}});await first;
+  client.active.set('test-source','test-turn');const second=client.send('test-source','Steer',[],{messageId:'synthetic-steer'});
+  await new Promise(resolve=>setImmediate(resolve));request=processes[0].messages.at(-1);
+  assert.equal(request.method,'turn/steer');assert.equal(request.params.clientUserMessageId,'synthetic-steer');assert.equal(request.params.expectedTurnId,'test-turn');
+  processes[0].respond({id:request.id,result:{turnId:'test-turn'}});await second;client.close();
+});
 
 test('one crashed process rejects pending RPCs once and a late exit cannot disconnect its replacement', async () => {
   const { client, processes, logs } = fixture();

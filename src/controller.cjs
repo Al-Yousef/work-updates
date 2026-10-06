@@ -133,9 +133,11 @@ class Controller extends EventEmitter {
         device: executionDevice(),
       });
       dispatchStarted = true;
-      const result = await this.client.send(task.threadId, value, images);
+      const result = await this.client.send(task.threadId, value, images,{messageId:options.messageId});
+      const turnId=result?.turn?.id||result?.turnId;
+      if(typeof turnId!=='string'||!turnId.trim())throw Object.assign(new Error('Codex did not return an acceptance receipt. Check the chat before retrying.'),{code:'DELIVERY_RECEIPT',delivery:'uncertain'});
       return { taskId: task.id, messageId: options.messageId, delivery: 'sent', route: 'app-server',
-        turnId: result?.turn?.id || result?.turnId || task.turnId };
+        turnId };
     } catch (error) {
       if (!dispatchStarted) {
         error.delivery = 'not-sent';

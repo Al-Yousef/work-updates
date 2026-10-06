@@ -128,6 +128,7 @@ test('group reply uses the displayed source and concurrent retries cannot adopt 
     await new Promise((r) => {
       release = r;
     });
+    return {turn:{id:'accepted-turn'}};
   };
   const pending = c.send(card.id, 'Use the verified draft', undefined, card.taskKey);
   await assert.rejects(c.send(card.id, 'Second click', undefined, card.taskKey));
@@ -138,6 +139,7 @@ test('group reply uses the displayed source and concurrent retries cannot adopt 
   const task = q.state.tasks[0];
   client.send = async (id) => {
     assert.equal(id, 'needs-chat');
+    return {turnId:'accepted-follow-up'};
   };
   await c.send(task.id, 'A later follow-up', 'needs-chat');
   assert.equal(q.state.tasks.length, 1);
@@ -163,6 +165,13 @@ test('a failed start keeps its created chat for retry and concurrent clicks crea
   };
   await c.start(task.id);
   assert.equal(task.status, 'working');
+});
+test('an old task turn ID cannot substitute for a missing current RPC receipt',async t=>{
+  const {q,client,c}=setup(t);const task=q.create({title:'Test receipt',prompt:'A test'});
+  q.patch(task.id,{threadId:'test-source',turnId:'old-turn',status:'ready'});q.ownedThreads.add('test-source');
+  client.send=async()=>({});
+  await assert.rejects(c.send(task.id,'New test',undefined,task.id),error=>error.code==='DELIVERY_RECEIPT'&&error.delivery==='uncertain');
+  assert.equal(q.busy.size,0);
 });
 test('streamed commentary is quiet and actual completion creates a review notification', (t) => {
   const { q, client, c } = setup(t),

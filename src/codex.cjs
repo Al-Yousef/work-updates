@@ -364,7 +364,7 @@ class Codex extends EventEmitter {
       throw error;
     }
   }
-  async send(threadId, value, images=[]) {
+  async send(threadId, value, images=[], {messageId}={}) {
     await this.prepare(threadId);
     const input=[...(value?[{type:'text',text:value}]:[]),...images.map(image=>({type:'localImage',path:image.path}))];
     if (this.active.has(threadId))
@@ -372,8 +372,9 @@ class Codex extends EventEmitter {
         threadId,
         expectedTurnId: this.active.get(threadId),
         input,
+        ...(messageId?{clientUserMessageId:messageId}:{}),
       });
-    return this.call('turn/start', { threadId, input });
+    return this.call('turn/start', { threadId, input,...(messageId?{clientUserMessageId:messageId}:{}) });
   }
   async stop(threadId) {
     if (this.active.has(threadId))

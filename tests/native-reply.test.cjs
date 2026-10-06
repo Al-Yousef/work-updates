@@ -29,7 +29,7 @@ async function setup(t,client=new EventEmitter()) {
 test('authenticated native replies keep exact source identity and return the adopted task receipt',async t=>{
   const {queue,client,send,input}=await setup(t);let sends=0;
   client.prepare=async id=>assert.equal(id,input.sourceId);
-  client.send=async(id,text)=>{assert.equal(id,input.sourceId);assert.equal(text,input.text);sends++;};
+  client.send=async(id,text)=>{assert.equal(id,input.sourceId);assert.equal(text,input.text);sends++;return {turn:{id:'accepted-native-turn'}};};
   assert.equal((await send(input,'wrong')).ok,false);assert.equal(sends,0);
   assert.equal((await send({...input,taskKey:'stale'})).ok,false);assert.equal(sends,0);
   const result=await send(input);assert.equal(result.ok,true);assert.ok(result.value.taskId);
@@ -46,7 +46,7 @@ test('writer refusal returns an error and leaves the observed chat and draft his
 test('a slow native send keeps its acknowledgement connection and concurrent submission is rejected',async t=>{
   const {queue,client,control,send,input}=await setup(t);let release,started;
   const ready=new Promise(resolve=>started=resolve);let sends=0;
-  client.send=async()=>{sends++;started();await new Promise(resolve=>release=resolve);};
+  client.send=async()=>{sends++;started();await new Promise(resolve=>release=resolve);return {turn:{id:'accepted-slow-turn'}};};
   const first=send(input);await ready;
   assert.ok([...control.clients].some(socket=>socket.timeout===240000));
   const adopted=queue.cards().find(card=>card.primarySourceId===input.sourceId);

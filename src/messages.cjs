@@ -27,9 +27,11 @@ class Messages extends EventEmitter {
     // intent before network I/O, and a receipt before reporting success.
     const keep=this.state.entries.filter(e=>!terminal.has(e.status));
     const allHistory=this.state.entries.filter(e=>terminal.has(e.status));
-    for(const entry of allHistory.slice(0,-200))if(entry.textHash)this.state.receipts[entry.id]={id:entry.id,sourceId:entry.sourceId,textHash:entry.textHash,status:entry.status,receipt:entry.receipt};
+    const receipts={...this.state.receipts};
+    for(const entry of allHistory.slice(0,-200))if(entry.textHash)receipts[entry.id]={id:entry.id,sourceId:entry.sourceId,textHash:entry.textHash,status:entry.status,receipt:entry.receipt};
     const history=allHistory.slice(-200);
-    this.state.entries=[...history,...keep];atomic(this.file,this.state);this.emit('change');
+    const next={...this.state,entries:[...history,...keep],receipts};
+    atomic(this.file,next);this.state=next;this.emit('change');
   }
   record(event,entry,extra={}){this.log?.write('message.'+event,{messageId:entry.id,sourceId:entry.sourceId,cardId:entry.cardId,mode:entry.mode,...extra});}
   validate(input){
@@ -48,8 +50,16 @@ class Messages extends EventEmitter {
     const entry=this.state.entries.find(e=>e.id===input.messageId)||this.state.receipts[input.messageId];if(!entry)return null;
     const digest=messageHash(text(input.text,12000),attachmentIds(input.attachmentIds||[]));
     if(entry.sourceId!==input.sourceId||entry.textHash!==digest)throw new Error('This message identity belongs to another draft.');
+    const proof=entry.receiptIdentity;
+    if(entry.status==='uncertain'&&proof?.messageId===entry.id&&proof.sourceId===entry.sourceId&&proof.textHash===entry.textHash&&
+      typeof proof.turnId==='string'&&proof.turnId&&proof.turnId===entry.receipt?.turnId){
+      const draft=entry.text;entry.status='sent';delete entry.text;
+      try{this.save();}catch(error){entry.status='uncertain';entry.text=draft;error.delivery='uncertain';error.messageId=entry.id;throw error;}
+      this.record('reconciled',entry,{turnId:proof.turnId,route:entry.receipt.route});
+    }
     if(entry.status==='sent')return {...entry.receipt,messageId:entry.id,delivery:'sent'};
     if(entry.status==='queued')return {messageId:entry.id,delivery:'queued',route:'hyphen'};
+    if(entry.status==='cancelled'){const error=new Error('That message was cancelled. Use a new message identity for a new draft.');error.code='DELIVERY_CANCELLED';error.messageId=entry.id;error.delivery='not-sent';throw error;}
     const error=new Error(entry.error||'This delivery is still unconfirmed. Check the chat before retrying.');
     error.code=entry.code||'DELIVERY_PENDING';error.messageId=entry.id;error.delivery=['uncertain','sending'].includes(entry.status)?'uncertain':'not-sent';throw error;
   }
@@ -70,13 +80,17 @@ class Messages extends EventEmitter {
     const entry=this.create(input,'send');return this.deliver(entry,input);
   }
   async deliver(entry,input){
+    const draft=entry.text,clearedFailures=[];
     this.active.add(entry.sourceId);entry.status='sending';entry.attemptedAt=Date.now();
     try {
       this.save();this.record('dispatching',entry);
       const images=this.attachments.resolve(entry.attachmentIds||[]);
       const result=await this.controller.send(input.id,entry.text,entry.sourceId,input.taskKey,{messageId:entry.id,images});
+      if(!result||typeof result.turnId!=='string'||!result.turnId.trim()||(result.messageId&&result.messageId!==entry.id)||(result.sourceId&&result.sourceId!==entry.sourceId))
+        throw Object.assign(new Error('Codex did not return a matching acceptance receipt. Check this chat before retrying.'),{code:'DELIVERY_RECEIPT',delivery:'uncertain'});
       entry.status='sent';entry.receipt=result;entry.completedAt=Date.now();delete entry.text;
-      for(const old of this.state.entries)if(old!==entry&&old.sourceId===entry.sourceId&&old.status==='failed'){old.status='cancelled';delete old.text;}
+      entry.receiptIdentity={messageId:entry.id,sourceId:entry.sourceId,textHash:entry.textHash,turnId:result.turnId};
+      for(const old of this.state.entries)if(old!==entry&&old.sourceId===entry.sourceId&&old.status==='failed'){clearedFailures.push({entry:old,status:old.status,text:old.text});old.status='cancelled';delete old.text;}
       const source=this.queue.feed.threads.find(s=>s.id===entry.sourceId);
       this.state.barriers[entry.sourceId]={turnId:result.turnId||'',fingerprint:source?.fingerprint||'',at:Date.now()};
       this.save();this.record('sent',entry,{route:result.route,turnId:result.turnId,elapsedMs:Date.now()-entry.attemptedAt});
@@ -84,6 +98,8 @@ class Messages extends EventEmitter {
     } catch(error) {
       // A lost acknowledgement can mean it was delivered. Never retry it
       // automatically or allow another queued message to pass that uncertainty.
+      entry.text=draft;
+      for(const old of clearedFailures){old.entry.status=old.status;old.entry.text=old.text;}
       entry.status=unknown(error)||entry.status==='sent'?'uncertain':'failed';entry.code=error.code||'SEND_FAILED';
       entry.error=entry.status==='uncertain'?'Delivery unconfirmed. Check this chat before retrying.':error.message;
       try{this.save();}catch{entry.status='uncertain';}
@@ -94,7 +110,8 @@ class Messages extends EventEmitter {
   }
   schedule(){if(this.closed||this.scheduled)return;this.scheduled=setTimeout(()=>{this.scheduled=null;this.pump().catch(error=>this.log?.write('message.queue.error',{code:error.code||'QUEUE_ERROR'}));},100);this.scheduled.unref();}
   async pump(){
-    if(this.closed||!this.queue.health.ok||Date.now()/1000-this.queue.feed.collectedAt>30)return;
+    const age=Date.now()/1000-this.queue.feed.collectedAt;
+    if(this.closed||!this.queue.health.ok||!Number.isFinite(age)||age< -5||age>30)return;
     const sources=new Set(this.state.entries.filter(e=>e.status==='queued').map(e=>e.sourceId));
     for(const sourceId of sources){
       if(this.active.has(sourceId)||this.state.entries.some(e=>e.sourceId===sourceId&&['uncertain','failed'].includes(e.status)))continue;
@@ -110,10 +127,13 @@ class Messages extends EventEmitter {
     }
   }
   clear(sourceId,checked=false){
+    const priorEntries=[...this.state.entries],priorReceipts={...this.state.receipts},changed=[];
     for(const entry of this.state.entries)if(entry.sourceId===sourceId&&(checked?['failed','uncertain']:['queued','failed']).includes(entry.status)){
-      entry.status='cancelled';delete entry.text;this.record('cleared',entry);
+      changed.push({entry,status:entry.status,text:entry.text});entry.status='cancelled';delete entry.text;
     }
-    this.save();return {cleared:true};
+    try{this.save();}catch(error){for(const item of changed){item.entry.status=item.status;item.entry.text=item.text;}this.state.entries=priorEntries;this.state.receipts=priorReceipts;throw error;}
+    for(const item of changed)this.record('cleared',item.entry);
+    return {cleared:true};
   }
   decorate(state){return {...state,cards:state.cards.map(card=>({...card,
     sources:card.sources.map(source=>({...source,queuedMessages:this.state.entries.filter(e=>e.sourceId===source.id&&e.status==='queued').length,
