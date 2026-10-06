@@ -22,10 +22,20 @@ function wire(next){
   const send=client.send.bind(client);client.send=async(id,text,images,options)=>{assert.equal(id,threadId,'Never submit to another source');dispatches++;transcript.push(text);const r=await send(id,text,images,options);accepted.push(r.turn?.id||r.turnId);return r;};
   q=new Queue(directory);refresh();controller=new Controller(q,client);messages=new Messages(q,controller,{auto:false});
 }
-async function idle(){await wait(()=>!client.active.has(threadId));assert.equal(turnStatuses.get(accepted.at(-1)),'completed','The accepted audit turn must finish successfully');refresh();}
+async function idle(){const turnId=accepted.at(-1);await wait(()=>turnStatuses.has(turnId)&&!client.active.has(threadId));assert.equal(turnStatuses.get(turnId),'completed','The accepted audit turn must finish successfully');refresh();}
 function restoreMessages(){messages.close();messages=new Messages(q,controller,{auto:false});}
 async function newPrivateClient(){
   const next=new Codex({requestTimeoutMs:15000});await next.connect();return next;
+}
+class AuditDemo extends DemoCodex {
+  async send(id){
+    const turnId=crypto.randomUUID();
+    // Match real RPC ordering: acceptance may precede turn/started.
+    setTimeout(()=>{this.active.set(id,turnId);this.emit('notification',{method:'turn/started',params:{threadId:id,turn:{id:turnId}}});
+      setTimeout(()=>{this.active.delete(id);this.emit('notification',{method:'turn/completed',params:{threadId:id,turn:{id:turnId,status:'completed'}}});},500);
+    },20);
+    return {turn:{id:turnId}};
+  }
 }
 async function verifyTranscript(){
   if(synthetic)return transcript;
@@ -35,7 +45,7 @@ async function verifyTranscript(){
 (async()=>{
   const started=Date.now();let archived=false;
   try{
-    if(synthetic){model='synthetic-transport';threadId=crypto.randomUUID();wire(new DemoCodex());}
+    if(synthetic){model='synthetic-transport';threadId=crypto.randomUUID();wire(new AuditDemo());}
     else{
       client=await newPrivateClient();const models=await client.call('model/list',{includeHidden:false});
       model=['gpt-6-luna','gpt-5.6-luna'].find(id=>models.data.some(m=>m.model===id));assert.ok(model,'Existing small model must be available');
@@ -52,9 +62,10 @@ async function verifyTranscript(){
     }
     const first=input(prompts[0]);const firstReceipt=await messages.send(first);assert.equal(firstReceipt.delivery,'sent');await idle();
     // Drop the panel's response, then restart the message journal and helper.
-    messages.close();client.close();wire(synthetic?new DemoCodex():await newPrivateClient());
+    messages.close();client.close();wire(synthetic?new AuditDemo():await newPrivateClient());
     const replay=await messages.send(first);assert.deepEqual(replay,firstReceipt);assert.equal(dispatches,1);evidence.push('Lost panel acknowledgement and restart reuse the saved receipt without resending');
     const busy=input(prompts[1]);await messages.send(busy);
+    await wait(()=>client.active.has(threadId)||turnStatuses.has(accepted.at(-1)));
     assert.ok(client.active.has(threadId),'Busy Queue must observe a genuinely active turn');
     const queued=input(prompts[2]);assert.equal(messages.enqueue(queued).delivery,'queued');await messages.pump();assert.equal(dispatches,2);
     restoreMessages();assert.equal(messages.enqueue(queued).delivery,'queued');await messages.pump();assert.equal(dispatches,2);await idle();
