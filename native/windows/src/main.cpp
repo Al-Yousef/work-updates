@@ -885,8 +885,7 @@ struct App {
             syncingEditor=true;editorSource=model.composerKey();SetWindowTextW(editor,draft.c_str());
             SendMessageW(editor,EM_SETSEL,draft.size(),draft.size());syncingEditor=false;
         }
-        const auto card=model.selected();
-        const bool visible=mode!=Mode::Hidden&&(model.chatting()||(!model.selectedId.empty()&&!card.empty()&&!card.value("done",false)));
+        const bool visible=mode!=Mode::Hidden&&model.canDraft();
         SendMessageW(editor,EM_SETLIMITTEXT,model.chatting()?4000:12000,0);
         SendMessageW(editor,EM_SETREADONLY,!model.canDraft(),0);
         layoutEditors();
