@@ -139,7 +139,7 @@ class Codex extends EventEmitter {
       this.proc = proc;
       const rl = readline.createInterface({ input: proc.stdout });
       this.reader = rl;
-      const connection = { proc, reader: rl, closed: false, intentional: false };
+      const connection = { proc, reader: rl, closed: false, intentional: false, completedTurns: new Set() };
       this.connection = connection;
       this.log('codex.process.start', { binary, pid: proc.pid });
       rl.on('line', (line) => {
@@ -158,8 +158,12 @@ class Codex extends EventEmitter {
               this.loaded.delete(m.params.threadId);
               this.active.delete(m.params.threadId);
             }
-            if (m.method === 'turn/started') this.active.set(m.params.threadId, m.params.turn.id);
-            if (m.method === 'turn/completed') this.active.delete(m.params.threadId);
+            if (m.method === 'turn/started'&&!connection.completedTurns.has(m.params.threadId+'\0'+m.params.turn.id)) this.active.set(m.params.threadId, m.params.turn.id);
+            if (m.method === 'turn/completed') {
+              connection.completedTurns.add(m.params.threadId+'\0'+m.params.turn.id);
+              if(connection.completedTurns.size>200)connection.completedTurns.delete(connection.completedTurns.values().next().value);
+              if(this.active.get(m.params.threadId)===m.params.turn.id)this.active.delete(m.params.threadId);
+            }
             if (['turn/started', 'turn/completed'].includes(m.method))
               this.log('codex.' + m.method.replace('/', '.'), {
                 pid: proc.pid,
@@ -191,7 +195,15 @@ class Codex extends EventEmitter {
                 error.phase = rpcPhase(pending.method);
                 error.delivery = 'not-sent';
                 pending.reject(error);
-              } else pending.resolve(m.result);
+              } else {
+                // Acceptance can precede turn/started. Keep that writer busy
+                // immediately, without resurrecting a turn completed before
+                // its delayed RPC acknowledgement.
+                const turnId=pending.method==='turn/start'?m.result?.turn?.id:pending.method==='turn/steer'?m.result?.turnId:null;
+                if(typeof turnId==='string'&&turnId&&pending.threadId&&!connection.completedTurns.has(pending.threadId+'\0'+turnId)&&
+                  !['completed','interrupted','failed'].includes(m.result?.turn?.status))this.active.set(pending.threadId,turnId);
+                pending.resolve(m.result);
+              }
             }
           }
         } catch (error) {
@@ -364,7 +376,7 @@ class Codex extends EventEmitter {
       throw error;
     }
   }
-  async send(threadId, value, images=[]) {
+  async send(threadId, value, images=[], {messageId}={}) {
     await this.prepare(threadId);
     const input=[...(value?[{type:'text',text:value}]:[]),...images.map(image=>({type:'localImage',path:image.path}))];
     if (this.active.has(threadId))
@@ -372,8 +384,9 @@ class Codex extends EventEmitter {
         threadId,
         expectedTurnId: this.active.get(threadId),
         input,
+        ...(messageId?{clientUserMessageId:messageId}:{}),
       });
-    return this.call('turn/start', { threadId, input });
+    return this.call('turn/start', { threadId, input,...(messageId?{clientUserMessageId:messageId}:{}) });
   }
   async stop(threadId) {
     if (this.active.has(threadId))

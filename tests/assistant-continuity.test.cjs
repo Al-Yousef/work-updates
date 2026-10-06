@@ -105,3 +105,11 @@ test('an interrupted dispatch is unconfirmed after restart and is never automati
   const message=reloaded.state.messages.find(m=>m.id===id);assert.equal(message.action.status,'unconfirmed');assert.match(message.error,/delivery is unconfirmed/);
   reloaded.ask({messageId:id,text:'Tell this chat to fix it'});assert.equal(reloaded.active,false);
 });
+
+test('assistant-triggered delivery cannot use future-dated or invalid collection freshness after inference',async t=>{
+  for(const timestamp of [Date.now()/1000+90,NaN]){
+    const f=fixture(t,{answer:async input=>{f.state.collectedAt=timestamp;return {answer:'Doing it',links:[],action:{ref:input.requestedChatRef,text:'Fix it',mode:'send'}};}});
+    f.app.focus(f.state.cards[0]);const answer=await f.ask('Tell this chat to fix it');
+    assert.equal(answer.status,'failed');assert.match(answer.error,/unavailable/);assert.equal(f.dispatches.length,0);
+  }
+});

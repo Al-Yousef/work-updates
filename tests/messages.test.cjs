@@ -85,3 +85,60 @@ test('timeouts without a known preparation boundary still block delivery and pre
   assert.throws(()=>messages.enqueue({...input,text:'Another message'}),/unconfirmed/);
   await messages.pump();assert.equal(calls,1);
 });
+test('receipt write failure preserves text and explicit same-ID recovery reconciles proof without resending after restart',async t=>{
+  let calls=0;const {messages,q,input}=setup(t,async()=>{calls++;return {turnId:'accepted-turn',route:'app-server'};});
+  input.messageId=crypto.randomUUID();const save=messages.save.bind(messages);let writes=0;
+  messages.save=()=>{writes++;if(writes===3)throw Object.assign(new Error('Synthetic receipt write failed'),{code:'STORE_FAILED'});return save();};
+  await assert.rejects(messages.send(input),error=>error.delivery==='uncertain');
+  assert.equal(messages.state.entries[0].text,input.text);
+  assert.equal(JSON.parse(fs.readFileSync(messages.file)).entries[0].text,input.text);
+  await messages.pump();assert.equal(calls,1);
+  const restored=new Messages(q,{send:async()=>assert.fail('Reconciliation must not resubmit')},{auto:false});t.after(()=>restored.close());
+  const result=await restored.send(input);assert.equal(result.delivery,'sent');assert.equal(result.turnId,'accepted-turn');
+  assert.equal(restored.state.entries[0].text,undefined);assert.equal(calls,1);
+});
+test('missing or mismatched acceptance receipts retain an uncertain draft and never unblock automatic delivery',async t=>{
+  for(const receipt of [{route:'app-server'},{turnId:'other-turn',messageId:crypto.randomUUID()}]){
+    const {messages,input}=setup(t,async()=>receipt);input.messageId=crypto.randomUUID();
+    await assert.rejects(messages.send(input),error=>error.delivery==='uncertain'&&error.code==='DELIVERY_RECEIPT');
+    assert.equal(messages.state.entries[0].text,input.text);await messages.pump();
+    assert.equal(messages.state.entries[0].status,'uncertain');assert.equal(messages.state.entries[0].receiptIdentity,undefined);
+  }
+});
+test('failed cancellation storage cannot clear a queued draft or emit a successful cancellation record',t=>{
+  const {messages,input,directory}=setup(t,async()=>assert.fail('No dispatch expected'));
+  input.messageId=crypto.randomUUID();messages.enqueue(input);messages.save=()=>{throw new Error('Synthetic store failure');};
+  assert.throws(()=>messages.clear(input.sourceId),/store failure/);
+  assert.equal(messages.state.entries[0].status,'queued');assert.equal(messages.state.entries[0].text,input.text);
+  assert.ok(!fs.readFileSync(path.join(directory,'app.log'),'utf8').includes('message.cleared'));
+});
+test('cancelled identities cannot submit again and have a distinct not-sent outcome',async t=>{
+  const {messages,input}=setup(t,async()=>assert.fail('No dispatch expected'));input.messageId=crypto.randomUUID();
+  messages.enqueue(input);messages.clear(input.sourceId);
+  await assert.rejects(messages.send(input),error=>error.code==='DELIVERY_CANCELLED'&&error.delivery==='not-sent');
+});
+test('future-dated monitoring cannot dispatch an eligible queue',async t=>{
+  let calls=0;const {messages,q,input}=setup(t,async()=>{calls++;return {turnId:'accepted'};});
+  messages.enqueue(input);q.feed.collectedAt=Date.now()/1000+500;await messages.pump();assert.equal(calls,0);
+});
+
+test('reconciliation requires every recorded identity field and preserves the draft if its commit fails',async t=>{
+  const {messages,input}=setup(t,async()=>({turnId:'accepted-turn',route:'app-server'}));input.messageId=crypto.randomUUID();
+  const save=messages.save.bind(messages);let writes=0;
+  messages.save=()=>{if(++writes===3)throw new Error('Synthetic receipt failure');return save();};
+  await assert.rejects(messages.send(input));const entry=messages.state.entries[0];
+  entry.receiptIdentity.sourceId='different-source';
+  await assert.rejects(messages.send(input),error=>error.delivery==='uncertain');assert.equal(entry.status,'uncertain');
+  entry.receiptIdentity.sourceId=input.sourceId;messages.save=()=>{throw new Error('Synthetic reconciliation failure');};
+  await assert.rejects(messages.send(input),error=>error.delivery==='uncertain');
+  assert.equal(entry.status,'uncertain');assert.equal(entry.text,input.text);
+  assert.equal(JSON.parse(fs.readFileSync(messages.file)).entries[0].status,'uncertain');
+});
+
+test('failed journal compaction keeps original entries and cannot publish an unsaved receipt',t=>{
+  const {messages,input}=setup(t,async()=>assert.fail('No dispatch expected'));
+  messages.state.entries=Array.from({length:201},()=>({id:crypto.randomUUID(),sourceId:input.sourceId,textHash:'synthetic',status:'sent',receipt:{turnId:'accepted'}}));
+  const entries=messages.state.entries,receipts=messages.state.receipts;
+  fs.rmSync(messages.file);fs.mkdirSync(messages.file);
+  assert.throws(()=>messages.save());assert.equal(messages.state.entries,entries);assert.equal(entries.length,201);assert.deepEqual(messages.state.receipts,receipts);
+});
