@@ -1,5 +1,6 @@
 'use strict';
 const { _electron: electron } = require('playwright');
+const {closeAuditApp,forceAuditApp}=require('./electron-audit-lifecycle.cjs');
 const { execFileSync } = require('node:child_process');
 const fs = require('node:fs'),
   path = require('node:path'),
@@ -18,7 +19,7 @@ const auditFlags = process.platform === 'darwin' ? ['--use-mock-keychain'] : [];
 const deadline = setTimeout(() => {
   process.stderr.write('Synthetic UI audit timed out after: ' + lastCheck + '\n');
   process.exitCode = 1;
-  app?.process().kill();
+  forceAuditApp(app);
 }, 150000);
 const check = (condition, message) => {
   assert.ok(condition, message);
@@ -1184,16 +1185,12 @@ async function waitFor(page, fn) {
       'Native desktop UI: ' + checks + ' checks passed. Synthetic screenshots: artifacts/ui\n',
     );
   } finally {
-    if (app) {
-      const timer = setTimeout(() => app.process().kill(), 10000);
-      try {
-        await app.close();
-      } finally {
-        clearTimeout(timer);
-      }
+    try {
+      await closeAuditApp(app);
+    } finally {
+      clearTimeout(deadline);
+      fs.rmSync(dir, { recursive: true, force: true });
     }
-    fs.rmSync(dir, { recursive: true, force: true });
-    clearTimeout(deadline);
   }
 })().catch((error) => {
   process.stderr.write(error.stack + '\n');

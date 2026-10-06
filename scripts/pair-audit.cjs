@@ -1,5 +1,6 @@
 'use strict';
 const { _electron: electron } = require('playwright');
+const {closeAuditApp,forceAuditApp}=require('./electron-audit-lifecycle.cjs');
 const fs = require('node:fs'),
   os = require('node:os'),
   path = require('node:path'),
@@ -12,7 +13,7 @@ const auditFlags = process.platform === 'darwin' ? ['--use-mock-keychain'] : [];
 const deadline = setTimeout(() => {
   process.stderr.write('Synthetic pairing audit timed out during: ' + lastOperation + '\n');
   process.exitCode = 1;
-  for (const app of [companion, viewer, host]) app?.process().kill();
+  for (const app of [companion, viewer, host]) forceAuditApp(app);
 }, 150000);
 async function invoke(page, method, input) {
   lastOperation = method;
@@ -144,19 +145,20 @@ async function waitState(page, predicate) {
       'Three native windows: merged queues, collision-safe reply, shared Reviewed/Snooze/Undo/Done, offline refusal and revoke passed.\n',
     );
   } finally {
+    try {
     if (host && code)
       await host
         .evaluate(({ clipboard }, value) => {
           if (clipboard.readText() === value) clipboard.writeText('');
         }, code)
         .catch(() => {});
-    for (const app of [companion, viewer, host]) {
-      if (!app) continue;
-      const timer = setTimeout(() => app.process().kill(), 10000);
-      try {await app.close();} finally {clearTimeout(timer);}
+      const closed=await Promise.allSettled([companion,viewer,host].map(closeAuditApp));
+      const errors=closed.filter(result=>result.status==='rejected').map(result=>result.reason);
+      if(errors.length) throw new AggregateError(errors,'Synthetic pairing apps did not shut down cleanly');
+    } finally {
+      clearTimeout(deadline);
+      fs.rmSync(dir, { recursive: true, force: true });
     }
-    fs.rmSync(dir, { recursive: true, force: true });
-    clearTimeout(deadline);
   }
 })().catch((error) => {
   process.stderr.write(error.stack + '\n');
