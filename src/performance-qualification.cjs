@@ -71,8 +71,14 @@ function qualification(baselines, current, soak) {
   );
   const ownedRoots = new Set();
   for (const run of runs) {
+    assert.deepEqual(
+      run.metadata.counts,
+      run === soak ? [1500] : [100, 500, 1500],
+      'Declared workloads must match the complete qualification policy',
+    );
     assert.ok(
       run.metadata.secondsPerPhase >= 30 &&
+        run.metadata.secondsPerPhase === current.metadata.secondsPerPhase &&
         run.metadata.sampleIntervalMs === current.metadata.sampleIntervalMs,
       'Different or short sampling policy',
     );
@@ -123,6 +129,12 @@ function qualification(baselines, current, soak) {
     'Navigation did not exceed the recent-chat cache',
   );
   assert.ok(long[0].growth, 'Long-run growth is missing');
+  assert.ok(
+    soak.metadata.soakSeconds >= 600 &&
+      long[0].growth.durationSeconds >= soak.metadata.soakSeconds - 5 &&
+      long[0].growth.samples >= 25,
+    'Qualification requires a measured observation of at least ten minutes',
+  );
   return {
     schema: 1,
     passed:

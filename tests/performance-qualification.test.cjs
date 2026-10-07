@@ -2,8 +2,8 @@
 const test = require('node:test'),
   assert = require('node:assert/strict');
 const { growth, qualification, phases } = require('../src/performance-qualification.cjs');
-function samples(grow = false) {
-  return Array.from({ length: 60 }, (_, i) => ({
+function samples(grow = false, length = 60) {
+  return Array.from({ length }, (_, i) => ({
     at: new Date(1700000000000 + i * 6000).toISOString(),
     processes: [
       {
@@ -25,6 +25,7 @@ function runs() {
       counts: i === 6 ? [1500] : [100, 500, 1500],
       secondsPerPhase: 30,
       sampleIntervalMs: 1000,
+      soakSeconds: i === 6 ? 600 : 0,
     },
     cases: [100, 500, 1500]
       .flatMap((count) =>
@@ -56,7 +57,7 @@ function runs() {
                 hardwareKey: 'runner-hardware',
                 fixture: { reconnectCycles: 20, boundedLatestFrames: true },
                 distinctSelectedSources: 30,
-                growth: growth(samples()),
+                growth: growth(samples(false, 101), 600),
               },
             ]
           : [],
@@ -95,6 +96,10 @@ test('partial, mismatched, short and regressed measurements remain failed', () =
     [(r) => (r[1].cases[0].summary.durationSeconds = 6), /too short/],
     [(r) => (r[6].cases.at(-1).distinctSelectedSources = 2), /recent-chat cache/],
     [(r) => (r[6].cases.at(-1).fixture.reconnectCycles = 0), /reconnect/],
+    [(r) => (r[1].metadata.counts = []), /Declared workloads/],
+    [(r) => (r[1].metadata.secondsPerPhase = 60), /sampling policy/],
+    [(r) => (r[6].metadata.soakSeconds = 300), /ten minutes/],
+    [(r) => (r[6].cases.at(-1).growth = growth(samples())), /ten minutes/],
   ]) {
     const r = runs();
     mutate(r);
@@ -104,6 +109,6 @@ test('partial, mismatched, short and regressed measurements remain failed', () =
   r[5].cases[0].summary.metrics.privateBytes.p95 = 500;
   assert.equal(qualification(r.slice(0, 5), r[5], r[6]).passed, false);
   r[5].cases[0].summary.metrics.privateBytes.p95 = 50;
-  r[6].cases.at(-1).growth = growth(samples(true));
+  r[6].cases.at(-1).growth = growth(samples(true, 101), 600);
   assert.equal(qualification(r.slice(0, 5), r[5], r[6]).passed, false);
 });
