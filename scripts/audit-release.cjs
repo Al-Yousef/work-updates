@@ -27,6 +27,7 @@ const files = new Set([
   'SECURITY.md',
   'CONTRIBUTING.md',
   'requirements-build.txt',
+  'requirements-qa.txt',
   'main.cjs',
   'preload.cjs',
   // Review-only inbox source. Keep its runtime data and evidence outside this allowlist.
