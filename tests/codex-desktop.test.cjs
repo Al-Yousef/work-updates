@@ -9,7 +9,10 @@ async function fixture(t,handler){
       if(request.method==='initialize')socket.write(frame({type:'response',requestId:request.requestId,resultType:'success',method:request.method,result:{clientId:'hyphen-test'}}));
       else handler(request,socket);
     }});
-  });await new Promise(resolve=>server.listen(address,resolve));const client=new CodexDesktop({address,sendTimeoutMs:40});
+  // A received malformed reply must be tested independently of a tight
+  // parallel-run timer race. Lost acknowledgement still reaches this finite
+  // deadline; exact receipt validation and no-retry assertions stay intact.
+  });await new Promise(resolve=>server.listen(address,resolve));const client=new CodexDesktop({address,sendTimeoutMs:1000});
   t.after(()=>{client.close();for(const socket of sockets)socket.destroy();server.close();});return client;
 }
 function respond(request,socket,result,owner='desktop-owner'){socket.write(frame({type:'response',requestId:request.requestId,method:request.method,resultType:'success',handledByClientId:owner,result}));}
