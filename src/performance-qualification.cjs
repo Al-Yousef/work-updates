@@ -121,7 +121,10 @@ function qualification(baselines, current, soak) {
   assert.equal(long[0].count, 1500);
   assert.equal(long[0].hardwareKey, current.cases[0].hardwareKey, 'Soak hardware differs');
   assert.ok(
-    long[0].fixture?.reconnectCycles >= 10 && long[0].fixture.boundedLatestFrames === true,
+    long[0].fixture?.reconnectCycles >= 10 &&
+      long[0].fixture.observedReconnections >= 10 &&
+      long[0].fixture.ownershipLeasePreserved === true &&
+      long[0].fixture.boundedLatestFrames === true,
     'Repeated reconnect/backpressure was not verified',
   );
   assert.ok(

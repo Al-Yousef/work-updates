@@ -94,18 +94,29 @@ demo.startDemoObserver = function (value) {
         queue.setFeed(feed, { ok: true, synthetic: true });
       }, 200);
     if (command.phase === 'navigation_reconnect_soak') {
-      let cycles = 0;
+      let cycles = 0, observedReconnections = 0, priorSubscriptions = null;
+      const originalOwner = control?.owner;
       reconnect = setInterval(() => {
-        // Only sockets of this exact disposable backend are disrupted. The
-        // production native shell must reconnect through its ordinary path.
+        // The corner lease is deliberately kept alive. Losing that lease
+        // makes the native shell exit by design; only its queue subscription
+        // should reconnect through the production read-stream recovery path.
         if (!control) return;
-        const subscribers = control.subscribers.size;
-        for (const socket of control.clients) socket.destroy();
+        const subscribers = [...control.subscribers].filter(s => !s.destroyed);
+        const identities = new Set(subscribers.map(s => s.diagnosticSession));
+        if(priorSubscriptions && [...identities].some(id => !priorSubscriptions.has(id)))
+          observedReconnections++;
+        if(subscribers.length) {
+          priorSubscriptions = identities;
+          for (const socket of subscribers) socket.destroy();
+          cycles++;
+        }
         fs.writeFileSync(
           path.join(directory, 'performance-soak.json'),
           JSON.stringify({
-            reconnectCycles: ++cycles,
-            subscribersBeforeLastDisconnect: subscribers,
+            reconnectCycles: cycles,
+            observedReconnections,
+            ownershipLeasePreserved: !!originalOwner && control.owner === originalOwner && !originalOwner.destroyed,
+            subscribersBeforeLastDisconnect: subscribers.length,
             boundedLatestFrames: [...control.subscribers].every(
               (s) => !s.latestState || Buffer.byteLength(s.latestState) <= 2 * 1024 * 1024,
             ),

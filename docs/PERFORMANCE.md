@@ -72,7 +72,11 @@ backend/native/collector creation identities prevent copied runs from counting a
 independent. Missing process measurements, changed hardware/workloads, short raw
 measurements, missing accepted interactions, cache overflows, uncertain shutdown
 and regression thresholds fail qualification. The reconnect fixture destroys only
-its own backend sockets; the production native shell uses its normal recovery.
+its own authenticated queue subscription sockets; the native corner ownership
+lease stays alive. Losing that lease correctly exits the shell and releases the
+corner, so it is a separate lifecycle check. Qualification requires observed
+fresh subscriptions after at least ten disruptions, with the same original
+native process and its unchanged ownership lease.
 
 The growth gate compares five equal sample windows using final versus first median
 private/working memory, handle and thread totals. Its explicit allowance is the
