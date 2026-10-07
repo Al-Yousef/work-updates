@@ -9,6 +9,7 @@ const root=path.resolve(__dirname,'..');
 async function audit(){
   if(process.platform!=='win32')throw new Error('The packaged native update audit requires Windows');
   const output=path.join(root,'artifacts/update-runtime');fs.mkdirSync(output,{recursive:true});
+  try{fs.unlinkSync(path.join(output,'verification.json'));}catch(e){if(e.code!=='ENOENT')throw e;}
   const packed=await packCandidate(path.join(output,'package'),{audit:true});
   const directory=fs.mkdtempSync(path.join(os.tmpdir(),'hyphen-packaged-update-')),installRoot=path.join(directory,'install'),dataDirectory=path.join(installRoot,'data/desktop'),packageDirectory=path.join(directory,'candidate');
   for(const dir of [installRoot,dataDirectory,packageDirectory])fs.mkdirSync(dir,{recursive:true});
@@ -41,4 +42,4 @@ async function audit(){
     atomicJSON(path.join(output,'verification.json'),report);console.log(JSON.stringify(report));return report;
   }finally{await hooks.stop();fs.rmSync(directory,{recursive:true,force:true});}
 }
-if(require.main===module)audit().catch(e=>{console.error(e.stack);process.exitCode=1;});module.exports={audit};
+if(require.main===module)audit().then(()=>process.exit(0),e=>{console.error(e.stack);process.exit(1);});module.exports={audit};

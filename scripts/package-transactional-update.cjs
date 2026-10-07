@@ -13,5 +13,5 @@ async function main(args=process.argv.slice(2)){
   const candidate=await packCandidate(path.join(output,'candidate')),value=create({baseline,candidate,output,sourceRoot});
   console.log(JSON.stringify({built:true,version:value.candidate.version,sourceRevision:value.sourceRevision}));
 }
-if(require.main===module)main().catch(e=>{console.error(e.message);process.exitCode=1;});
+if(require.main===module)main().catch(e=>{console.error(e.message);process.exit(1);});
 module.exports={main,packCandidate};

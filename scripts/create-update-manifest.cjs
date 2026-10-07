@@ -5,6 +5,9 @@ const {execFileSync}=require('node:child_process');
 const {validateManifest}=require('../src/update-transaction.cjs');
 const hash=bytes=>crypto.createHash('sha256').update(bytes).digest('hex');
 function identity(archive){
+  // ASAR caches header offsets by filename. A staged atomic replacement can
+  // keep the same path while changing every offset; always re-read its header.
+  asar.uncache(archive);
   const metadata=JSON.parse(asar.extractFile(archive,'package.json'));
   const compatibility=JSON.parse(asar.extractFile(archive,'src/update-compatibility.json'));if(compatibility.schema!==1)throw new Error('Archive has no reviewed update compatibility contract');
   return {version:metadata.version,sourceHash:hash(asar.extractFile(archive,'main.cjs')),protocols:compatibility.protocols,stores:compatibility.stores};

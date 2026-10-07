@@ -44,7 +44,15 @@ jobs:
       - name: Packaged update and program rollback with a disposable native app
         env:
           CSC_IDENTITY_AUTO_DISCOVERY: 'false'
-        run: node scripts/update-runtime-audit.cjs
+        shell: pwsh
+        run: |
+          $taskReport='artifacts/update-runtime/verification.json'
+          Remove-Item -LiteralPath $taskReport -Force -ErrorAction SilentlyContinue
+          node scripts/update-runtime-audit.cjs
+          if ($LASTEXITCODE -ne 0) { throw 'Packaged update runtime audit failed' }
+          if (-not (Test-Path -LiteralPath $taskReport)) { throw 'Packaged update report is missing' }
+          $taskVerified=Get-Content -LiteralPath $taskReport -Raw | ConvertFrom-Json
+          if (-not $taskVerified.passed -or $taskVerified.sourceRevision -ne (git rev-parse HEAD)) { throw 'Packaged update report is stale or failed' }
       - name: Verify native package contents and identity
         shell: pwsh
         run: ./native/windows/scripts/package.ps1
