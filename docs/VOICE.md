@@ -31,7 +31,7 @@ A late connection result after end is discarded. Restart marks live sessions and
 responses unconfirmed and asks for new consent. External journal replacement and
 unsupported data hold further activity without overwriting the file.
 
-This first provider has no task execution tools and receives no source/task
+This provider has no task execution tools. By default it receives no source/task
 history. It cannot dispatch work, approve actions, contact people, dial phone
 numbers or claim a task outcome. No microphone recording or transcript is
 persisted. The private journal keeps bounded session/response metadata and
@@ -39,7 +39,22 @@ usage, and the encrypted key remains until separately removed. Privacy inventory
 and supported removal must make that retention visible when integrated.
 
 Synthetic tests inject the transport and use disposable files. They consume no
-account quota and do not prove microphone/device behavior, authenticated API
+account quota. Optional task sharing requires selecting exactly one owner/source,
+previewing the bounded summary and excerpts, and checking separate context consent
+at each start. The preview cannot grant task actions. It includes explicit missing
+and truncated history; no memory, attachment contents, other conversations or
+automatic context reads are added. Task status continues updating locally while
+voice retains the call-start snapshot. Changed preview contents, unavailable or
+ambiguous sources and work/privacy holds require a new preview. Context is checked
+again before and after the provider handshake. Revocation stops local audio; it
+cannot remove evidence already sent to the provider. Only source identity, revision,
+digest, capture time and coverage metadata persist in the voice journal. Excerpts
+remain in memory for this call and are never written there. Restart restores no
+context payload or consent. Older journal readers do not reconnect sessions.
+
+Synthetic context tests exercise actual work controls, shared budgets and the
+production session/provider boundaries without paid requests. They do not prove
+microphone/device behavior, authenticated API
 access, bill amounts, phone parity or outbound telephony. Actual hardware/audio
 and any paid provider check remain separate acceptance work for #30.
 

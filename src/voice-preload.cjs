@@ -5,6 +5,7 @@ contextBridge.exposeInMainWorld('hyphenVoice', {
     if (
       ![
         'state',
+        'context',
         'configure',
         'begin',
         'connect',

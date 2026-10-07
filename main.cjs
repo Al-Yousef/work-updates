@@ -172,6 +172,8 @@ const voiceProvider=new VoiceProvider({directory:dataDir,actorId:'human:'+device
   encrypt:v=>safeStorage.encryptString(v),decrypt:v=>safeStorage.decryptString(v),
   available:()=>safeStorage.isEncryptionAvailable()&&safeStorage.getSelectedStorageBackend?.()!=='basic_text'});
 const voice=new VoiceSession({directory:dataDir,actorId:'human:'+devices.local.id,provider:voiceProvider,budgets,
+  context:new (require('./src/voice-context.cjs').VoiceContext)({snapshot:()=>devices.snapshot(),
+    admission:scope=>quitting||maintenanceActive(dataDir)||privacy?.activeRemoval||privacy?.disconnected(scope.sourceId)?'deny':workControls.readAdmission(scope)}),
   admission:()=>quitting||maintenanceActive(dataDir)||workControls.closed||workControls.storageFailed||workControls.active('all','all')?'wait':'allow'});
 let voiceWindow;
 function openVoice(){voiceWindow??=new VoiceWindow({BrowserWindow,session:require('electron').session,ipcMain,ledger:voice,provider:voiceProvider,actorId:voice.actorId});return voiceWindow.open();}

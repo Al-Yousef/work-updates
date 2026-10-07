@@ -3,7 +3,9 @@ const api = window.hyphenVoice,
   $ = (id) => document.getElementById(id);
 let call = null,
   epoch = 0,
-  muted = false;
+  muted = false,
+  contextPreview = null,
+  contextGeneration = 0;
 async function invoke(name, value) {
   const r = await api.call(name, value);
   if (!r.ok) throw new Error(r.error);
@@ -15,7 +17,62 @@ function status(text) {
 function controls(active) {
   $('start').disabled = active;
   for (const id of ['mute', 'end', 'steer']) $(id).disabled = !active;
+  for (const id of ['context', 'refreshContext', 'contextConsent']) $(id).disabled = active;
 }
+function resetConsent() {
+  $('microphone').checked = false;
+  $('billing').checked = false;
+  $('contextConsent').checked = false;
+}
+async function choices() {
+  const state = await invoke('state');
+  const select = $('context'),
+    old = select.value;
+  select.replaceChildren(new Option('Voice conversation only', ''));
+  for (const c of state.contextChoices.choices)
+    select.add(
+      new Option(c.title + ' · ' + c.device + ' · ' + c.coverage, JSON.stringify(c.selection)),
+    );
+  if ([...select.options].some((o) => o.value === old)) select.value = old;
+  await preview();
+}
+async function preview() {
+  const generation = ++contextGeneration;
+  contextPreview = null;
+  $('contextConsent').checked = false;
+  $('contextPreview').textContent = '';
+  $('contextWarning').textContent = 'No task context selected.';
+  if (!$('context').value) return;
+  try {
+    const result = await invoke('context', { selection: JSON.parse($('context').value) });
+    if (generation !== contextGeneration) return;
+    contextPreview = result;
+    const d = result.data;
+    $('contextPreview').textContent = [
+      d.chatName,
+      'Task: ' + d.task,
+      'Status at capture: ' + d.status,
+      (d.summaryProvenance === 'generated_summary' ? 'Generated summary: ' : 'Recorded summary: ') +
+        d.summary,
+      ...(d.excerpt ? ['Task excerpt:', d.excerpt] : []),
+      ...(d.conversation || []).flatMap((m) => [
+        m.role === 'user' ? 'User excerpt:' : 'Assistant excerpt:',
+        m.text,
+      ]),
+      'Coverage: ' +
+        (!d.coverage.excerptIncluded && !d.coverage.conversationIncluded
+          ? 'Task history is unavailable. '
+          : 'Only bounded excerpts. ') +
+        (d.coverage.truncated ? 'Some context was truncated. ' : '') +
+        'Full history is not shared.',
+    ].join('\n\n');
+    $('contextWarning').textContent = result.warning;
+  } catch (e) {
+    if (generation === contextGeneration) $('contextWarning').textContent = e.message;
+  }
+}
+$('context').onchange = preview;
+$('refreshContext').onclick = () => choices().catch((e) => status(e.message));
 function stopLocal() {
   epoch++;
   const previous = call;
@@ -34,8 +91,7 @@ function stopLocal() {
 async function disconnect() {
   const old = stopLocal();
   status('Voice disconnected. Start again with new consent.');
-  $('microphone').checked = false;
-  $('billing').checked = false;
+  resetConsent();
   if (old?.id)
     try {
       await invoke('disconnected', { id: old.id });
@@ -45,8 +101,7 @@ api.onStop((id) => {
   if (!id || call?.id === id) {
     stopLocal();
     status('Voice ended. Other work continues.');
-    $('microphone').checked = false;
-    $('billing').checked = false;
+    resetConsent();
   }
 });
 $('configure').onclick = async () => {
@@ -71,12 +126,24 @@ $('start').onclick = async () => {
       tokenReservation: Number($('tokens').value),
       billingConfirmed: $('billing').checked,
       microphoneConfirmed: $('microphone').checked,
+      ...($('context').value
+        ? {
+            selectedContext: {
+              selection: JSON.parse($('context').value),
+              digest: contextPreview?.digest,
+              confirmed: $('contextConsent').checked,
+            },
+          }
+        : {}),
     });
     if (generation !== epoch) {
       await invoke('end', { id: info.sessionId });
       return;
     }
-    call = { id: info.sessionId };
+    call = { id: info.sessionId, selection: contextPreview?.selection || null };
+    $('contextWarning').textContent =
+      info.context +
+      '; evidence captured at call start. Task updates are not automatically shared.';
     const active = call;
     const stream = await navigator.mediaDevices.getUserMedia({ audio: true, video: false });
     if (generation !== epoch || call !== active) {
@@ -145,6 +212,7 @@ $('start').onclick = async () => {
         await invoke('end', { id: old.id });
       } catch {}
     status(e.message);
+    resetConsent();
   }
 };
 $('mute').onclick = async () => {
@@ -163,8 +231,7 @@ $('mute').onclick = async () => {
 };
 $('end').onclick = async () => {
   const old = stopLocal();
-  $('microphone').checked = false;
-  $('billing').checked = false;
+  resetConsent();
   try {
     if (old?.id) await invoke('end', { id: old.id });
     status('Voice ended locally. Remote termination is not verified. Other work continues.');
@@ -190,6 +257,25 @@ invoke('state')
     $('provider').textContent = s.support.configured
       ? 'Encrypted provider configured; account access unverified'
       : 'No voice provider configured';
+    return choices();
   })
   .catch((e) => status(e.message));
 window.addEventListener('beforeunload', () => stopLocal());
+setInterval(async () => {
+  const active = call;
+  if (!active?.selection) return;
+  try {
+    const state = await invoke('state');
+    if (call !== active) return;
+    const selected = state.contextChoices.choices.find(
+      (c) =>
+        c.selection.sourceId === active.selection.sourceId &&
+        c.selection.ownerId === active.selection.ownerId,
+    );
+    $('progress').textContent = selected
+      ? 'Current task status on this device: ' +
+        selected.status +
+        '. Voice retains the call-start snapshot.'
+      : 'Current task context is unavailable. Voice is being held.';
+  } catch {}
+}, 5000);

@@ -58,6 +58,25 @@ fs.mkdirSync(directory, { recursive: true });
     });
     await page.getByLabel('Use my microphone for this session').check();
     await page.getByLabel('I accept separate API billing for this session').check();
+    await page.waitForFunction(() => document.getElementById('context').options.length === 2);
+    await page.getByLabel('Discuss a task').selectOption({ index: 1 });
+    await page.waitForFunction(() =>
+      document
+        .getElementById('contextPreview')
+        .textContent.includes('Synthetic bounded task status'),
+    );
+    assert.match(await page.locator('#contextWarning').textContent(), /Missing and truncated/);
+    await page.screenshot({ path: path.join(directory, 'selected-context.png'), fullPage: true });
+    await page.getByRole('button', { name: 'Start voice', exact: true }).click();
+    await page.waitForFunction(() =>
+      document.getElementById('status').textContent.includes('unavailable'),
+    );
+    assert.equal(await page.evaluate(() => window.syntheticVoiceTracks.length), 0);
+    await page.getByLabel('Use my microphone for this session').check();
+    await page.getByLabel('I accept separate API billing for this session').check();
+    await page
+      .getByLabel('Share this displayed task snapshot with the voice provider for this session')
+      .check();
     await page.getByRole('button', { name: 'Start voice', exact: true }).click();
     await page.waitForFunction(() => window.syntheticVoiceTracks.length === 1);
     await page.getByRole('button', { name: 'End voice', exact: true }).click();
@@ -68,6 +87,18 @@ fs.mkdirSync(directory, { recursive: true });
     }));
     assert.equal(result.status, 'ended');
     assert.equal(result.live, false);
+    assert.equal(
+      await app.evaluate(
+        () => global.voiceFixture.ledger.state.sessions.at(-1).selectedContext.coverage.fullHistory,
+      ),
+      false,
+    );
+    assert.equal(
+      await page
+        .getByLabel('Share this displayed task snapshot with the voice provider for this session')
+        .isChecked(),
+      false,
+    );
     assert.equal(await page.getByLabel('Use my microphone for this session').isChecked(), false);
     await app.close();
     app = null;

@@ -89,6 +89,13 @@ jobs:
           path: artifacts/channel-runtime/*.png
           if-no-files-found: error
           retention-days: 14
+      - name: Synthetic voice visual evidence
+        uses: actions/upload-artifact@v4
+        with:
+          name: voice-${{ matrix.target }}-${{ matrix.arch }}-synthetic-visuals
+          path: artifacts/voice-runtime/*.png
+          if-no-files-found: error
+          retention-days: 14
       - uses: actions/upload-artifact@v4
         with:
           name: desktop-${{ matrix.target }}-${{ matrix.arch }}
