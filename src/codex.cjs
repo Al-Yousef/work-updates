@@ -242,7 +242,7 @@ class Codex extends EventEmitter {
       });
       rl.once('close', () => this.fail(connection, 'stdout closed'));
       try {
-        await this.call('initialize', {
+        this.initialized = await this.call('initialize', {
           clientInfo: {
             name: 'work_updates',
             title: 'Work Updates',
@@ -337,6 +337,9 @@ class Codex extends EventEmitter {
   }
   async start(task, cwd) {
     await this.connect();
+    const executors=this.options.executors;
+    const runtime=executors?await this.executorRuntime():null;
+    if(executors)executors.grant(task.id,runtime,cwd);
     let id = task.threadId;
     if (!id) {
       const out = await this.call('thread/start', {
@@ -348,11 +351,20 @@ class Codex extends EventEmitter {
           'This task is shown in Work Updates, a compact task queue. Keep progress concise. When input or an external dependency prevents completion, clearly state what is needed and whether the task is blocked or waiting. A completed pass means ready for review; the user decides when the overall task is Done.',
       });
       id = out.thread.id;
+      if(executors)executors.attach(task.id,id,runtime,out.cwd||out.thread.cwd);
       this.loaded.add(id);
       this.emit('created', { taskId: task.id, threadId: id });
       await this.call('thread/name/set', { threadId: id, name: task.title });
     } else if (!this.loaded.has(id)) {
       await this.prepare(id);
+    }
+    if(executors){
+      if(!executors.thread(id)){
+        const existing=await this.call('thread/read',{threadId:id,includeTurns:false});
+        if(existing.thread?.id!==id)throw new Error('The original task identity could not be verified.');
+        executors.attach(task.id,id,runtime,existing.thread.cwd);
+      }
+      executors.assertThread(id,await this.executorRuntime(),cwd);
     }
     const turn = await this.call('turn/start', {
       threadId: id,
@@ -364,11 +376,16 @@ class Codex extends EventEmitter {
     try {
       await this.connect();
       if (!this.loaded.has(threadId)) {
+        if(this.options.executors?.thread(threadId)){
+          const bound=this.options.executors.thread(threadId);
+          this.options.executors.assertThread(threadId,await this.executorRuntime(),bound.workspace);
+        }
         // Hyphen already reads the conversation from its collector. Returning
         // image/tool history here can produce hundreds of MB of unused JSON.
         const resumed = await this.call('thread/resume', { threadId, excludeTurns: true });
         if (resumed.thread?.id !== threadId)
           throw new Error('Codex resumed an unexpected chat. No message was sent.');
+        if(this.options.executors?.thread(threadId))this.options.executors.assertThread(threadId,await this.executorRuntime(),resumed.cwd||resumed.thread.cwd);
         this.loaded.add(threadId);
       }
       this.emit('loaded', { threadId });
@@ -382,6 +399,10 @@ class Codex extends EventEmitter {
   }
   async send(threadId, value, images=[], {messageId,expiresAt,beforeDispatch}={}) {
     await this.prepare(threadId);
+    if(this.options.executors?.thread(threadId)){
+      const binding=this.options.executors.thread(threadId);
+      this.options.executors.assertThread(threadId,await this.executorRuntime(),binding.workspace);
+    }
     require('./dispatch-deadline.cjs').admission({expiresAt,beforeDispatch});
     const input=[...(value?[{type:'text',text:value}]:[]),...images.map(image=>({type:'localImage',path:image.path}))];
     if (this.active.has(threadId))
@@ -404,6 +425,11 @@ class Codex extends EventEmitter {
     if (!connection || connection.closed) return;
     connection.intentional = true;
     this.fail(connection, 'app shutdown');
+  }
+  async executorRuntime() {
+    await this.connect();
+    const account=await this.call('account/read',{refreshToken:false});
+    return this.options.executors.runtime(this.initialized,account);
   }
 }
 module.exports = { Codex, findCodex };
