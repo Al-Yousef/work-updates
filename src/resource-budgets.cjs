@@ -304,12 +304,14 @@ class ResourceBudgets {
         throw new Error('Usage needs the exact accepted turn');
       const u = reported ? usage(reported) : null;
       e.status = status;
-      e.usage = u;
+      e.usage = u || e.usage;
       e.actual = u
         ? { tokens: u.totalTokens, costMicros }
-        : e.kind === 'read' && status === 'settled'
+        : (e.kind === 'read' ||
+              (e.kind === 'worker' && e.provider === 'local-private-text' && e.model === 'none')) &&
+            status === 'settled'
           ? { tokens: 0, costMicros: 0 }
-          : null;
+          : e.actual;
       e.durationMs = Math.max(0, this.now() - e.at);
     });
   }
@@ -317,6 +319,21 @@ class ResourceBudgets {
     if (typeof turnId !== 'string' || !turnId)
       throw new Error('Worker acceptance needs a turn receipt');
     this.started(id, turnId);
+  }
+  reportTokens(id, turnId, tokens) {
+    if (!integer(tokens)) throw new Error('Invalid reported token total');
+    this.update(id, (e) => {
+      if (!active(e) || !turnId || e.turnId !== turnId || (e.actual?.tokens || 0) > tokens)
+        throw new Error('Usage needs the current accepted resource identity and monotonic total');
+      e.actual = { tokens, costMicros: null };
+    });
+  }
+  tokenLimitReached(id) {
+    const entry = this.state.entries.find((e) => e.id === id);
+    if (!entry) throw new Error('Unknown budget reservation');
+    return entry.scopes.some(
+      (scope) => this.policy(scope) && this.accounting(scope).tokens >= this.policy(scope).tokens,
+    );
   }
   reconcile(snapshot) {
     if (
@@ -396,12 +413,33 @@ class ResourceBudgets {
       planEntitlements: 'unknown',
       hardExecutionTokenCap: false,
       hardProviderCostCap: false,
-      scopes: [...new Set(['global', ...Object.keys(this.state.policies)])].map((scope) => ({
-        scope,
-        limits: this.policy(scope),
-        expired: this.state.policies[scope] ? this.now() > this.state.policies[scope].until : false,
-        usage: this.accounting(scope),
-      })),
+      scopes: [...new Set(['global', ...Object.keys(this.state.policies)])].map((scope) => {
+        const policy = this.policy(scope),
+          accounting = this.accounting(scope),
+          expired = this.state.policies[scope]
+            ? this.now() > this.state.policies[scope].until
+            : false,
+          remaining = Object.fromEntries(
+            ['runs', 'tokens', 'concurrency', 'readsPerHour'].map((key) => [
+              key,
+              Math.max(0, policy[key] - accounting[key]),
+            ]),
+          );
+        remaining.costMicros =
+          policy.costMicros === null || accounting.unknownCost > 0
+            ? null
+            : Math.max(0, policy.costMicros - accounting.costMicros);
+        return {
+          scope,
+          limits: policy,
+          expired,
+          usage: accounting,
+          remaining,
+          limitsReached: Object.keys(remaining).filter((key) => remaining[key] === 0),
+          unpricedCostHeld: policy.costMicros !== null && accounting.unknownCost > 0,
+          newModelCostRequiresPricing: policy.costMicros !== null,
+        };
+      }),
       unresolved: this.state.entries.filter(active).slice(-16),
       recent: this.state.entries.slice(-8),
       connectorBackoffs: Object.values(this.state.connectors).filter((c) => c.nextAt > this.now())

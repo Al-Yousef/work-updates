@@ -6,8 +6,44 @@ const { readStore, atomicJSON } = require('./private-store.cjs');
 const hash = (v) => crypto.createHash('sha256').update(v).digest('hex');
 const uuid = (v) => typeof v === 'string' && /^[a-f0-9-]{36}$/.test(v);
 const held = (message) => Object.assign(new Error(message), { code: 'VOICE_SESSION_HELD' });
+const validUsage = (value) =>
+  value == null ||
+  (['inputTokens', 'outputTokens', 'totalTokens'].every(
+    (k) => Number.isSafeInteger(value[k]) && value[k] >= 0,
+  ) &&
+    value.totalTokens === value.inputTokens + value.outputTokens);
+function usageSummary(session) {
+  const known = session.responses.filter((r) => r.usageActual);
+  const usageActual = known.length
+    ? known.reduce(
+        (total, r) => ({
+          inputTokens: total.inputTokens + r.usageActual.inputTokens,
+          outputTokens: total.outputTokens + r.usageActual.outputTokens,
+          totalTokens: total.totalTokens + r.usageActual.totalTokens,
+        }),
+        { inputTokens: 0, outputTokens: 0, totalTokens: 0 },
+      )
+    : null;
+  if (!validUsage(usageActual))
+    throw held('Reported voice usage exceeded its supported bound. Preserve the prior checkpoint.');
+  return {
+    usageActual,
+    usageCoverage: {
+      reportedResponses: known.length,
+      missingUsageResponses: session.responses.filter(
+        (r) => r.status !== 'active' && !r.usageActual,
+      ).length,
+      activeResponses: session.responses.filter((r) => r.status === 'active').length,
+    },
+  };
+}
 function validate(s) {
-  if (s?.version !== 1 || !Array.isArray(s.sessions) || s.sessions.length > 64)
+  if (
+    s?.version !== 1 ||
+    !Array.isArray(s.sessions) ||
+    s.sessions.length > 64 ||
+    new Set(s.sessions.map((e) => e.id)).size !== s.sessions.length
+  )
     throw held('Unsupported voice journal; original bytes are preserved.');
   for (const e of s.sessions)
     if (
@@ -20,9 +56,19 @@ function validate(s) {
       !Number.isFinite(e.until) ||
       !Array.isArray(e.responses) ||
       e.responses.length > 128 ||
+      new Set(e.responses.map((r) => r.id)).size !== e.responses.length ||
+      !validUsage(e.usageActual) ||
+      (e.tokenReservation !== undefined &&
+        (!Number.isSafeInteger(e.tokenReservation) ||
+          e.tokenReservation < 1 ||
+          e.tokenReservation > 300000)) ||
       e.responses.some(
         (r) =>
           typeof r.id !== 'string' ||
+          !r.id ||
+          r.id.length > 160 ||
+          !validUsage(r.usageActual) ||
+          (r.status === 'active' && r.usageActual != null) ||
           !['active', 'completed', 'cancelled', 'failed', 'unconfirmed'].includes(r.status),
       ) ||
       typeof e.model !== 'string' ||
@@ -40,6 +86,7 @@ class VoiceSession {
     const saved = readStore(this.file);
     this.state = saved.missing ? { version: 1, sessions: [] } : saved.value;
     validate(this.state);
+    for (const session of this.state.sessions) Object.assign(session, usageSummary(session));
     this.diskHash = saved.missing ? null : hash(fs.readFileSync(this.file));
     if (this.state.sessions.some((s) => ['starting', 'connected', 'muted'].includes(s.status)))
       this.change((v) => {
@@ -47,6 +94,7 @@ class VoiceSession {
           if (['starting', 'connected', 'muted'].includes(s.status)) {
             s.status = 'unconfirmed';
             for (const r of s.responses) if (r.status === 'active') r.status = 'unconfirmed';
+            Object.assign(s, usageSummary(s));
           }
       });
   }
@@ -86,7 +134,7 @@ class VoiceSession {
     if (!s) throw held('Select the exact current voice session.');
     return s;
   }
-  async begin(i, { maxSeconds, billingConfirmed, microphoneConfirmed }) {
+  async begin(i, { maxSeconds, billingConfirmed, microphoneConfirmed, tokenReservation }) {
     this.human(i);
     if (
       this.live ||
@@ -121,7 +169,30 @@ class VoiceSession {
       billing: 'separate provider API',
       originMessageId: i.messageId,
     };
-    this.change((v) => v.sessions.push(e));
+    if (this.options.budgets) {
+      if (
+        !Number.isSafeInteger(tokenReservation) ||
+        tokenReservation < 1 ||
+        tokenReservation > 300000
+      )
+        throw held(
+          'Choose a finite voice token reservation before microphone access. It is an estimate, not a provider price or token ceiling.',
+        );
+      this.options.budgets.reserve({
+        id: e.id,
+        kind: 'model',
+        provider: e.provider,
+        model: e.model,
+        estimate: { tokens: tokenReservation, costMicros: null },
+      });
+      e.tokenReservation = tokenReservation;
+    }
+    try {
+      this.change((v) => v.sessions.push(e));
+    } catch (error) {
+      this.options.budgets?.finish(e.id, { status: 'not_started' });
+      throw error;
+    }
     this.live = {
       id: e.id,
       epoch: crypto.randomUUID(),
@@ -156,6 +227,7 @@ class VoiceSession {
       throw held('The current voice connection request is unavailable or changed.');
     live.connecting = true;
     try {
+      this.options.budgets?.started(id, id);
       const answer = await this.options.provider.connect({
         sdp,
         signal: live.abort.signal,
@@ -171,6 +243,7 @@ class VoiceSession {
       live.connected = true;
       return { sdp: answer, sessionId: id };
     } catch (error) {
+      if (this.options.budgets) this.options.budgets.finish(id, { status: 'unknown' });
       if (this.live === live) {
         this.change((v) => {
           v.sessions.find((x) => x.id === id).status = 'unconfirmed';
@@ -202,11 +275,11 @@ class VoiceSession {
       if (typeof r?.id !== 'string' || !r.id || r.id.length > 160)
         throw held('Invalid voice response identity.');
       if (e.responses.some((x) => x.id === r.id)) return;
-      this.change((v) =>
-        v.sessions
-          .find((x) => x.id === id)
-          .responses.push({ id: r.id, status: 'active', at: this.now() }),
-      );
+      this.change((v) => {
+        const session = v.sessions.find((x) => x.id === id);
+        session.responses.push({ id: r.id, status: 'active', at: this.now() });
+        Object.assign(session, usageSummary(session));
+      });
     } else if (event?.type === 'response.done') {
       const r = event.response,
         original = e.responses.find((x) => x.id === r?.id);
@@ -238,8 +311,28 @@ class VoiceSession {
         response.status = status;
         response.usageActual = usage;
         response.completedAt = this.now();
-        s.usageActual = usage;
+        Object.assign(s, usageSummary(s));
       });
+      const updated = this.entry(id);
+      if (this.options.budgets && updated.usageActual) {
+        this.options.budgets.reportTokens(id, id, updated.usageActual.totalTokens);
+        if (
+          updated.usageActual.totalTokens >= updated.tokenReservation ||
+          this.options.budgets.tokenLimitReached(id)
+        ) {
+          this.options.stopAudio?.(id);
+          this.end(
+            {
+              role: 'human',
+              authority: 'accepted_human',
+              actorId: this.actorId,
+              messageId: crypto.randomUUID(),
+            },
+            id,
+            'resource_budget',
+          );
+        }
+      }
     }
   }
   steer(i, id, text) {
@@ -285,7 +378,15 @@ class VoiceSession {
       s.endedAt = this.now();
       s.reason = reason;
       for (const r of s.responses) if (r.status === 'active') r.status = 'unconfirmed';
+      Object.assign(s, usageSummary(s));
     });
+    if (this.options.budgets) {
+      const reservation = this.options.budgets.state.entries.find((x) => x.id === id);
+      if (reservation && ['reserved', 'running', 'unknown'].includes(reservation.status)) {
+        const neverConnected = reservation.status === 'reserved';
+        this.options.budgets.finish(id, { status: neverConnected ? 'not_started' : 'unknown' });
+      }
+    }
     return {
       sessionId: e.id,
       status: 'ended',
@@ -304,7 +405,11 @@ class VoiceSession {
       const s = v.sessions.find((x) => x.id === id);
       s.status = 'disconnected';
       for (const r of s.responses) if (r.status === 'active') r.status = 'unconfirmed';
+      Object.assign(s, usageSummary(s));
     });
+    if (this.options.budgets) {
+      this.options.budgets.finish(id, { status: 'unknown' });
+    }
     return { automaticReconnect: false, newConsentRequired: true };
   }
   expire() {

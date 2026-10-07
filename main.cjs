@@ -165,23 +165,23 @@ const schedules=new Schedules({directory:dataDir,log:diagnostics,maintenance:()=
 delegations=new Delegations({directory:dataDir,policy:authorization,messages,responsibilities,snapshot:()=>devices.snapshot(),log:diagnostics,workAdmission:entry=>workControls?.responsibilityAdmission(entry)||'allow'});
 workControls=new WorkControls({directory:dataDir,policy:authorization,messages,responsibilities,schedules,delegations,snapshot:()=>devices.snapshot(),research:()=>research,interrupt:input=>controller.stopSource(input)});
 const budgets=new (require('./src/resource-budgets.cjs').ResourceBudgets)({directory:dataDir,actorId:authorization.actorId,responsibilities,snapshot:()=>devices.snapshot(),
-  scopes:(id,input)=>{const matches=input.kind==='read'?responsibilities.state.entries.filter(r=>r.scope.sourceId===input.sourceId):responsibilities.state.entries.filter(r=>r.currentStep.messageId===id);return matches.flatMap(r=>{const d=delegations.state.entries.find(d=>d.childId===r.id);return [r.id,...(d?[d.parentId]:[])];});}});
+  scopes:(id,input)=>{const matches=input.kind==='read'?responsibilities.state.entries.filter(r=>r.scope.sourceId===input.sourceId||r.id===input.taskKey):responsibilities.state.entries.filter(r=>r.currentStep.messageId===id);return matches.flatMap(r=>{const d=delegations.state.entries.find(d=>d.childId===r.id);return [r.id,...(d?[d.parentId]:[])];});}});
 messages.budgets=budgets;
 research.options.reader=budgets.reader(researchReader);
 const voiceProvider=new VoiceProvider({directory:dataDir,actorId:'human:'+devices.local.id,
   encrypt:v=>safeStorage.encryptString(v),decrypt:v=>safeStorage.decryptString(v),
   available:()=>safeStorage.isEncryptionAvailable()&&safeStorage.getSelectedStorageBackend?.()!=='basic_text'});
-const voice=new VoiceSession({directory:dataDir,actorId:'human:'+devices.local.id,provider:voiceProvider,
+const voice=new VoiceSession({directory:dataDir,actorId:'human:'+devices.local.id,provider:voiceProvider,budgets,
   admission:()=>quitting||maintenanceActive(dataDir)||workControls.closed||workControls.storageFailed||workControls.active('all','all')?'wait':'allow'});
 let voiceWindow;
 function openVoice(){voiceWindow??=new VoiceWindow({BrowserWindow,session:require('electron').session,ipcMain,ledger:voice,provider:voiceProvider,actorId:voice.actorId});return voiceWindow.open();}
 const outcomes=new OutcomeVerification({directory:dataDir,actorId:'human:'+devices.local.id,responsibilities,snapshot:()=>devices.snapshot(),maintenance:()=>quitting||maintenanceActive(dataDir),admission:entry=>workControls.responsibilityAdmission(entry)});
 const browserVault=new (require('./src/browser-vault.cjs').BrowserVault)({directory:dataDir,encrypt:value=>safeStorage.encryptString(value),decrypt:bytes=>safeStorage.decryptString(bytes),available:()=>safeStorage.isEncryptionAvailable()&&(process.platform!=='linux'||safeStorage.getSelectedStorageBackend()!=='basic_text')});
-const browsers=new (require('./src/browser-sessions.cjs').BrowserSessions)({directory:dataDir,actorId:authorization.actorId,vault:browserVault,
+const browsers=new (require('./src/browser-sessions.cjs').BrowserSessions)({directory:dataDir,actorId:authorization.actorId,vault:browserVault,budgets,
   admission:()=>quitting||maintenanceActive(dataDir)||workControls.closed||workControls.storageFailed||workControls.active('all','all')?'deny':'allow',
   verifyBinding:async(taskId,grantId)=>{const entry=executors.state.entries.find(e=>e.taskId===taskId&&e.id===grantId);if(!entry)throw new Error('Choose an exact current owned local executor grant.');await client.connect();executors.assert(entry,await client.executorRuntime(),entry.workspace);},
   create:require('./src/browser-electron.cjs').createFactory({BrowserWindow,session})});
-const documents=new (require('./src/documents.cjs').Documents)({directory:dataDir,actorId:authorization.actorId,
+const documents=new (require('./src/documents.cjs').Documents)({directory:dataDir,actorId:authorization.actorId,budgets,
   admission:()=>quitting||maintenanceActive(dataDir)||privacy?.activeRemoval||workControls.closed||workControls.storageFailed||workControls.active('all','all')?'deny':'allow'});
 responsibilities.options.outcomeRequired=entry=>outcomes.required(entry);
 responsibilities.options.outcomeAdmission=(entry,human)=>outcomes.admission(entry,human);

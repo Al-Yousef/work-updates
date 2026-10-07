@@ -42,6 +42,15 @@
         <p>
           The duration limit is not a price limit. Hyphen keeps no recording or transcript on disk.
         </p>
+        <label
+          >Estimated token reservation
+          <input id="tokens" type="number" min="1" max="300000" value="20000"
+        /></label>
+        <p>
+          This reserves shared budget before microphone access. Reported usage may exceed the
+          estimate. An unpriced call is refused under a finite cost cap; ending audio does not prove
+          a final provider bill.
+        </p>
         <button id="start">Start voice</button><button id="mute" disabled>Mute microphone</button
         ><button id="end" disabled>End voice</button>
       </fieldset>
