@@ -41,6 +41,19 @@ jobs:
           ./native/windows/scripts/status-audit.ps1
       - name: Hidden synthetic backend with no collector or writers
         run: node scripts/baseline-runtime-audit.cjs
+      - name: Packaged update and program rollback with a disposable native app
+        env:
+          CSC_IDENTITY_AUTO_DISCOVERY: 'false'
+        shell: pwsh
+        run: |
+          ./scripts/update-paths.test.ps1
+          $taskReport='artifacts/update-runtime/verification.json'
+          Remove-Item -LiteralPath $taskReport -Force -ErrorAction SilentlyContinue
+          node scripts/update-runtime-audit.cjs
+          if ($LASTEXITCODE -ne 0) { throw 'Packaged update runtime audit failed' }
+          if (-not (Test-Path -LiteralPath $taskReport)) { throw 'Packaged update report is missing' }
+          $taskVerified=Get-Content -LiteralPath $taskReport -Raw | ConvertFrom-Json
+          if (-not $taskVerified.passed -or $taskVerified.sourceRevision -ne (git rev-parse HEAD)) { throw 'Packaged update report is stale or failed' }
       - name: Verify native package contents and identity
         shell: pwsh
         run: ./native/windows/scripts/package.ps1
@@ -51,6 +64,7 @@ jobs:
             dist/Hyphen-*-Windows-x64-Native.zip
             dist/Hyphen-*-Windows-x64-Native.zip.sha256
             native/windows/build/candidate/build-verification.json
+            artifacts/update-runtime/verification.json
             native/windows/build/candidate/artifacts/status-*.png
             native/windows/build/candidate/artifacts/status-verification.json
           if-no-files-found: error
@@ -60,6 +74,9 @@ jobs:
         uses: actions/upload-artifact@v4
         with:
           name: native-windows-failure-diagnostics
-          path: artifacts/
+          path: |
+            artifacts/baseline-runtime/verification.json
+            artifacts/update-runtime/verification.json
+            artifacts/update-faults/verification.json
           if-no-files-found: ignore
           retention-days: 7

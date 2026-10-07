@@ -90,6 +90,7 @@ class NativeControl {
           });
           this.sendState(socket, this.state());
         } else if (request.method === 'command' && this.command) {
+          if(this.maintenance)return socket.end(JSON.stringify({ok:false,error:'Hyphen is shutting down for maintenance. Keep your draft and retry after restart.',code:'UPDATE_IN_PROGRESS'})+'\n');
           if (!['action', 'undo', 'details', 'open', 'refresh', 'send', 'queueMessage', 'clearMessages', 'logs','assistantAsk','assistantUse','attachImages','openAttachment'].includes(request.command))
             return socket.end(JSON.stringify({ok:false, error:'Unsupported native action'}) + '\n');
           // Reply preparation can initialize, resume and start a turn, each with
@@ -115,6 +116,7 @@ class NativeControl {
         } else if (request.method === 'quitIfIdle') {
           if (this.status().activeWriters !== 0)
             return socket.end(JSON.stringify({ok:false, error:'A chat is still running'}) + '\n');
+          this.maintenance=true;
           socket.end(JSON.stringify({ok:true}) + '\n', () => this.quit());
         } else socket.end(JSON.stringify({ok:false, error:'Unknown native control command'}) + '\n');
       });

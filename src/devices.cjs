@@ -7,21 +7,20 @@ const { RemotePeer, parseCode } = require('./peer.cjs');
 const { compareCards, projectStatus } = require('./status-contract.cjs');
 const { executionDevice } = require('./presentation.cjs');
 const { StatePublisher, StateOrder } = require('./state-order.cjs');
+const {readStore,atomicJSON}=require('./private-store.cjs');
 const now = () => Math.floor(Date.now() / 1000);
 const prefix = (id) => 'peer:' + id + ':';
 const validId = (id) => typeof id === 'string' && id.length > 0 && id.length <= 2048;
 function identity(directory, platform = process.platform) {
   const file = path.join(directory, 'device.json');
-  let value;
-  try {
-    value = JSON.parse(fs.readFileSync(file));
-  } catch {}
-  if (!/^[a-f0-9-]{36}$/i.test(value?.id || '')) {
-    value = { id: crypto.randomUUID(), ...executionDevice(platform) };
+  const store=readStore(file);let value=store.value;
+  if (store.missing) {
+    value = { version:1,id: crypto.randomUUID(), ...executionDevice(platform) };
     value.name = value.label;
     fs.mkdirSync(directory, { recursive: true });
-    fs.writeFileSync(file, JSON.stringify(value), { mode: 0o600 });
+    atomicJSON(file,value);
   }
+  else if(store.migrated)atomicJSON(file,value);
   return value;
 }
 function validState(value) {

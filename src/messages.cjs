@@ -4,6 +4,8 @@ const {EventEmitter}=require('node:events');
 const {atomic,text}=require('./queue.cjs');
 const {taskSource}=require('./task-source.cjs');
 const {Attachments,attachmentIds,messageHash}=require('./attachments.cjs');
+const {readStore}=require('./private-store.cjs');
+const {maintenanceActive}=require('./profile-lease.cjs');
 const terminal=new Set(['sent','cancelled']);
 const unknown=error=>error.delivery==='uncertain'||(error.delivery!=='not-sent'&&['CODEX_TIMEOUT','CODEX_DISCONNECTED','DESKTOP_RECEIPT'].includes(error.code));
 class Messages extends EventEmitter {
@@ -11,10 +13,7 @@ class Messages extends EventEmitter {
     super();this.queue=queue;this.controller=controller;this.log=log;this.file=path.join(queue.directory,'messages.json');
     this.attachments=attachments||new Attachments(queue.directory);
     this.active=new Set();this.closed=false;this.state={version:1,entries:[],barriers:{}};
-    try{this.state=JSON.parse(fs.readFileSync(this.file,'utf8'));}
-    catch(error){if(error.code!=='ENOENT')throw new Error('Hyphen message storage cannot be read. Preserve messages.json before repairing it.');}
-    if(this.state.version!==1||!Array.isArray(this.state.entries)||!this.state.barriers)
-      throw new Error('Hyphen message storage is invalid. No messages were dispatched.');
+    this.state=readStore(this.file,{missing:this.state}).value;
     this.state.receipts??={};
     for(const entry of this.state.entries)if(entry.status==='sending'){
       entry.status='uncertain';entry.code='APP_RESTARTED';entry.error='Delivery interrupted. Check this chat before sending again.';
@@ -111,6 +110,7 @@ class Messages extends EventEmitter {
   }
   schedule(){if(this.closed||this.scheduled)return;this.scheduled=setTimeout(()=>{this.scheduled=null;this.pump().catch(error=>this.log?.write('message.queue.error',{code:error.code||'QUEUE_ERROR'}));},100);this.scheduled.unref();}
   async pump(){
+    if(maintenanceActive(this.queue.directory))return;
     const age=Date.now()/1000-this.queue.feed.collectedAt;
     if(this.closed||!this.queue.health.ok||!Number.isFinite(age)||age< -5||age>30)return;
     const sources=new Set(this.state.entries.filter(e=>e.status==='queued').map(e=>e.sourceId));
