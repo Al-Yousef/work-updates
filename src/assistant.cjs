@@ -194,7 +194,7 @@ class Assistant extends EventEmitter {
       const work=workCommand(message.text);if(work){await require('./work-control.cjs').manage(this.options.workControls,message,work);this.save();return;}
       const reflection=reflectionCommand(message.text);if(reflection){require('./reflection-control.cjs').manage(this.options.reflections,message,reflection);this.save();return;}
       const activity=activityControl.command(message.text);if(activity){activityControl.manage(this.options.activity,message,activity);this.save();return;}
-      const outcome=outcomeControl.command(message.text);if(outcome){outcomeControl.manage(this.options.outcomes,message,outcome);this.save();return;}
+      const outcome=outcomeControl.command(message.text);if(outcome){await outcomeControl.manage(this.options.outcomes,message,outcome);this.save();return;}
       const notice=triageCommand(message.text);if(notice){require('./triage-control.cjs').manage(this.options.triage,message,notice);this.save();return;}
       const authorization=authorizationCommand(message.text);
       if(authorization){await this.manageAuthorization(message,authorization);this.save();return;}
@@ -333,7 +333,7 @@ class Assistant extends EventEmitter {
       else if(command.kind==='wait')store.wait(id,command.state,command.reason,human);
       else if(command.kind==='wake'||command.kind==='approve'){store.wake(id,{...human,kind:command.kind==='approve'?'approval':'wake'});await store.dispatch(id);}
       else if(command.kind==='cancel')await store.cancel(id,human);
-      else if(command.kind==='verify')store.confirm(id,human);
+      else if(command.kind==='verify')await store.confirm(id,human);
       const entry=store.entry(id);message.responsibilityId=id;message.answer=entry.scope.chatName+' · '+entry.state.replaceAll('_',' ')+'\nResponsibility '+id+'\n'+clip(entry.instruction,3500)+'\nStep: '+entry.currentStep.status+'.';
       if(entry.wakeReason.kind==='source_finished_outcome_unverified')message.answer+=' The source pass finished; the broader requested result still needs verification.';
       const match=coordination.sourceFor(this.options.snapshot(),entry.scope);message.links=match?[{...coordination.link(match.card,entry.scope.sourceId),responsibilityId:id}]:[];

@@ -175,7 +175,8 @@ const voice=new VoiceSession({directory:dataDir,actorId:'human:'+devices.local.i
   admission:()=>quitting||maintenanceActive(dataDir)||workControls.closed||workControls.storageFailed||workControls.active('all','all')?'wait':'allow'});
 let voiceWindow;
 function openVoice(){voiceWindow??=new VoiceWindow({BrowserWindow,session:require('electron').session,ipcMain,ledger:voice,provider:voiceProvider,actorId:voice.actorId});return voiceWindow.open();}
-const outcomes=new OutcomeVerification({directory:dataDir,actorId:'human:'+devices.local.id,responsibilities,snapshot:()=>devices.snapshot(),maintenance:()=>quitting||maintenanceActive(dataDir),admission:entry=>workControls.responsibilityAdmission(entry)});
+const githubOutcomes=new (require('./src/outcome-github.cjs').PublicGitHubPR)({budgets});
+const outcomes=new OutcomeVerification({directory:dataDir,actorId:'human:'+devices.local.id,responsibilities,github:githubOutcomes,snapshot:()=>devices.snapshot(),maintenance:()=>quitting||maintenanceActive(dataDir),admission:entry=>workControls.responsibilityAdmission(entry)});
 const browserVault=new (require('./src/browser-vault.cjs').BrowserVault)({directory:dataDir,encrypt:value=>safeStorage.encryptString(value),decrypt:bytes=>safeStorage.decryptString(bytes),available:()=>safeStorage.isEncryptionAvailable()&&(process.platform!=='linux'||safeStorage.getSelectedStorageBackend()!=='basic_text')});
 const browsers=new (require('./src/browser-sessions.cjs').BrowserSessions)({directory:dataDir,actorId:authorization.actorId,vault:browserVault,
   admission:()=>quitting||maintenanceActive(dataDir)||workControls.closed||workControls.storageFailed||workControls.active('all','all')?'deny':'allow',
