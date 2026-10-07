@@ -178,10 +178,17 @@ function openVoice(){voiceWindow??=new VoiceWindow({BrowserWindow,session:requir
 const githubOutcomes=new (require('./src/outcome-github.cjs').PublicGitHubPR)({budgets});
 const outcomes=new OutcomeVerification({directory:dataDir,actorId:'human:'+devices.local.id,responsibilities,github:githubOutcomes,snapshot:()=>devices.snapshot(),maintenance:()=>quitting||maintenanceActive(dataDir),admission:entry=>workControls.responsibilityAdmission(entry)});
 const browserVault=new (require('./src/browser-vault.cjs').BrowserVault)({directory:dataDir,encrypt:value=>safeStorage.encryptString(value),decrypt:bytes=>safeStorage.decryptString(bytes),available:()=>safeStorage.isEncryptionAvailable()&&(process.platform!=='linux'||safeStorage.getSelectedStorageBackend()!=='basic_text')});
+const browserAdmission=scope=>require('./src/browser-admission.cjs').admission(scope,{executors,workControls,responsibilities,privacy,unavailable:()=>quitting||maintenanceActive(dataDir)});
 const browsers=new (require('./src/browser-sessions.cjs').BrowserSessions)({directory:dataDir,actorId:authorization.actorId,vault:browserVault,budgets,
-  admission:()=>quitting||maintenanceActive(dataDir)||workControls.closed||workControls.storageFailed||workControls.active('all','all')?'deny':'allow',
-  verifyBinding:async(taskId,grantId)=>{const entry=executors.state.entries.find(e=>e.taskId===taskId&&e.id===grantId);if(!entry)throw new Error('Choose an exact current owned local executor grant.');await client.connect();executors.assert(entry,await client.executorRuntime(),entry.workspace);},
+  admission:browserAdmission,
+  verifyBinding:async(taskId,grantId)=>{await client.connect();const runtime=await client.executorRuntime();const entry=executors.state.entries.find(e=>e.taskId===taskId&&e.id===grantId);if(!entry)throw new Error('Choose an exact current owned local executor grant.');executors.assert(entry,runtime,entry.workspace);},
   create:require('./src/browser-electron.cjs').createFactory({BrowserWindow,session})});
+if(!demo) {
+  const browserTools=new (require('./src/browser-worker-tools.cjs').BrowserWorkerTools)({client,browsers,executors,task:id=>controller.taskFor(id),
+    admission:browserAdmission});
+  client.options.browserTools=browserTools;
+  controller.browserTools=browserTools;
+}
 const documents=new (require('./src/documents.cjs').Documents)({directory:dataDir,actorId:authorization.actorId,budgets,
   admission:()=>quitting||maintenanceActive(dataDir)||privacy?.activeRemoval||workControls.closed||workControls.storageFailed||workControls.active('all','all')?'deny':'allow'});
 responsibilities.options.outcomeRequired=entry=>outcomes.required(entry);

@@ -42,6 +42,10 @@ function validate(state) {
       e.capabilities.join(',') !== 'task_create,task_continue,turn_interrupt'
     )
       throw refusal('Invalid executor binding. The original journal is preserved.');
+    else if(e.browserTools!==undefined) {
+      require('./browser-worker-tools.cjs').validateContract(e.browserTools);
+      if(!e.threadId || e.browserTools.serverVersion!==e.serverVersion) throw refusal('Invalid browser tool registration.');
+    }
 }
 class ExecutorBindings {
   constructor({ directory, deviceId, actorId, now = () => Date.now() }) {
@@ -159,7 +163,7 @@ class ExecutorBindings {
     }
     return entry;
   }
-  attach(taskId, threadId, runtime, returnedWorkspace) {
+  attach(taskId, threadId, runtime, returnedWorkspace, browserTools) {
     const entry = this.state.entries.find((e) => e.taskId === taskId);
     this.assert(entry, runtime, returnedWorkspace);
     if (
@@ -171,6 +175,11 @@ class ExecutorBindings {
     this.save((next) => {
       const bound = next.entries.find((e) => e.taskId === taskId);
       bound.threadId = threadId;
+      if(browserTools!==undefined) {
+        require('./browser-worker-tools.cjs').validateContract(browserTools);
+        if(browserTools.serverVersion!==bound.serverVersion) throw refusal('Browser tool version is unavailable.');
+        bound.browserTools=structuredClone(browserTools);
+      }
       bound.verifiedAt = this.now();
     });
   }
