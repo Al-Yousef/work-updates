@@ -46,6 +46,8 @@ function nativeView(state) {
     settings: {queueSince: state.settings?.queueSince || 0},
     connection: state.connection, version: state.version,
     connectionHealth:state.connectionHealth,
+    profile:state.profile && {schema:1,id:state.profile.id,displayName:clipped(state.profile.displayName,48),
+      avatarStyle:state.profile.avatarStyle,initials:clipped(state.profile.initials,4),reducedMotion:state.profile.reducedMotion===true},
     assistant: state.assistant && {...state.assistant,messages:state.assistant.messages.slice(-30).map(m=>({
       id:m.id,text:clipped(m.text,4000),answer:clipped(m.answer,6000),status:m.status,error:clipped(m.error,300),at:m.at,images:m.images||[],
       links:(m.links||[]).slice(0,3).map(link=>({index:link.index,chatName:clipped(link.chatName,180),hasDraft:!!link.draft}))

@@ -53,6 +53,8 @@ const {OutcomeVerification}=require('./src/outcome-verification.cjs');
 const {Triage}=require('./src/triage.cjs');
 const {Delegations}=require('./src/delegations.cjs');
 const {WorkControls}=require('./src/work-controls.cjs');
+const {AssistantProfile,capabilities:profileCapabilities}=require('./src/assistant-profile.cjs');
+let assistantProfile;
 const {VoiceSession}=require('./src/voice-session.cjs');
 const {VoiceProvider}=require('./src/voice-provider.cjs');
 const {VoiceWindow}=require('./src/voice-window.cjs');
@@ -139,12 +141,13 @@ function authorizationAdmission(entry){
 const messages = new Messages(queue,controller,{log:diagnostics,attachments,admission:authorizationAdmission,authorize:input=>{const work=workControls?.messageAdmission(input);if(work&&work!=='allow')return {decision:work==='wait'?'ask':'deny',reason:'work_control_hold'};const child=delegations?.admission(input,{creating:true});return child&&child!=='allow'?{decision:child==='wait'?'ask':'deny',reason:'delegation_writer_or_permission_gate'}:responsibilityAuthorization.authorizeDispatch(authorization,input,devices.snapshot());}});
 const devices = new Devices({
   directory: dataDir,
-  state: () => privacy?privacy.filterSnapshot(messages.decorate(queue.snapshot())):messages.decorate(queue.snapshot()),
+  state: () => ({...(privacy?privacy.filterSnapshot(messages.decorate(queue.snapshot())):messages.decorate(queue.snapshot())),profile:assistantProfile?.snapshot()}),
   command: performLocal,
   encrypt: (value) => safeStorage.encryptString(value),
   decrypt: (value) => safeStorage.decryptString(value),
 });
 diagnostics.setContext({deviceId:devices.local.id});
+assistantProfile=new AssistantProfile({directory:dataDir,actorId:'human:'+devices.local.id,onChange:()=>publish()});
 const authorization=new Authorization({directory:dataDir,actorId:'human:'+devices.local.id});
 const executors=new (require('./src/executor-bindings.cjs').ExecutorBindings)({directory:dataDir,deviceId:devices.local.id,actorId:authorization.actorId});
 if(!demo)client.options.executors=executors;
@@ -182,7 +185,13 @@ const documents=new (require('./src/documents.cjs').Documents)({directory:dataDi
   admission:()=>quitting||maintenanceActive(dataDir)||privacy?.activeRemoval||workControls.closed||workControls.storageFailed||workControls.active('all','all')?'deny':'allow'});
 responsibilities.options.outcomeRequired=entry=>outcomes.required(entry);
 responsibilities.options.outcomeAdmission=(entry,human)=>outcomes.admission(entry,human);
-const assistant = new Assistant({directory:dataDir,snapshot:()=>devices.snapshot(),attachments,budgets,outcomes,executors,privacy:null,voice,openVoice,
+const assistant = new Assistant({directory:dataDir,snapshot:()=>devices.snapshot(),attachments,
+  budgets,
+  profile:assistantProfile,capabilities:()=>profileCapabilities({assistant,executors,documents,voice:assistant.options.voice,browsers:assistant.options.browsers,peerContract:require('./src/peer-contract.cjs').capabilities(),helper:client.status?.()}),
+  voice,openVoice,
+  privacy:null,
+  executors,
+  outcomes,
   responsibilities,
   schedules,
   authorization,
@@ -233,6 +242,7 @@ function snapshot() {
   return {
     ...state,
     assistant: assistant.snapshot(),
+    profile:assistantProfile.snapshot(),
     budgets:budgets.inspect(),
     connectionHealth:connectionHealth({collectedAt:state.collectedAt,collector:queue.health,helper:client.status?.(),desktopConnected:desktop?.status().connected,
       pipeListening:!!nativeControl?.server?.listening,nativeClients:nativeControl?.clients.size,devices:state.devices}),
@@ -515,6 +525,11 @@ async function performLocal(method, input = {}) {
     const error=await shell.openPath(image.path);if(error)throw new Error('This image could not be opened.');return {opened:true};
   }
   if (method === 'assistantAsk') return assistant.ask(input);
+  if (method === 'assistantProfile') {
+    const value=assistantProfile.update({role:'human',authority:'accepted_human',actorId:assistantProfile.actorId,messageId:crypto.randomUUID()},input);
+    return value;
+  }
+  if (method === 'capabilities')return assistant.options.capabilities();
   if (method === 'assistantUse') {
     const result=assistant.use(input);
     assistant.focus(result.card,result.sourceId);
@@ -871,6 +886,8 @@ app.whenReady().then(async () => {
     'group',
     'refresh',
     'retrySummaries',
+    'assistantProfile',
+    'capabilities',
     'open',
     'project',
     'settings',

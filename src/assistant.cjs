@@ -151,6 +151,17 @@ class Assistant extends EventEmitter {
   async generate(message) {
     const started=Date.now();
     try {
+      const profile=message.text.match(/^\/profile (inspect|set)(?: (.+))?$/i);
+      if(profile){
+        if(!this.options.profile)throw new Error('Profile preferences are unavailable on this client.');
+        const human={role:'human',authority:'accepted_human',actorId:this.options.profile.actorId,messageId:message.id};
+        const value=profile[1].toLowerCase()==='set'?this.options.profile.update(human,JSON.parse(profile[2]||'null')):this.options.profile.snapshot();
+        message.answer=JSON.stringify(value,null,2);message.status='completed';this.save();return;
+      }
+      if(/^\/capabilities inspect$/i.test(message.text)){
+        message.answer=JSON.stringify(this.options.capabilities?.()||{state:'unsupported'},null,2).slice(0,6000);
+        message.status='completed';this.save();return;
+      }
       const budget=require('./budget-command.cjs').command(message.text);if(budget){require('./budget-command.cjs').manage(this.options.budgets,message,budget);this.save();return;}
       const browserControl=require('./browser-command.cjs'),browser=browserControl.command(message.text);
       if(browser){await browserControl.manage(this.options.browsers,message,browser);this.save();return;}
@@ -216,6 +227,7 @@ class Assistant extends EventEmitter {
       if(!images.length&&/\b(image|photo|picture|screenshot|attachment|shown|left|right|colou?r|previous|earlier|that|this)\b/i.test(message.text)){const prior=recent.findLast(m=>m.imageIds.length);if(prior){try{images=this.attachments.resolve(prior.imageIds);}catch{prior.imagesUnavailable=true;}}}
       const value=await this.provider.answer({question:message.text||'Describe the attached image and help me understand it.',images,imagesFromHistory:!(message.images||[]).length&&!!images.length,history:recent,recalledHistory:recalled.recalled,userEvidence:recalled.userEvidence,historyCoverage:recalled.coverage,savedNotes:this.state.notes,
         savedNotesProvenance:'explicit_pinned_notes',memoryCoverage:{retentionExchanges:500,retentionAlerts:40,pinnedNoteLimit:32,pinnedNoteCharacters:this.state.notes.join('').length},queue:current.data,
+        assistantPresentation:this.options.profile?.snapshot(),
         responsibilities:this.options.responsibilities?.snapshot().slice(-8).map(r=>({id:r.id,origin:{text:clip(r.origin.text,600),provenance:'accepted_human_instruction'},instruction:clip(r.instruction,800),revision:r.revision,state:r.state,chatName:r.scope.chatName,ownerId:r.ownerId,stepStatus:r.currentStep.status,wakeReason:r.wakeReason.kind,completionCriteria:r.completionCriteria})),
         schedules:this.options.schedules?.snapshot().slice(-8).map(s=>({id:s.id,responsibilityId:s.responsibilityId,state:s.state,reason:s.reason,timeZone:s.schedule.timeZone,endAt:s.schedule.endAt,nextWake:s.nextWake,lastActualRun:s.lastActualRun,lastRun:s.runs.at(-1)?.status})),
         budgets:this.options.budgets?.inspect(),

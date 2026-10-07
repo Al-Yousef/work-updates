@@ -1041,3 +1041,4 @@ textarea#task-prompt {
     animation: none !important;
   }
 }
+html.profile-reduced-motion *,html.profile-reduced-motion *::before,html.profile-reduced-motion *::after{animation:none!important;transition:none!important;scroll-behavior:auto!important}

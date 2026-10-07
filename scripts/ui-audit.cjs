@@ -84,6 +84,22 @@ async function waitFor(page, fn) {
     await page.waitForFunction(
       () => Number(getComputedStyle(document.documentElement).opacity) === 1,
     );
+    await page.getByRole('button',{name:'Settings',exact:true}).click();
+    await page.getByLabel('Assistant name',{exact:true}).fill('Synthetic helper');
+    await page.getByLabel('Avatar',{exact:true}).selectOption('initials');
+    await page.getByLabel('Initials',{exact:true}).fill('S');
+    await page.getByLabel('Reduce motion',{exact:true}).check();
+    await page.getByRole('button',{name:'Save assistant preferences',exact:true}).click();
+    await page.waitForFunction(()=>document.documentElement.classList.contains('profile-reduced-motion'));
+    const profile=(await page.evaluate(()=>window.workUpdates.state())).value.profile;
+    check(profile.displayName==='Synthetic helper'&&profile.reducedMotion===true,'Human profile form saves bounded preferences and applies reduced motion');
+    const support=(await page.evaluate(()=>window.workUpdates.capabilities())).value;
+    check(support.accountPlan==='unknown'&&support.channels.find(c=>c.name==='Paired phone').assistant===false,'Capability inspection preserves unknown entitlement and unsupported phone assistant');
+    await page.getByRole('button',{name:'Settings',exact:true}).click();
+    await page.screenshot({path:path.join(output,'assistant-preferences.png')});
+    await page.getByLabel('Reduce motion',{exact:true}).uncheck();
+    await page.getByRole('button',{name:'Save assistant preferences',exact:true}).click();
+    await page.waitForFunction(()=>!document.documentElement.classList.contains('profile-reduced-motion'));
     check(
       await app.evaluate(
         () =>
@@ -537,6 +553,11 @@ async function waitFor(page, fn) {
       return fixture;
     };
     await page.emulateMedia({ reducedMotion: 'no-preference' });
+    const reduced=statusFixture('working','Working');
+    reduced.profile={...baseline.profile,reducedMotion:true};
+    await pushFixture(reduced);
+    await page.locator('#queue .status-indicator[data-status=working]').waitFor();
+    check(await page.locator('#queue .status-indicator').evaluate(e=>getComputedStyle(e,'::after').animationName==='none'),'Local reduced-motion preference disables the working ring independently of the system setting');
     await pushFixture(statusFixture('working', 'Working'));
     await page.locator('#queue .status-indicator[data-status=working]').waitFor();
     const ringBefore = await page

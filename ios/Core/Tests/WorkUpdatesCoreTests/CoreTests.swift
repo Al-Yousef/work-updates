@@ -52,6 +52,17 @@ final class CoreTests:XCTestCase {
         let rejected=try PeerClient(code:wrong);defer{rejected.close()}
         do {_ = try await rejected.state();XCTFail("A different certificate pin must be rejected")}catch{}
     }
+    func testProfileIsOptionalPresentationAndCannotGrantAssistantCommands() throws {
+        var json=try JSONSerialization.jsonObject(with:Data(Self.snapshot.utf8)) as! [String:Any]
+        json["profile"]=["schema":1,"id":UUID().uuidString,"displayName":"Synthetic helper","avatarStyle":"initials","initials":"S","reducedMotion":true]
+        let state=try QueueState.decode(JSONSerialization.data(withJSONObject:json))
+        XCTAssertEqual(state.profile?.displayName,"Synthetic helper")
+        XCTAssertFalse(state.supports("assistantAsk"))
+        XCTAssertEqual(state.cards[0].taskKey,"task-key")
+        json["profile"]=["schema":99,"id":UUID().uuidString,"displayName":"Future helper","avatarStyle":"initials","initials":"F","reducedMotion":true]
+        let future=try QueueState.decode(JSONSerialization.data(withJSONObject:json))
+        XCTAssertNil(future.profile);XCTAssertEqual(future.cards[0].taskKey,"task-key")
+    }
     private static let snapshot="""
     {"protocolVersion":2,"host":{"id":"sample","name":"Windows PC","kind":"pc"},"cards":[{"id":"task","taskKey":"task-key","title":"Current task","chatName":"Source chat","label":"Waiting on you","status":"needs","kind":"observed","sources":[{"id":"source","title":"Source chat","body":"Need your choice.","lifecycle":"completed"}],"readyForReview":true}],"done":[],"approvals":[],"settings":{"projects":[]},"health":{"ok":true}}
     """

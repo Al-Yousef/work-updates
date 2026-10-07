@@ -1,5 +1,6 @@
 'use strict';
 const policy = {
+  'profile.json':['Assistant presentation identity, name, initials and motion preferences','Until explicitly changed; identities distinct from accounts/tasks','Private export; preference changes do not change access'],
   'browsers.json':['Private browser ownership, origins and save-consent metadata','128 finite journal entries; restart holds ownership','Private export; close browser separately; encrypted logins are separate'],
   'documents.json':['Imported local copies, edit drafts and explicit output schedules','128 copies/drafts, 32 finite schedules and 1000 receipts','Private export; cancel schedule separately; output files and receipts retained'],
   'voice.json':['Voice session and accepted response metadata; no recordings/transcripts','64 sessions and 128 responses/session; usage separate from unknown bill','Private export; ending voice does not erase metadata'],
