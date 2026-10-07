@@ -240,3 +240,23 @@ test('a controlled filesystem failure retains its bounded code, stops its actual
   assert.ok(result.durationMs < 3000);
   assert.ok(!JSON.stringify(result).includes('private path'));
 });
+
+test('unexpected driver failure remains unconfirmed and stops every later lane', async (t) => {
+  let calls = 0;
+  const report = await run({
+    root,
+    directory: path.join(temp(t), 'run'),
+    lanes: ['isolated', 'simulated'],
+    revision,
+    executeCase: async () => {
+      calls++;
+      throw new Error('Synthetic private failure text');
+    },
+  });
+  assert.equal(calls, 1);
+  assert.equal(report.passed, false);
+  assert.equal(report.lanes[0].cases[0].status, 'runner_failed');
+  assert.equal(report.lanes[0].cases[0].started, null);
+  assert.equal(report.lanes[1].reason, 'prior_case_cleanup_unverified');
+  assert.ok(!JSON.stringify(report).includes('private failure text'));
+});

@@ -67,7 +67,7 @@ async function main() {
 }
 main().catch(() => {
   console.error(
-    'Native QA failed before execution; verify source, arguments and private output location.',
+    'Native QA did not finish; verify source, arguments and the private report and logs.',
   );
   process.exitCode = 1;
 });

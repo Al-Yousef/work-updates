@@ -288,10 +288,21 @@ async function run({
       const started = { id: spec.id, evidence: spec.evidence, status: 'running' };
       result.cases.push(started);
       save();
-      const observed = await executeCase(
-        { file: spec.file, args: spec.args },
-        { cwd: root, directory: caseDirectory, timeoutMs: spec.timeoutMs, signal },
-      );
+      let observed;
+      try {
+        observed = await executeCase(
+          { file: spec.file, args: spec.args },
+          { cwd: root, directory: caseDirectory, timeoutMs: spec.timeoutMs, signal },
+        );
+      } catch {
+        observed = {
+          status: 'runner_failed',
+          started: null,
+          exitObserved: false,
+          cleanup: 'unverified',
+          reason: 'case_execution_unconfirmed',
+        };
+      }
       Object.assign(started, observed);
       save();
       // No automatic retry or input replay after failed or uncertain execution.

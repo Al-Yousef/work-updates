@@ -47,30 +47,15 @@ const files = new Set([
   'candidate/dot-inbox/desktop/window.cjs',
   'candidate/dot-inbox/desktop/desktop.css',
 ]);
-const nativeTop = new Set([
-  '.gitignore',
-  'README.md',
-  'MIGRATION.md',
-  'THIRD_PARTY_NOTICES.txt',
-  'app.manifest',
-  'app.rc',
-  'build.ps1',
-  'install-preview.ps1',
-  'toolchain.json',
-  'bootstrap-toolchain.ps1',
-]);
+const nativeTop = new Set(['.gitignore', 'README.md', 'MIGRATION.md', 'THIRD_PARTY_NOTICES.txt', 'app.manifest', 'app.rc', 'build.ps1', 'install-preview.ps1', 'toolchain.json', 'bootstrap-toolchain.ps1']);
 function allowedNative(file) {
   if (!file.startsWith('native/windows/')) return false;
   const rel = file.slice('native/windows/'.length);
-  return (
-    nativeTop.has(rel) ||
+  return nativeTop.has(rel) ||
     /^(?:src|tests)\/[^/]+\.(?:h|cpp)$/.test(rel) ||
     /^scripts\/[^/]+\.(?:py|ps1)$/.test(rel) ||
     rel === 'assets/icon.ico' ||
-    /^(?:vendor\/nlohmann|taskbar-adapter)(?:\/vendor\/minhook)?\/(?:[A-Za-z0-9_.-]+\/)*[A-Za-z0-9_.-]+\.(?:h|hpp|c|cpp|md|txt|json|MIT)$/.test(
-      rel,
-    )
-  );
+    /^(?:vendor\/nlohmann|taskbar-adapter)(?:\/vendor\/minhook)?\/(?:[A-Za-z0-9_.-]+\/)*[A-Za-z0-9_.-]+\.(?:h|hpp|c|cpp|md|txt|json|MIT)$/.test(rel);
 }
 const vendorHeader = 'native/windows/vendor/nlohmann/json.hpp';
 const vendorDigest = 'aaf127c04cb31c406e5b04a63f1ae89369fccde6d8fa7cdda1ed4f32dfc5de63';
@@ -106,8 +91,7 @@ const violations = [];
 for (const file of tracked) {
   const absolute = path.join(root, file),
     first = file.split('/')[0];
-  if (!files.has(file) && !roots.has(first) && !allowedNative(file))
-    violations.push(file + ': outside source allowlist');
+  if (!files.has(file) && !roots.has(first) && !allowedNative(file)) violations.push(file + ': outside source allowlist');
   if (
     /(?:^|\/)(?:data|user-data|observer|dist|node_modules)\/|(?:^|\/)(?:\.env|\.DS_Store)(?:[.]|$)|\.(?:sqlite\w*|jsonl|pem|key|enc|exe|dmg|zip|log|pyc)$/.test(
       file,
@@ -115,11 +99,8 @@ for (const file of tracked) {
   )
     violations.push(file + ': private or generated file');
   const bytes = fs.readFileSync(absolute);
-  const reviewedVendor =
-    file === vendorHeader &&
-    crypto.createHash('sha256').update(bytes).digest('hex') === vendorDigest;
-  if (file === vendorHeader && !reviewedVendor)
-    violations.push(file + ': vendored header digest changed');
+  const reviewedVendor = file === vendorHeader && crypto.createHash('sha256').update(bytes).digest('hex') === vendorDigest;
+  if (file === vendorHeader && !reviewedVendor) violations.push(file + ': vendored header digest changed');
   if (file.endsWith('.png')) {
     if (
       (!file.startsWith('assets/') &&
@@ -136,19 +117,12 @@ for (const file of tracked) {
     [new RegExp('(?:gh' + 'p_|github_' + 'pat_|sk-' + 'proj-)[A-Za-z0-9_-]{15,}'), 'credential'],
     [new RegExp('-----BEGIN ' + '(?:RSA |EC |OPENSSH )?PRIVATE KEY-----'), 'private key'],
     [/[A-Z0-9._%+-]+@(?!users\.noreply\.github\.com)[A-Z0-9.-]+\.[A-Z]{2,}/i, 'email address'],
-    [
-      /\b[0-9a-f]{8}-[0-9a-f]{4}-7[0-9a-f]{3}-[89ab][0-9a-f]{3}-[0-9a-f]{12}\b/i,
-      'fixed private chat identity',
-    ],
+    [/\b[0-9a-f]{8}-[0-9a-f]{4}-7[0-9a-f]{3}-[89ab][0-9a-f]{3}-[0-9a-f]{12}\b/i, 'fixed private chat identity'],
   ];
   for (const [pattern, label] of patterns)
-    if (
-      !((file === 'package-lock.json' || reviewedVendor) && label === 'email address') &&
-      pattern.test(value)
-    )
+    if (!((file === 'package-lock.json' || reviewedVendor) && label === 'email address') && pattern.test(value))
       violations.push(file + ': ' + label);
-  if (bytes.length > 700000 && !reviewedVendor)
-    violations.push(file + ': unexpectedly large source file');
+  if (bytes.length > 700000 && !reviewedVendor) violations.push(file + ': unexpectedly large source file');
 }
 if (violations.length) {
   process.stderr.write(violations.join('\n') + '\n');
