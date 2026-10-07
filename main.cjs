@@ -39,6 +39,8 @@ const { NativeControl } = require('./src/native-control.cjs');
 const { CodexDesktop } = require('./src/codex-desktop.cjs');
 const { Messages } = require('./src/messages.cjs');
 const { Assistant } = require('./src/assistant.cjs');
+const { Responsibilities }=require('./src/responsibilities.cjs');
+const responsibilityTarget=require('./src/responsibility-target.cjs');
 let nativeControl;
 const args = process.argv;
 function argument(name) {
@@ -119,7 +121,11 @@ const devices = new Devices({
   decrypt: (value) => safeStorage.decryptString(value),
 });
 diagnostics.setContext({deviceId:devices.local.id});
+const responsibilities=new Responsibilities({directory:dataDir,snapshot:()=>devices.snapshot(),log:diagnostics,maintenance:()=>quitting||maintenanceActive(dataDir),...responsibilityTarget,
+  outcome:require('./src/assistant-coordination.cjs').outcome,
+  dispatch:(mode,input)=>devices.command(mode==='queue'?'queueMessage':'send',input),cancel:input=>devices.command('cancelMessage',input)});
 const assistant = new Assistant({directory:dataDir,snapshot:()=>devices.snapshot(),attachments,
+  responsibilities,
   binary:queue.state.settings.codexBinary,log:diagnostics,
   loadContext:targets=>require('./src/assistant-context.cjs').loadContext({
     snapshot:()=>devices.snapshot(),
@@ -164,7 +170,10 @@ function publish() {
 }
 messages.on('change', () => publish());
 assistant.on('change', () => publish());
+responsibilities.on('change',()=>{publish();queueMicrotask(()=>responsibilities.pump());});
 devices.on('change', () => {
+  responsibilities.observe(devices.snapshot());
+  void responsibilities.pump();
   assistant.observe(devices.snapshot());
   previousRemote = incoming(
     devices.snapshot().cards.filter((c) => !c.owner.local),
@@ -174,6 +183,8 @@ devices.on('change', () => {
 });
 let publication;
 queue.on('change', () => {
+  responsibilities.observe(devices.snapshot());
+  void responsibilities.pump();
   assistant.observe(devices.snapshot());
   if (!publication)
     publication = setTimeout(() => {
@@ -599,7 +610,7 @@ app.whenReady().then(async () => {
         const result = await perform(method, input);
         return method === 'details' ? cardView(result, true,attachments) : ['send','queueMessage','assistantAsk','assistantUse','attachImages','openAttachment'].includes(method) ? result : {};
       },
-      status: () => ({activeWriters:Math.max(client.status?.().active ?? 0, client.status?.().pending ?? 0, queue.busy?.size ?? 0,messages.active.size,desktop?.pending.size||0,assistant.active?1:0),
+      status: () => ({activeWriters:Math.max(client.status?.().active ?? 0, client.status?.().pending ?? 0, queue.busy?.size ?? 0,messages.active.size,desktop?.pending.size||0,assistant.active?1:0,responsibilities.pending.size),
         mode:'native-backend', windowCount:BrowserWindow.getAllWindows().length,
         rendererCount:app.getAppMetrics().filter(p => p.type === 'Tab').length}),
       quit: () => {quitting=true; app.quit();},
@@ -809,7 +820,7 @@ app.whenReady().then(async () => {
       status: () => ({
         cornerConfigured: !!queue.state.settings.corner,
         launcherActive: !!corner && !corner.isDestroyed(),
-        activeWriters: Math.max(client.status?.().active ?? 0,client.status?.().pending??0,queue.busy.size,messages.active.size,desktop?.pending.size||0,assistant.active?1:0),
+        activeWriters: Math.max(client.status?.().active ?? 0,client.status?.().pending??0,queue.busy.size,messages.active.size,desktop?.pending.size||0,assistant.active?1:0,responsibilities.pending.size),
         windowMode: windowController.mode,
       }),
       quit: () => {quitting = true; app.quit();},
@@ -887,6 +898,7 @@ app.on('before-quit', () => {
   desktop?.close();
   messages.close();
   assistant.close();
+  responsibilities.close();
   hostPeer?.close();
   devices.close();
   nativeControl?.close();

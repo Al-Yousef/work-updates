@@ -53,6 +53,7 @@ jobs:
       - run: node scripts/diagnostic-bundle-audit.cjs
       - run: node scripts/coordination-contract-audit.cjs --synthetic --output=artifacts/coordination-ci
       - run: node scripts/update-fault-audit.cjs
+      - run: node scripts/responsibility-contract-audit.cjs --require-clean
       - run: npm run test:shutdown
       - run: npm run test:ui
       - run: npm run test:devices
@@ -73,6 +74,7 @@ jobs:
             artifacts/diagnostic-audit/verification.json
             artifacts/coordination-ci/verification.json
             artifacts/update-faults/verification.json
+            artifacts/responsibility-audit/verification.json
           if-no-files-found: error
           retention-days: 14
   release:

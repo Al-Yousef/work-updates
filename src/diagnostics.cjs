@@ -105,6 +105,7 @@ const EVENTS = new Set(
 EVENTS.add('observer.error');
 EVENTS.add('observer.exited');
 EVENTS.add('message.cleared');
+EVENTS.add('responsibility.recovery_failed');
 const FLAGS = new Set(['demo', 'intentional', 'truncated', 'local', 'connected', 'noResend']);
 const methods = new Set([
   'initialize',
