@@ -293,6 +293,53 @@ test('Codex interrupt validates the exact loaded active turn and returns a reque
   assert.equal(client.active.get('owned-source'), 'owned-turn');
 });
 
+test('a writer that does not persist the fence cannot revoke or interrupt and independently changed journal bytes are preserved', async (t) => {
+  const f = fixture();
+  t.after(() => f.close());
+  const parent = await f.parent(),
+    before = JSON.stringify(f.policy.state);
+  f.controls.options.write = () => {};
+  const failed = await f.ask('/work stop-all');
+  assert.equal(failed.status, 'failed');
+  assert.equal(f.interrupts, 0);
+  assert.equal(JSON.stringify(f.policy.state), before);
+  assert.equal(f.controls.responsibilityAdmission(f.responsibilities.entry(parent)), 'wait');
+  delete f.controls.options.write;
+  const paused = await f.ask('/work pause-main ' + parent);
+  assert.equal(paused.status, 'completed', paused.answer);
+  const changed = JSON.parse(bytes(f));
+  changed.actions[0].status = 'partial';
+  fs.writeFileSync(f.controls.file, JSON.stringify(changed));
+  const original = bytes(f);
+  const refused = await f.ask('/work resume-main ' + parent);
+  assert.equal(refused.status, 'failed');
+  assert.equal(bytes(f), original);
+  assert.equal(f.controls.storageFailed, true);
+});
+
+test('stop-all cancels an unsent child whose durable contract has not materialized its responsibility yet', async (t) => {
+  const f = fixture();
+  t.after(() => f.close());
+  await f.parent();
+  const writer = f.responsibilities.options.write;
+  f.responsibilities.options.write = () => {
+    throw new Error('Synthetic materialization failure');
+  };
+  const started = await f.start();
+  assert.equal(started.status, 'failed');
+  f.responsibilities.options.write = writer;
+  const child = f.delegations.state.entries.at(-1);
+  assert.equal(f.delegations.child(child), undefined);
+  const stopped = await f.ask('/work stop-all');
+  assert.equal(stopped.status, 'completed', stopped.answer);
+  assert.equal(f.delegations.entry(child.id).phase, 'cancelled');
+  assert.equal(
+    f.controls.action(stopped.workControlId).resources.find((r) => r.kind === 'delegation').status,
+    'cancelled_unsent',
+  );
+  assert.equal(f.calls, 0);
+});
+
 test('stop-all remains available while the assistant awaits a real Research adapter read, discards its result and retains responding until it settles', async (t) => {
   const f = fixture();
   t.after(() => f.close());

@@ -118,6 +118,7 @@ class WorkControls extends EventEmitter {
     this.options = options;
     this.file = path.join(options.directory, 'work-controls.json');
     this.closed = false;
+    this.storageFailed = false;
     this.pending = new Set();
     this.state = require('./private-store.cjs').readStore(this.file, {
       missing: () => ({ version: 1, holds: [], actions: [] }),
@@ -132,7 +133,22 @@ class WorkControls extends EventEmitter {
     validate(next);
     if (Buffer.byteLength(JSON.stringify(next)) > 32 * 1024 * 1024)
       throw new Error('Work control journal is full');
-    (this.options.write || require('./private-store.cjs').atomicJSON)(this.file, next);
+    try {
+      const store = require('./private-store.cjs'),
+        current = store.readStore(this.file, {
+          missing: () => ({ version: 1, holds: [], actions: [] }),
+        }).value;
+      if (digest(current) !== digest(this.state))
+        throw new Error('The work journal changed independently. Its original file is preserved.');
+      (this.options.write || store.atomicJSON)(this.file, next);
+      const actual = store.readStore(this.file).value;
+      if (!actual || digest(actual) !== digest(next))
+        throw new Error('The work hold was not verified on disk. No new dispatch is admitted.');
+      this.storageFailed = false;
+    } catch (error) {
+      this.storageFailed = true;
+      throw error;
+    }
     this.state = next;
     this.emit('change');
     return result;
@@ -169,7 +185,7 @@ class WorkControls extends EventEmitter {
     throw new Error('Delegation ancestry exceeded its bound');
   }
   responsibilityAdmission(entry) {
-    if (this.closed) return 'wait';
+    if (this.closed || this.storageFailed) return 'wait';
     if (this.active('all', 'all')) return 'wait';
     if (this.active('executor', entry.scope.ownerId)) return 'deny';
     if (entry.delegationId && this.active('child', entry.delegationId)) return 'deny';
@@ -179,6 +195,7 @@ class WorkControls extends EventEmitter {
       : 'allow';
   }
   scheduleAdmission(entry) {
+    if (this.closed || this.storageFailed) return 'wait';
     if (this.active('schedule', entry.id)) return 'wait';
     const r = this.options.responsibilities.state.entries.find(
       (r) => r.id === entry.responsibilityId,
@@ -193,7 +210,7 @@ class WorkControls extends EventEmitter {
     return choices.length === 1 ? choices[0].owner?.id : null;
   }
   messageAdmission(message) {
-    if (this.closed || this.active('all', 'all')) return 'wait';
+    if (this.closed || this.storageFailed || this.active('all', 'all')) return 'wait';
     const r = this.options.responsibilities.state.entries.find((r) =>
       [r.currentStep, ...(r.pastSteps || [])].some(
         (s) => s.messageId === (message.messageId || message.id),
@@ -207,7 +224,7 @@ class WorkControls extends EventEmitter {
       : 'allow';
   }
   readAdmission(scope) {
-    if (this.closed || this.active('all', 'all')) return 'wait';
+    if (this.closed || this.storageFailed || this.active('all', 'all')) return 'wait';
     if (this.active('executor', scope.ownerId)) return 'deny';
     const related = this.options.responsibilities.state.entries.filter(
       (r) => r.scope.sourceId === scope.sourceId && r.scope.ownerId === scope.ownerId,

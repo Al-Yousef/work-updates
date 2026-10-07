@@ -25,6 +25,9 @@ receipts cannot be established. The existing source-card stop button requests
 an interrupt for that owned source pass; standing holds use the distinct work
 controls above.
 
+Read-only connection/status observation continues to reconcile receipts.
+New original-record detail requests and scoped research reads obey the hold.
+
 ## Receipt and restart behavior
 
 `work-controls.json` is a versioned private journal with at most 256 holds,
@@ -34,8 +37,10 @@ timestamp. Responsibility checkpoints retain revision, payload hash, source,
 owner, device, task, message and accepted turn identities. Original delivery
 receipts remain in the message and authorization journals.
 
-The hold is durably saved before cancellation, executor revocation or an
-interrupt. Storage failure before that save makes no mutation. An exact turn
+The hold is durably saved and read back before cancellation, executor revocation
+or an interrupt. A changed, invalid or unverified journal fails closed and is
+preserved for recovery. Storage failure before that save makes no mutation and
+holds new admission in the running process. An exact turn
 is saved as unknown before the interrupt RPC. An acknowledgement changes this
 to `interrupt_requested`; only a fresh matching source terminal event can
 show `terminal_interrupted`, `terminal_completed` or `terminal_failed`.

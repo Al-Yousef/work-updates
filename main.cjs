@@ -161,7 +161,7 @@ const assistant = new Assistant({directory:dataDir,snapshot:()=>devices.snapshot
   loadContext:targets=>require('./src/assistant-context.cjs').loadContext({
     snapshot:()=>devices.snapshot(),
     subscribe:changed=>{queue.on('change',changed);devices.on('change',changed);return()=>{queue.off('change',changed);devices.off('change',changed);};},
-    request:targets=>Promise.allSettled(targets.map(target=>devices.command('details',{id:target.id,taskKey:target.taskKey,sourceId:target.sourceId}))),
+    request:targets=>Promise.allSettled(targets.map(target=>workControls.readAdmission(target)!=='allow'?Promise.resolve({skipped:true}):devices.command('details',{id:target.id,taskKey:target.taskKey,sourceId:target.sourceId}))),
   },targets),
   dispatch:(mode,input)=>devices.command(mode==='cancel'?'cancelMessage':mode==='queue'?'queueMessage':'send',input)});
 const csp =
