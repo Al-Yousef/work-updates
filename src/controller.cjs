@@ -24,6 +24,7 @@ class Controller extends EventEmitter {
     this.queue = queue;
     this.client = client;
     this.desktop = options.desktop;
+    this.sourceAccess=options.sourceAccess||(()=>true);
     this.completedTurns = new Set();
     this.awaitingAcceptance = new Map();
     this.log = options.log;
@@ -88,6 +89,7 @@ class Controller extends EventEmitter {
     const q = this.queue,
       task = q.state.tasks.find((t) => t.id === id);
     if (!task) throw new Error('Queue a task first.');
+    if(task.threadId&&!this.sourceAccess(task.threadId))throw Object.assign(new Error('This source is disconnected. Its original task is retained.'),{delivery:'not-sent'});
     if (q.busy.has(id) || ['starting', 'working', 'needs'].includes(task.status)) return task;
     if (task.status === 'done') throw new Error('Reopen this task before starting it.');
     q.busy.add(id);
@@ -133,6 +135,9 @@ class Controller extends EventEmitter {
     if ([...q.approvals.values()].some((r) => r.taskId === id))
       throw new Error('Answer the pending request before sending another message.');
     if (!source) throw new Error('Choose a source chat.');
+    if(!this.sourceAccess(source.id))throw Object.assign(new Error('This source is disconnected. No message was sent.'),{delivery:'not-sent'});
+    const originalAdmission=options.beforeDispatch;
+    options={...options,beforeDispatch:()=>!this.sourceAccess(source.id)?'deny':originalAdmission?.()};
     if (!this.desktop && !q.ownedThreads.has(source.id) && source.lifecycle === 'working')
       throw new Error('This chat is working in Codex. Open it there to steer the current pass.');
     if (task && q.busy.has(task.id)) throw new Error('A message is already being sent.');
@@ -223,6 +228,7 @@ class Controller extends EventEmitter {
   }
   event({ method, params: p }) {
     p ||= {};
+    if(p.threadId&&!this.sourceAccess(p.threadId))return;
     const q = this.queue,
       task = this.taskFor(p.threadId);
     if (method === 'thread/closed') {
@@ -307,7 +313,7 @@ class Controller extends EventEmitter {
     const q = this.queue,
       p = message.params || {},
       task = this.taskFor(p.threadId);
-    if (!task) {
+    if (!task || !this.sourceAccess(p.threadId)) {
       this.client.reject(message.id);
       return;
     }
