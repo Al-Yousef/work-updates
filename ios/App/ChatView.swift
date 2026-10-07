@@ -10,6 +10,9 @@ struct ChatView:View {
     @State private var pendingTaskID:String?
     @State private var ownerName=""
     @State private var submitting=false
+    @State private var pendingMessageID:String?
+    @State private var pendingSourceID:String?
+    @State private var pendingText:String?
     init(selection:DisplayCard) {_selection=State(initialValue:selection)}
     private var card:DisplayCard? {store.current(selection)}
     private func source(_ task:TaskCard) -> ChatSource? {
@@ -130,8 +133,19 @@ struct ChatView:View {
         submitting=true
         run {
             defer{submitting=false}
-            let result=try await store.command("send",computerID:card.computerID,input:["id":.string(card.task.id),"taskKey":.string(card.task.taskKey),"sourceId":.string(source.id),"text":.string(text)],lock:card.task.id)
+            guard store.states[card.computerID]?.peerContract?.receiptVersion == 1 else {throw PeerError.server("Update the desktop app before sending receipt-backed messages from iPhone.")}
+            let messageID=(pendingSourceID==source.id && pendingText==text ? pendingMessageID : nil) ?? UUID().uuidString.lowercased()
+            pendingMessageID=messageID;pendingSourceID=source.id;pendingText=text
+            var input:[String:JSONValue]=["id":.string(card.task.id),"taskKey":.string(card.task.taskKey),"sourceId":.string(source.id),"messageId":.string(messageID),"text":.string(text)]
+            if let revision=card.task.contextRevision {input["contextRevision"] = .string(revision)}
+            let result=try await store.command("send",computerID:card.computerID,input:input,lock:card.task.id)
+            let receipt=try DeliveryReceipt.decode(result,messageID:messageID,sourceID:source.id)
+            guard receipt.delivery == "sent" else {throw PeerError.uncertainDelivery}
+            guard let currentCard=self.card,selection.computerID==card.computerID,
+                  currentCard.task.taskKey==card.task.taskKey,self.source(currentCard.task)?.id == source.id
+            else {throw PeerError.server("The message was accepted in its original chat. Reopen that chat to inspect it.")}
             draft=""
+            pendingMessageID=nil;pendingSourceID=nil;pendingText=nil
             if let id=result.object?["taskId"]?.string,id != card.task.id {
                 if let next=store.cards.first(where:{$0.computerID==card.computerID && $0.task.id==id}) {selection=next}
                 else {pendingTaskID=id}

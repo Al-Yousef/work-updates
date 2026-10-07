@@ -14,6 +14,7 @@ const code = (port) =>
   ).toString('base64url');
 function state(name, status = 'ready') {
   return {
+    peerContract:require('../src/peer-contract.cjs').capabilities(),
     cards: [
       {
         id: 'same-card',

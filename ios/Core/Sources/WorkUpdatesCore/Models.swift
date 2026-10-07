@@ -75,10 +75,17 @@ public struct ChatSource: Codable, Identifiable, Sendable {
     public var lifecycle: String?
     public var contextLoaded: Bool?
     public var device: DeviceIcon?
+    public var queuedMessages: [JSONValue]?
+    public var deliveryOutcomes: [JSONValue]?
+    public var messageOutcomes: [JSONValue]?
+    public var taskRevision: String?
+    public var turnId: String?
+    public var turnOutcome: String?
 }
 public struct TaskCard: Codable, Identifiable, Sendable {
     public var id: String
     public var taskKey: String
+    public var contextRevision: String?
     public var title: String
     public var chatName: String?
     public var summary: String?
@@ -163,6 +170,7 @@ public struct Approval: Codable, Identifiable, Sendable {
 public struct QueueSettings: Codable, Sendable { public var projects: [String]? }
 public struct QueueHealth: Codable, Sendable { public var ok: Bool?; public var message: String? }
 public struct QueueState: Codable, Sendable {
+    public var peerContract: PeerContract?
     public var protocolVersion: Int?
     public var host: HostIdentity?
     public var servedAt: Double?
@@ -177,9 +185,15 @@ public struct QueueState: Codable, Sendable {
     public static func decode(_ data: Data) throws -> QueueState {
         guard data.count <= 16_000_000 else { throw PeerError.responseTooLarge }
         let state = try JSONDecoder().decode(QueueState.self, from: data)
+        if let protocolVersion=state.protocolVersion, ![2,3].contains(protocolVersion) {throw PeerError.unsupportedState}
+        try state.peerContract?.validate()
+        if state.peerContract != nil && state.stateVersion == nil {throw PeerError.unsupportedState}
         guard state.cards.count + state.done.count <= 10_000,
               (state.cards + state.done).allSatisfy({ !$0.id.isEmpty && !$0.taskKey.isEmpty && $0.id.count <= 2048 }) else { throw PeerError.unsupportedState }
         return state
+    }
+    public func supports(_ command:String) -> Bool {
+        peerContract.map{$0.commands.contains(command)} ?? PeerContract.legacy.contains(command)
     }
 }
 public struct PairedComputer: Codable, Identifiable, Sendable {
