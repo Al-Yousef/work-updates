@@ -32,6 +32,9 @@ jobs:
         run: |
           ./native/windows/bootstrap-toolchain.ps1
           ./native/windows/build.ps1 -OutputDirectory build/candidate
+      - name: Ten-minute navigation and reconnect observation
+        shell: pwsh
+        run: ./scripts/native-performance-audit.ps1 -SecondsPerPhase 30 -ChatCounts @(1500) -SoakSeconds 600 -OutputDirectory "$pwd/artifacts/performance/qualification/soak"
       - name: Five fresh process trees on matching runner hardware
         shell: pwsh
         run: |
@@ -41,9 +44,6 @@ jobs:
             ./scripts/native-performance-audit.ps1 -SecondsPerPhase 30 -OutputDirectory "$pwd/artifacts/performance/qualification/baseline-$taskRun"
           }
           ./scripts/native-performance-audit.ps1 -SecondsPerPhase 30 -OutputDirectory "$pwd/artifacts/performance/qualification/current"
-      - name: Ten-minute navigation and reconnect observation
-        shell: pwsh
-        run: ./scripts/native-performance-audit.ps1 -SecondsPerPhase 30 -ChatCounts @(1500) -SoakSeconds 600 -OutputDirectory "$pwd/artifacts/performance/qualification/soak"
       - name: Enforce comparable baseline and bounded growth
         if: always()
         run: node scripts/performance-qualification-report.cjs artifacts/performance/qualification

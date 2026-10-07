@@ -44,11 +44,18 @@ function Send-PerfMessage([IntPtr]$Window,[uint32]$Message,[IntPtr]$W=[IntPtr]::
     if([HyphenPerfWindows]::SendMessageTimeout($Window,$Message,$W,$L,2,2000,[ref]$taskResult) -eq [IntPtr]::Zero){throw 'Owned native message did not return within two seconds'}
 }
 function Get-PerfState([IntPtr]$Panel,[string]$Run){Send-PerfMessage $Panel (0x8000+215);return Get-Content -LiteralPath (Join-Path $Run 'ux-state.json') -Raw | ConvertFrom-Json}
-function Click-PerfHit([IntPtr]$Panel,$Hit){
+function Click-PerfHit([IntPtr]$Panel,$Hit,[string]$Run=''){
     $taskScale=$script:taskDpi/96.0
     $taskX=[int](($Hit.box[0]+$Hit.box[2])*$taskScale/2);$taskY=[int](($Hit.box[1]+$Hit.box[3])*$taskScale/2)
     $taskPoint=[IntPtr](($taskY -shl 16) -bor ($taskX -band 65535))
-    $taskWatch=[Diagnostics.Stopwatch]::StartNew();Send-PerfMessage $Panel 0x201 ([IntPtr]1) $taskPoint;Send-PerfMessage $Panel 0x202 ([IntPtr]::Zero) $taskPoint;$taskWatch.Stop();return $taskWatch.Elapsed.TotalMilliseconds
+    $taskWatch=[Diagnostics.Stopwatch]::StartNew();Send-PerfMessage $Panel 0x201 ([IntPtr]1) $taskPoint
+    if($Run){
+        $taskDown=Get-PerfState $Panel $Run
+        if($taskDown.lastPress.disposition -ne 'down' -or $taskDown.lastPress.expectedKey -ne $Hit.key){Send-PerfMessage $Panel 0x1F}
+    }
+    Send-PerfMessage $Panel 0x202 ([IntPtr]::Zero) $taskPoint;$taskWatch.Stop()
+    if($Run){return @{ms=$taskWatch.Elapsed.TotalMilliseconds;down=$taskDown}}
+    return $taskWatch.Elapsed.TotalMilliseconds
 }
 foreach($taskCount in $ChatCounts){
     $taskRun=Join-Path $taskOutput ([string]$taskCount);New-Item -ItemType Directory -Path $taskRun | Out-Null
@@ -106,20 +113,20 @@ foreach($taskCount in $ChatCounts){
                     }
                     $taskState=Get-PerfState $taskPanel $taskRun;$taskCards=@($taskState.hits|Where-Object {$_.action -eq 'card'});if($taskCards.Count -lt 2){throw 'Two visible source cards are required'}
                     # Exercise different original sources throughout the soak, not only two cached chats.
-                    $taskHit=$taskCards[$taskIteration%$taskCards.Count];$taskLatency=Click-PerfHit $taskPanel $taskHit
+                    $taskHit=$taskCards[$taskIteration%$taskCards.Count];$taskClick=Click-PerfHit $taskPanel $taskHit $taskRun;$taskLatency=$taskClick.ms
                     $taskLive=Get-PerfState $taskPanel $taskRun
-                    $taskProof=Get-HyphenSelectionProof $taskState $taskLive $taskHit
+                    $taskProof=Get-HyphenSelectionProof $taskState $taskLive $taskHit $taskClick.down
                     $taskSelectionAccepted=$taskProof -eq 'accepted'
                     if(-not $taskSelectionAccepted){
                         $taskPress=$taskLive.lastPress
-                        if($taskProof -eq 'cancelled'){
+                        if($taskProof -in @('cancelled','stale_snapshot_cancelled')){
                             # A row changing between press and release is deliberately cancelled by
                             # the real input guard. Its fresh exact press record proves the guard
                             # preserved selection at the decision, independently of later feed updates.
                             # It is not an accepted selection or send sample.
-                            $taskLatencies+=@{operation='cancelled_selection_press';ms=$taskLatency;reason='target_changed_before_release';selectionAccepted=$false}
+                            $taskLatencies+=@{operation='cancelled_selection_press';ms=$taskLatency;reason=$(if($taskProof -eq 'stale_snapshot_cancelled'){'target_changed_before_press'}else{'target_changed_before_release'});selectionAccepted=$false}
                         }else{
-                            @{count=$taskCount;phase=$taskPhase;iteration=$taskIteration;expected=$taskHit;before=$taskState;after=$taskLive}|ConvertTo-Json -Depth 12|Set-Content -LiteralPath (Join-Path $taskRun 'selection-failure.json') -Encoding utf8
+                            @{count=$taskCount;phase=$taskPhase;iteration=$taskIteration;expected=$taskHit;before=$taskState;down=$taskClick.down;after=$taskLive}|ConvertTo-Json -Depth 12|Set-Content -LiteralPath (Join-Path $taskRun 'selection-failure.json') -Encoding utf8
                             throw 'Source changed during the benchmark click without a verified cancelled press'
                         }
                     }else{$taskSelectedSources[[string]$taskLive.source]=$true;$taskLatencies+=@{operation='chat_selection_handler';ms=$taskLatency;detailPending=$taskLive.detailPending;selectionAccepted=$true}}
