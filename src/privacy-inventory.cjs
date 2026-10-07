@@ -1,5 +1,6 @@
 'use strict';
 const policy = {
+  'documents.json':['Imported local copies, edit drafts and explicit output schedules','128 copies/drafts, 32 finite schedules and 1000 receipts','Private export; cancel schedule separately; output files and receipts retained'],
   'voice.json':['Voice session and accepted response metadata; no recordings/transcripts','64 sessions and 128 responses/session; usage separate from unknown bill','Private export; ending voice does not erase metadata'],
   'state.json':['Task metadata, status, preferences and groups','Component bounds; no automatic age expiry','Private export; original task controls; no blanket deletion'],
   'messages.json':['Message intents and exact delivery receipts','Up to 10000 intents; replay guards retained','Private redacted export; cancel unsent intents separately'],

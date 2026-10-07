@@ -88,9 +88,20 @@ foreach($taskCount in @(100,500,1500)){
                 if($taskPhase -in @('chat_switching','messaging')){
                     $taskState=Get-PerfState $taskPanel $taskRun;$taskCards=@($taskState.hits|Where-Object {$_.action -eq 'card'});if($taskCards.Count -lt 2){throw 'Two visible source cards are required'}
                     $taskHit=$taskCards[$taskIteration%2];$taskLatency=Click-PerfHit $taskPanel $taskHit
-                    $taskLive=Get-PerfState $taskPanel $taskRun;if($taskLive.source -ne $taskHit.sourceId){throw 'Source changed during the benchmark click'}
-                    $taskLatencies+=@{operation='chat_selection_handler';ms=$taskLatency;detailPending=$taskLive.detailPending}
-                    if($taskPhase -eq 'messaging' -and -not $taskLive.pending){
+                    $taskLive=Get-PerfState $taskPanel $taskRun
+                    $taskSelectionAccepted=$taskLive.source -eq $taskHit.sourceId
+                    if(-not $taskSelectionAccepted){
+                        $taskPress=$taskLive.lastPress
+                        if($taskPress.disposition -eq 'cancelled' -and $taskPress.expectedKey -eq $taskHit.key -and $taskLive.source -eq $taskPress.sourceBefore -and $taskLive.selected -eq $taskPress.selectedBefore){
+                            # A row changing between press and release is deliberately cancelled by
+                            # the real input guard. It is not an accepted selection or send sample.
+                            $taskLatencies+=@{operation='cancelled_selection_press';ms=$taskLatency;reason='target_changed_before_release';selectionAccepted=$false}
+                        }else{
+                            @{count=$taskCount;phase=$taskPhase;iteration=$taskIteration;expected=$taskHit;before=$taskState;after=$taskLive}|ConvertTo-Json -Depth 12|Set-Content -LiteralPath (Join-Path $taskRun 'selection-failure.json') -Encoding utf8
+                            throw 'Source changed during the benchmark click without a verified cancelled press'
+                        }
+                    }else{$taskLatencies+=@{operation='chat_selection_handler';ms=$taskLatency;detailPending=$taskLive.detailPending;selectionAccepted=$true}}
+                    if($taskSelectionAccepted -and $taskPhase -eq 'messaging' -and -not $taskLive.pending){
                         $taskEditor=[HyphenPerfWindows]::GetDlgItem($taskPanel,201);$taskTextResult=[UIntPtr]::Zero
                         if([HyphenPerfWindows]::SendText($taskEditor,0xC,[IntPtr]::Zero,'Synthetic benchmark follow-up',2,2000,[ref]$taskTextResult) -eq [IntPtr]::Zero){throw 'Owned composer did not accept the fixture text'}
                         $taskLive=Get-PerfState $taskPanel $taskRun;$taskSend=$taskLive.hits|Where-Object {$_.action -eq 'send' -and $_.enabled}|Select-Object -First 1
@@ -102,6 +113,7 @@ foreach($taskCount in @(100,500,1500)){
                 $taskWait=$SampleIntervalMs-[int]$taskLoop.Elapsed.TotalMilliseconds;if($taskWait -gt 0){Start-Sleep -Milliseconds $taskWait}
             }
             $taskSamples|ConvertTo-Json -Depth 8|Set-Content -LiteralPath (Join-Path $taskRun ($taskPhase+'.samples.json')) -Encoding utf8
+            if($taskPhase -in @('chat_switching','messaging') -and @($taskLatencies|Where-Object {$_.operation -eq 'chat_selection_handler'}).Count -eq 0){throw 'Performance phase had no accepted source selections'}
             $taskState=Get-PerfState $taskPanel $taskRun
             @{count=$taskCount;phase=$taskPhase;latencies=$taskLatencies;native=@{paintMs=$taskState.paintMs;cachedChats=$taskState.cachedChats;bubbleLayouts=$taskState.bubbleLayouts;imageBitmaps=$taskState.imageBitmaps;loadingImages=$taskState.loadingImages};measurementOverheadIncluded=$true}|ConvertTo-Json -Depth 8|Set-Content -LiteralPath (Join-Path $taskRun ($taskPhase+'.workload.json')) -Encoding utf8
         }

@@ -94,6 +94,7 @@ jobs:
             artifacts/performance/**/*.workload.json
             artifacts/performance/**/cleanup.json
             artifacts/performance/**/*.stderr.txt
+            artifacts/performance/**/selection-failure.json
             artifacts/baseline-runtime/verification.json
             artifacts/update-runtime/verification.json
             artifacts/update-faults/verification.json
