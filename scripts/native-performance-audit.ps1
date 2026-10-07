@@ -39,7 +39,12 @@ public static class HyphenPerfWindows {
  [DllImport("user32.dll",CharSet=CharSet.Unicode,EntryPoint="SendMessageTimeoutW")] public static extern IntPtr SendText(IntPtr w,uint m,IntPtr a,string b,uint flags,uint timeout,out UIntPtr result);
 }
 '@
+function Assert-PerfWindow([IntPtr]$Window){
+    [uint32]$taskWindowOwner=0
+    if(-not $taskShell -or $taskShell.HasExited -or -not $Window -or [HyphenPerfWindows]::GetWindowThreadProcessId($Window,[ref]$taskWindowOwner) -eq 0 -or $taskWindowOwner -ne $taskShell.Id){throw 'The original owned native window exited or was replaced'}
+}
 function Send-PerfMessage([IntPtr]$Window,[uint32]$Message,[IntPtr]$W=[IntPtr]::Zero,[IntPtr]$L=[IntPtr]::Zero){
+    Assert-PerfWindow $Window
     $taskResult=[UIntPtr]::Zero
     if([HyphenPerfWindows]::SendMessageTimeout($Window,$Message,$W,$L,2,2000,[ref]$taskResult) -eq [IntPtr]::Zero){throw 'Owned native message did not return within two seconds'}
 }
@@ -80,6 +85,9 @@ foreach($taskCount in $ChatCounts){
         }
         if($taskRead.chatCount -ne $taskCount -or -not $taskRead.collectorPid){throw 'Collector did not load the exact synthetic source count'}
         $taskCollector=Get-Process -Id $taskRead.collectorPid
+        # Keep the original kernel handle, so cleanup cannot open a replacement
+        # process that later happens to receive this PID.
+        [void]$taskCollector.Handle
         $taskNativeArgs=@('--isolated-session','--no-auto-attach','--show','--audit-reduced-motion','--audit-capture',('"'+(Join-Path $taskRun 'native.png')+'"'),'--bridge',('"'+$taskDescriptor+'"'))
         $taskShell=Start-Process $taskNative -ArgumentList $taskNativeArgs -WindowStyle Hidden -PassThru -RedirectStandardOutput (Join-Path $taskRun 'native.stdout.txt') -RedirectStandardError (Join-Path $taskRun 'native.stderr.txt')
         $taskHandles=@{}
@@ -142,6 +150,7 @@ foreach($taskCount in $ChatCounts){
                             $taskLatencies+=@{operation='composer_focus_handler';ms=$taskFocusLatency;sourceSelectionVerified=$true;provider='local owned-window focus; network/model latency excluded'}
                         }
                         $taskEditor=[HyphenPerfWindows]::GetDlgItem($taskPanel,201);$taskTextResult=[UIntPtr]::Zero
+                        Assert-PerfWindow $taskEditor
                         if([HyphenPerfWindows]::SendText($taskEditor,0xC,[IntPtr]::Zero,'Synthetic benchmark follow-up',2,2000,[ref]$taskTextResult) -eq [IntPtr]::Zero){throw 'Owned composer did not accept the fixture text'}
                         $taskLive=Get-PerfState $taskPanel $taskRun;$taskSend=$taskLive.hits|Where-Object {$_.action -eq 'send' -and $_.enabled}|Select-Object -First 1
                         if($taskSend){$taskLatencies+=@{operation='send_handler';ms=(Click-PerfHit $taskPanel $taskSend);provider='synthetic transport; network/model latency excluded'}}
@@ -163,7 +172,7 @@ foreach($taskCount in $ChatCounts){
         }
     } finally {
         $taskCleanupErrors=@()
-        try{if($taskTrigger -ne [IntPtr]::Zero){Send-PerfMessage $taskTrigger 0x10}}catch{$taskCleanupErrors+='Native close was unconfirmed'}
+        try{if($taskTrigger -ne [IntPtr]::Zero -and $taskShell -and -not $taskShell.HasExited){Send-PerfMessage $taskTrigger 0x10}}catch{$taskCleanupErrors+='Native close was unconfirmed'}
         if($taskShell -and -not $taskShell.WaitForExit(6000)){$taskCleanupErrors+='Owned native shell did not exit normally';$taskShell.Kill($true);[void]$taskShell.WaitForExit(6000)}
         try{if($taskBackend -and -not $taskBackend.HasExited -and (Test-Path -LiteralPath $taskDescriptor)){& $taskNode (Join-Path $PSScriptRoot 'native-control.cjs') $taskDescriptor quitIfIdle | Out-Null;if($LASTEXITCODE -ne 0){$taskCleanupErrors+='Backend idle quit was refused'}}}catch{$taskCleanupErrors+='Backend close was unconfirmed'}
         if($taskBackend -and -not $taskBackend.WaitForExit(10000)){$taskCleanupErrors+='Owned backend did not exit normally';$taskBackend.Kill($true);[void]$taskBackend.WaitForExit(6000)}
