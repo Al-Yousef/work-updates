@@ -98,7 +98,7 @@ public final class ChannelDrafts {
             guard UUID(uuidString:receipt.messageID) != nil,receipt.textHash.count==64,
                   receipt.textHash.allSatisfy({"0123456789abcdef".contains($0)}),validBinding(receipt.binding),
                   receipt.at.isFinite,["sent","cancelled"].contains(receipt.delivery),
-                  (receipt.turnID.map({!$0.isEmpty && $0.count<=512}) ?? receipt.delivery != "sent") else {throw PeerError.server("Invalid phone delivery receipt.")}
+                  (receipt.turnID.map({!$0.isEmpty && $0.count<=512}) ?? (receipt.delivery != "sent")) else {throw PeerError.server("Invalid phone delivery receipt.")}
         }
     }
     private func change(_ update:(inout DraftJournal)throws->Void) throws {
