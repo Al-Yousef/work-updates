@@ -56,6 +56,8 @@ try {
     if(highContrast){check(initial.value("highContrast",false),"Actual native child uses the isolated high-contrast palette");check(initial.value("editorForeground",0UL)==RGB(255,255,255)&&initial.value("editorBackground",0UL)==RGB(0,0,0),"Real EDIT foreground and background use the matched contrast pair");}
     RECT client{};GetClientRect(panel,&client);check(client.right==dpi*880/96&&client.bottom==dpi*660/96,"Native window uses both scaled dimensions");
     check(SUCCEEDED(AccessibleObjectFromWindow(panel,OBJID_CLIENT,IID_IAccessible,reinterpret_cast<void**>(&accessible))),"Windows exposes the custom native controls through MSAA");
+    long accessibleCount=0;check(accessible->get_accChildCount(&accessibleCount)==S_OK&&accessibleCount>0,"Current native controls remain accessible through the bounded registry");
+    check(state().value("accessibilityIds",0)>0&&state().value("accessibilityIds",0)<=2048,"Actual native accessibility retention respects its finite bound");
     if(argc==4&&!highContrast){
         deadline=GetTickCount64()+55000;
         const auto shared=read(argv[3]);check(shared.value("synthetic",false),"Only synthetic shared status fixtures are accepted");

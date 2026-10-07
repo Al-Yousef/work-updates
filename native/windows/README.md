@@ -38,3 +38,13 @@ Model tests cover state/motion/detours in isolation. GUI checks use simulated in
 The visual baseline is inspected Apple Messages, adapted with Segoe UI, opaque Windows surfaces and Hyphen task/device/status controls. This is not UIKit or a pixel-identical hardware capture. Traces stay bounded and local. Measure all backend/helpers before claiming resource savings.
 
 [Third-party notices](THIRD_PARTY_NOTICES.txt). [Pinned official compiler release](https://github.com/mstorsjo/llvm-mingw/releases/tag/20260922).
+
+Accessibility identity retention is limited to 2,048 entries across all indexes.
+Current controls are pinned and retain their IDs while older invisible controls
+are evicted. IDs are never reused during one COM object's lifetime. An evicted
+client reference becomes unavailable and cannot activate another control. The
+locked CI build exercises 10,000 changing identities, current-ID stability,
+retired-ID refusal, full-capacity and duplicate/oversized projections. Actual
+owned native MSAA checks also verify the registry is present and bounded. This
+is source/bounds evidence, not a physical screen-reader interaction or a RAM
+savings claim. Local executable-policy restrictions remain unchanged.

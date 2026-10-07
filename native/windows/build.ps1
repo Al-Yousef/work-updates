@@ -51,6 +51,10 @@ try {
     if($LASTEXITCODE -ne 0) {throw 'Input test build failed'}
     & (Join-Path $taskBuild 'input-tests.exe')
     if($LASTEXITCODE -ne 0) {throw 'Input checks failed'}
+    & $taskCompiler @taskCompilerFlags tests/accessibility-ids.cpp -std=c++20 -O2 -static -Wall -Wextra -o (Join-Path $taskBuild 'accessibility-ids-tests.exe')
+    if($LASTEXITCODE -ne 0) {throw 'Accessibility identity test build failed'}
+    & (Join-Path $taskBuild 'accessibility-ids-tests.exe')
+    if($LASTEXITCODE -ne 0) {throw 'Accessibility identity bounds failed'}
     & $taskCompiler @taskCompilerFlags tests/queue-model.cpp -std=c++20 -O2 -static -o (Join-Path $taskBuild 'queue-tests.exe')
     if($LASTEXITCODE -ne 0) {throw 'Queue model test build failed'}
     & node (Join-Path $taskRepo 'scripts/status-contract-fixtures.cjs')
@@ -77,7 +81,7 @@ try {
 foreach($taskSource in $taskSourceHashes.Keys){if((Get-FileHash -LiteralPath (Join-Path $taskRoot $taskSource)).Hash -ine $taskSourceHashes[$taskSource]){throw 'Source changed during build; candidate is unverified'}}
 $taskAfter=Get-HyphenToolchain -Directory $ToolchainDirectory -LinkerPath $LinkerPath
 $taskBinaryHashes=@{}
-foreach($taskBinary in @('Native Hover.exe','Start Native Preview.exe','WorkUpdatesTaskbar-v2.dll','Taskbar Adapter Control.exe','motion-tests.exe','input-tests.exe','queue-tests.exe','adapter-tests.exe','native-adapter-tests.exe','native-queue-tests.exe','native-ux-tests.exe','native-responsiveness-tests.exe')){$taskBinaryHashes[$taskBinary]=(Get-FileHash -LiteralPath (Join-Path $taskBuild $taskBinary)).Hash}
+foreach($taskBinary in @('Native Hover.exe','Start Native Preview.exe','WorkUpdatesTaskbar-v2.dll','Taskbar Adapter Control.exe','motion-tests.exe','input-tests.exe','accessibility-ids-tests.exe','queue-tests.exe','adapter-tests.exe','native-adapter-tests.exe','native-queue-tests.exe','native-ux-tests.exe','native-responsiveness-tests.exe')){$taskBinaryHashes[$taskBinary]=(Get-FileHash -LiteralPath (Join-Path $taskBuild $taskBinary)).Hash}
 @{schema=1;built=$true;modelTestsPassed=$true;version=$taskVersion;revision=$taskRevision;dirty=$taskDirty;toolchain=$taskAfter.record;protocol=@{descriptor='work-updates-native-v1';snapshot=1;adapter=1};sourceHashes=$taskSourceHashes;binaryHashes=$taskBinaryHashes}|ConvertTo-Json -Depth 6|Set-Content -LiteralPath $taskManifest -Encoding utf8NoBOM
 Get-Item (Join-Path $taskBuild 'Native Hover.exe') | Select-Object FullName,Length
 if($Run) {Start-Process -FilePath (Join-Path $taskBuild 'Native Hover.exe') -WindowStyle Hidden}
