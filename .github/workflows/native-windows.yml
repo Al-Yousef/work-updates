@@ -99,5 +99,7 @@ jobs:
             artifacts/update-faults/verification.json
             artifacts/native-qa/*/verification.json
             native/windows/build/candidate/artifacts/picker-observations.jsonl
+            native/windows/build/candidate/artifacts/responsiveness-failure.json
+            native/windows/build/candidate/artifacts/ux-state.json
           if-no-files-found: ignore
           retention-days: 7

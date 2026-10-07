@@ -139,6 +139,8 @@ const devices = new Devices({
 });
 diagnostics.setContext({deviceId:devices.local.id});
 const authorization=new Authorization({directory:dataDir,actorId:'human:'+devices.local.id});
+const executors=new (require('./src/executor-bindings.cjs').ExecutorBindings)({directory:dataDir,deviceId:devices.local.id,actorId:authorization.actorId});
+if(!demo)client.options.executors=executors;
 const commitments=new Commitments({directory:dataDir,humanActorId:'human:'+devices.local.id});
 const researchReader=require('./src/research-reader.cjs').reader(app.isPackaged?{helper:path.join(process.resourcesPath,'helper',process.platform==='win32'?'collector.exe':'collector'),helperScript:path.join(process.resourcesPath,'helper','collector.py')}:{});
 const research=new Research({directory:dataDir,policy:authorization,reader:researchReader,snapshot:()=>devices.snapshot(),preferences:()=>commitments.preferenceSnapshot(),maintenance:()=>quitting||maintenanceActive(dataDir),log:diagnostics,admission:scope=>workControls?.readAdmission(scope)||'allow'});
@@ -159,7 +161,7 @@ research.options.reader=budgets.reader(researchReader);
 const outcomes=new OutcomeVerification({directory:dataDir,actorId:'human:'+devices.local.id,responsibilities,snapshot:()=>devices.snapshot(),maintenance:()=>quitting||maintenanceActive(dataDir),admission:entry=>workControls.responsibilityAdmission(entry)});
 responsibilities.options.outcomeRequired=entry=>outcomes.required(entry);
 responsibilities.options.outcomeAdmission=(entry,human)=>outcomes.admission(entry,human);
-const assistant = new Assistant({directory:dataDir,snapshot:()=>devices.snapshot(),attachments,budgets,outcomes,
+const assistant = new Assistant({directory:dataDir,snapshot:()=>devices.snapshot(),attachments,budgets,outcomes,executors,
   responsibilities,
   schedules,
   authorization,
