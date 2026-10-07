@@ -24,7 +24,7 @@ async function audit(){
   atomicJSON(path.join(dataDirectory,'drafts.json'),{version:3,drafts:{'disposable-nonexistent-source':'Synthetic retained draft'},intentIds:{'disposable-nonexistent-source':intentId},attachments:{}});
   const sourceRevision=execFileSync('git',['rev-parse','HEAD'],{cwd:root,encoding:'utf8'}).trim();
   const manifest={schema:1,product:'Hyphen',sourceRevision,sourceHashes:{'main.cjs':digest(path.join(root,'main.cjs'))},candidate:identity(packed),baseline:identity(archive),components:[{role:'backend',path:'desktop/resources/app.asar',file:'app.asar',sha256:digest(packed),baselineSha256:digest(archive)}]};
-  const hooks=windowsHooks({installRoot,dataDirectory,demo:true});
+  const hooks=windowsHooks({installRoot,dataDirectory,demo:true});let primaryError;
   try{
     const make=(value=hooks)=>new UpdateTransaction({installRoot,dataDirectory,packageDirectory,sourceRoot:root,hooks:value});
     await make().run(manifest);assert.equal(digest(archive),manifest.components[0].sha256);
@@ -40,6 +40,19 @@ async function audit(){
     await hooks.stop();
     const report={schema:1,passed:true,packagedBackend:true,actualNativeLauncher:true,sourceRevision,healthyInstall:true,failedLauncherRollback:true,retainedIntentIds:true,accountsUsed:0,modelCalls:0,codexDispatches:0,collectorStarted:false,adapterAttached:false,installedAppChanged:false};
     atomicJSON(path.join(output,'verification.json'),report);console.log(JSON.stringify(report));return report;
-  }finally{await hooks.stop();fs.rmSync(directory,{recursive:true,force:true});}
+  }catch(error){primaryError=error;console.error('Packaged audit failed before cleanup:',error.stack);throw error;}
+  finally{
+    const cleanupErrors=[];
+    try{await hooks.stop();}catch(error){cleanupErrors.push(error);}
+    // The resolved target is the disposable directory created above, never an
+    // installed profile or a path taken from a report or manifest.
+    const target=path.resolve(directory),temporaryRoot=path.resolve(os.tmpdir());
+    if(path.dirname(target)!==temporaryRoot||!path.basename(target).startsWith('hyphen-packaged-update-'))cleanupErrors.push(new Error('Disposable cleanup target is outside the temporary root'));
+    else try{fs.rmSync(target,{recursive:true,force:true,maxRetries:10,retryDelay:300});}catch(error){cleanupErrors.push(error);}
+    if(cleanupErrors.length){
+      for(const error of cleanupErrors)console.error('Packaged audit cleanup failed:',error.stack);
+      if(!primaryError)throw new AggregateError(cleanupErrors,'Disposable packaged audit cleanup failed');
+    }
+  }
 }
 if(require.main===module)audit().then(()=>process.exit(0),e=>{console.error(e.stack);process.exit(1);});module.exports={audit};

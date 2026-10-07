@@ -73,6 +73,9 @@ jobs:
         uses: actions/upload-artifact@v4
         with:
           name: native-windows-failure-diagnostics
-          path: artifacts/
+          path: |
+            artifacts/baseline-runtime/verification.json
+            artifacts/update-runtime/verification.json
+            artifacts/update-faults/verification.json
           if-no-files-found: ignore
           retention-days: 7
