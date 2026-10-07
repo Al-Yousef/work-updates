@@ -232,9 +232,11 @@ test('stop admission and offline owners block artifact access without erasing re
     f.artifact();
     await f.check();
     const prior = f.outcomes.entry(f.id).result.proof.sha256;
-    f.hold('hold');
-    await f.check();
-    assert.equal(f.outcomes.entry(f.id).result.status, 'inaccessible');
+    for (const decision of ['hold', 'wait', 'deny', undefined, false]) {
+      f.hold(decision);
+      await f.check();
+      assert.equal(f.outcomes.entry(f.id).result.status, 'inaccessible');
+    }
     f.hold('allow');
     await f.check();
     assert.equal(f.outcomes.entry(f.id).result.proof.sha256, prior);
@@ -248,6 +250,56 @@ test('stop admission and offline owners block artifact access without erasing re
   } finally {
     f.close();
   }
+});
+
+test('actual pause and stop controls block artifact reads, context verification and completion until their exact human resume', async (t) => {
+  const f = setup(),
+    { WorkControls } = require('../src/work-controls.cjs');
+  t.after(() => f.close());
+  const controls = new WorkControls({
+    directory: f.directory,
+    policy: f.policy,
+    messages: f.messages,
+    responsibilities: f.responsibilities,
+    schedules: f.schedules,
+    snapshot: f.snapshot,
+  });
+  t.after(() => controls.close());
+  f.assistant.options.workControls = controls;
+  f.outcomes.options.admission = (entry) => controls.responsibilityAdmission(entry);
+  f.responsibilities.options.admission = (entry) => controls.responsibilityAdmission(entry);
+  await f.start();
+  await f.require();
+  f.artifact();
+  f.complete();
+  await f.check();
+  const original = f.outcomes.artifact.bind(f.outcomes);
+  let reads = 0;
+  f.outcomes.artifact = (record) => {
+    reads++;
+    return original(record);
+  };
+  for (const [pause, resume] of [
+    ['/work pause-main ' + f.id, '/work resume-main ' + f.id],
+    ['/work stop-all', '/work resume-all'],
+  ]) {
+    assert.equal((await f.ask(pause)).status, 'completed');
+    assert.equal(controls.responsibilityAdmission(f.responsibilities.entry(f.id)), 'wait');
+    await f.check();
+    assert.equal(f.outcomes.entry(f.id).result.status, 'inaccessible');
+    assert.equal(f.outcomes.context().records[0].independent, false);
+    assert.equal((await f.ask('/responsibility verify ' + f.id)).status, 'failed');
+    assert.equal(f.responsibilities.entry(f.id).state, 'waiting_user');
+    assert.equal(reads, 0);
+    assert.equal((await f.ask(resume)).status, 'completed');
+    await f.check();
+    assert.equal(f.outcomes.entry(f.id).result.status, 'verified');
+    reads = 0;
+  }
+  controls.storageFailed = true;
+  await f.check();
+  assert.equal(reads, 0);
+  assert.equal(f.outcomes.entry(f.id).result.status, 'inaccessible');
 });
 test('saved artifacts never prove merged, deployed or destination-delivered outcomes; manual review is labelled as an attestation', async () => {
   const f = setup();

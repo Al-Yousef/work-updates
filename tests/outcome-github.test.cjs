@@ -5,6 +5,7 @@ const test = require('node:test'),
   http = require('node:http'),
   crypto = require('node:crypto');
 const { fixture } = require('./fixtures/authorization-profile.cjs'),
+  { WorkControls } = require('../src/work-controls.cjs'),
   { OutcomeVerification, spec } = require('../src/outcome-verification.cjs'),
   { PublicGitHubPR } = require('../src/outcome-github.cjs'),
   { ResourceBudgets, defaults } = require('../src/resource-budgets.cjs');
@@ -194,6 +195,51 @@ test('literal GitHub proof scopes accept only one public PR, exact head and targ
     /human/,
   );
   assert.equal(f.calls, 0);
+});
+
+test('actual work-control wait and deny decisions prevent destination I/O, and stop during an awaited read discards proof with unresolved capacity', async (t) => {
+  const f = await setup(t),
+    controls = new WorkControls({
+      directory: f.directory,
+      policy: f.policy,
+      messages: f.messages,
+      responsibilities: f.responsibilities,
+      schedules: f.schedules,
+      snapshot: f.snapshot,
+    });
+  t.after(() => controls.close());
+  f.assistant.options.workControls = controls;
+  f.outcomes.options.admission = (entry) => controls.responsibilityAdmission(entry);
+  f.responsibilities.options.admission = (entry) => controls.responsibilityAdmission(entry);
+  await f.start();
+  await f.require();
+  await f.ask('/work pause-main ' + f.id);
+  assert.equal(controls.responsibilityAdmission(f.responsibilities.entry(f.id)), 'wait');
+  await f.check();
+  assert.equal(f.calls, 0);
+  assert.equal(f.outcomes.entry(f.id).result.status, 'inaccessible');
+  await f.ask('/work resume-main ' + f.id);
+  let entered, release;
+  const started = new Promise((r) => (entered = r));
+  f.pause = () => {
+    entered();
+    return new Promise((r) => (release = r));
+  };
+  const pending = f.check();
+  await started;
+  await f.ask('/work stop-all');
+  release();
+  await pending;
+  assert.equal(f.outcomes.entry(f.id).result.status, 'inaccessible');
+  assert.equal(f.budgets.state.entries[0].status, 'unknown');
+  assert.equal(f.outcomes.context().records[0].independent, false);
+  await f.ask('/work resume-all');
+  await f.ask('/work revoke-executor fixture-policy-pc');
+  assert.equal(controls.responsibilityAdmission(f.responsibilities.entry(f.id)), 'deny');
+  const calls = f.calls;
+  await f.check();
+  assert.equal(f.calls, calls);
+  assert.equal(f.outcomes.entry(f.id).result.status, 'inaccessible');
 });
 test('actual read-only destination responses distinguish verified negative, merge and changed head, and completion rechecks the exact PR after restart', async (t) => {
   const f = await setup(t);

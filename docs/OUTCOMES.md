@@ -44,6 +44,11 @@ oversized, stale and nonmatching artifacts have distinct statuses. Inspection
 and answer context report bounded retained coverage; they do not read files or
 refresh source data. No check infers a verified negative result from absence.
 
+Work-control admission requires the explicit `allow` decision. `wait`, `deny`,
+legacy `hold`, unknown decisions and admission/recovery errors block both proof
+reads and completion. A pause arriving during a destination read discards its
+response and keeps the shared reservation uncertain; resume does not replay it.
+
 Artifact access is limited to one explicit selected directory and one relative
 JSON file, at most 1 MiB and 16 scalar expectations. Traversal and linked files or
 directories are refused. Reads bind the opened file identity, size and canonical
