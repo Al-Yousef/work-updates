@@ -471,7 +471,7 @@ struct Renderer {
         canvas->PushAxisAlignedClip(D2D1::RectF(CHAT_LEFT,top,WIDTH-28,bottom),D2D1_ANTIALIAS_MODE_PER_PRIMITIVE);
         float y=top-model.assistantOffset;
         if(messages.empty()) {
-            label("Talk to Hyphen",24,D2D1::RectF(CHAT_LEFT+8,185,WIDTH-36,230),chatstyle::ink(),DWRITE_FONT_WEIGHT_SEMI_BOLD);
+            label(std::string("Talk to ")+model.state.value("profile",Json::object()).value("displayName","Hyphen"),24,D2D1::RectF(CHAT_LEFT+8,185,WIDTH-36,230),chatstyle::ink(),DWRITE_FONT_WEIGHT_SEMI_BOLD);
             label("Ask about your work, think through an idea, or share an image.",16,D2D1::RectF(CHAT_LEFT+8,244,WIDTH-36,310),muted);
             button(brush,"What needs me?",D2D1::RectF(CHAT_LEFT+8,334,CHAT_LEFT+196,378),"askNeeds",model.canReply());
             button(brush,"What changed?",D2D1::RectF(CHAT_LEFT+208,334,CHAT_LEFT+396,378),"askChanges",model.canReply());
@@ -846,7 +846,7 @@ struct App {
         if(a=="detailsMenu")return "Conversation details";
         if(a=="filterMenu")return "Filter conversations";
         if(a=="addMenu")return "Message options";
-        if(a=="assistant")return "Talk to Hyphen";
+        if(a=="assistant")return std::string("Talk to ")+renderer.model.state.value("profile",Json::object()).value("displayName","Hyphen");
         if(a=="removeImage")return "Remove image · "+hit.card.value("name",std::string("attachment"));
         if(a=="openImage")return "Open image · "+hit.card.value("name",std::string("attachment"));
         if(a=="retryDetails")return "Retry loading messages";
