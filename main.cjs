@@ -150,6 +150,7 @@ diagnostics.setContext({deviceId:devices.local.id});
 assistantProfile=new AssistantProfile({directory:dataDir,actorId:'human:'+devices.local.id,onChange:()=>publish()});
 const authorization=new Authorization({directory:dataDir,actorId:'human:'+devices.local.id});
 const executors=new (require('./src/executor-bindings.cjs').ExecutorBindings)({directory:dataDir,deviceId:devices.local.id,actorId:authorization.actorId});
+devices.options.executorReport=()=>executors.report(client.status?.().connected===true?'connected':'disconnected');
 if(!demo)client.options.executors=executors;
 const commitments=new Commitments({directory:dataDir,humanActorId:'human:'+devices.local.id});
 const researchReader=require('./src/research-reader.cjs').reader(app.isPackaged?{helper:path.join(process.resourcesPath,'helper',process.platform==='win32'?'collector.exe':'collector'),helperScript:path.join(process.resourcesPath,'helper','collector.py')}:{});

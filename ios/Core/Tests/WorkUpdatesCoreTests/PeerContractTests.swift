@@ -14,10 +14,19 @@ final class PeerContractTests:XCTestCase {
         let current=try state(contract);XCTAssertTrue(current.supports("queueMessage"));XCTAssertFalse(current.supports("attachImages"))
     }
     func testFutureAndWidenedCapabilitiesAreRejected() throws {
-        let patches:[[String:Any]] = [["version":3],["assistant":true],["attachments":true],["commands":["shell"]],["commands":["send","send"]],["receiptVersion":2]]
+        let patches:[[String:Any]] = [["version":3],["assistant":true],["attachments":true],["commands":["shell"]],["commands":["send","send"]],["receiptVersion":2],["executorReports":2]]
         for patch in patches {
             var value=contract;value.merge(patch){_,new in new};XCTAssertThrowsError(try state(value))
         }
+    }
+    func testExecutorPresentationNeverClaimsLiveVerificationOrAuthorizesCapabilities() throws {
+        var value:[String:Any]=["schema":1,"deviceId":"original-computer","binding":"recorded_grant","liveExecutorVerified":false,"cloud":false,
+            "capabilities":["task_create","task_continue","turn_interrupt"],"access":"revoked","serverVersion":"0.160.1","verifiedAt":1000]
+        func decoded() throws -> ExecutorPresentation {try JSONDecoder().decode(ExecutorPresentation.self,from:JSONSerialization.data(withJSONObject:value))}
+        try decoded().validate();XCTAssertTrue(try decoded().caption.contains("revoked"))
+        value["liveExecutorVerified"]=true;XCTAssertThrowsError(try decoded().validate());value["liveExecutorVerified"]=false
+        value["cloud"]=true;XCTAssertThrowsError(try decoded().validate());value["cloud"]=false
+        value["capabilities"]=["shell"];XCTAssertThrowsError(try decoded().validate())
     }
     func testHTTPReceiptNeedsExactMessageSourceAndActualAcceptance() throws {
         let correct:JSONValue = .object(["messageId":.string("message"),"sourceId":.string("source"),"delivery":.string("sent"),"turnId":.string("accepted-turn")])

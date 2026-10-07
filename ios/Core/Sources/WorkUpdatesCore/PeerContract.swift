@@ -10,11 +10,13 @@ public struct PeerContract: Codable, Sendable {
     public let assistant: Bool
     public let orderedSnapshots: Bool
     public let sourceBoundMessages: Bool
+    public let executorReports:Int?
     public static let supported: Set<String> = ["create","start","action","undo","send","queueMessage","cancelMessage","clearMessages","stop","respond","details","group","refresh","open"]
     public static let legacy: Set<String> = ["create","start","action","undo","send","stop","respond","details","group","refresh","open"]
     public func validate() throws {
         guard schema == 1, version == 2, minimumVersion == 1, receiptVersion == 1,
               !attachments, !assistant, orderedSnapshots, sourceBoundMessages,
+              executorReports==nil || executorReports==1,
               commands.count <= Self.supported.count, Set(commands).count == commands.count,
               commands.allSatisfy({Self.supported.contains($0)}) else {throw PeerError.unsupportedState}
     }
