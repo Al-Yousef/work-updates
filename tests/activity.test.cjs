@@ -292,6 +292,11 @@ test('redacted export requires a literal human opt-in, preserves correlations an
     () => f.activity.export(f.control('please export activity'), {}),
     /explicit redacted/,
   );
+  const malformed = '/activity export: {"redacted":true,"filters":false}';
+  assert.equal(command(malformed).filters, false);
+  const before = f.activity.state.exports.length;
+  assert.throws(() => f.activity.export(f.control(malformed), false), /Invalid activity filters/);
+  assert.equal(f.activity.state.exports.length, before);
 });
 test('failed export readback never reports saved and does not add a confirmed receipt', (t) => {
   const f = profile(t);

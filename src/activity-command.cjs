@@ -27,7 +27,7 @@ function command(text) {
     Object.keys(value).some((k) => !['redacted', 'filters'].includes(k))
   )
     return { kind: 'invalid' };
-  return { kind, redacted: true, filters: value.filters || {} };
+  return { kind, redacted: true, filters: value.filters === undefined ? {} : value.filters };
 }
 function manage(store, message, c) {
   if (!store) throw new Error('Activity controls are unavailable');
