@@ -35,6 +35,7 @@
 #include "bridge.h"
 #include "queue-client.h"
 #include "queue-model.h"
+#include "draft-store.h"
 #include "chat-layout.h"
 #include "chat-style.h"
 #include "ui-audit.h"
@@ -717,12 +718,16 @@ struct App {
     std::filesystem::path tracePath,capturePath,draftPath,auditCapturePath;
     std::vector<std::filesystem::path> temporaryImages;
     bool saveDrafts() {
-        if(draftPath.empty())return false;
+        if(draftPath.empty()){renderer.model.message="Saved drafts need recovery. The original file is preserved.";return false;}
         try {
             Json values=Json::object();for(const auto& [source,value]:renderer.model.drafts)if(!value.empty())values[source]=value;
             Json ids=renderer.model.intentIds;
-            auto temp=draftPath;temp+=L".tmp";std::ofstream out(temp,std::ios::binary|std::ios::trunc);out<<Json({{"version",3},{"drafts",values},{"intentIds",ids},{"attachments",renderer.model.attachments}}).dump();out.close();
-            if(!out||!MoveFileExW(temp.c_str(),draftPath.c_str(),MOVEFILE_REPLACE_EXISTING|MOVEFILE_WRITE_THROUGH))throw std::runtime_error("Draft storage failed");
+            auto bytes=draft_store::validate(Json({{"version",3},{"drafts",values},{"intentIds",ids},{"attachments",renderer.model.attachments}})).dump();
+            GUID guid;wchar_t id[40]{};if(FAILED(CoCreateGuid(&guid))||!StringFromGUID2(guid,id,40))throw std::runtime_error("Draft storage identity failed");
+            auto temp=draftPath;temp+=L"."+std::wstring(id)+L".tmp";
+            HANDLE file=CreateFileW(temp.c_str(),GENERIC_WRITE,0,nullptr,CREATE_NEW,FILE_ATTRIBUTE_NORMAL,nullptr);if(file==INVALID_HANDLE_VALUE)throw std::runtime_error("Draft storage failed");
+            DWORD written=0;bool saved=WriteFile(file,bytes.data(),static_cast<DWORD>(bytes.size()),&written,nullptr)&&written==bytes.size()&&FlushFileBuffers(file);CloseHandle(file);
+            if(!saved||!MoveFileExW(temp.c_str(),draftPath.c_str(),MOVEFILE_REPLACE_EXISTING|MOVEFILE_WRITE_THROUGH)){DeleteFileW(temp.c_str());throw std::runtime_error("Draft storage failed");}
             return true;
         }catch(const std::exception& e){error(e);renderer.model.message="Draft could not be saved. Keep this window open.";return false;}
     }
@@ -1591,11 +1596,11 @@ int WINAPI wWinMain(HINSTANCE instance,HINSTANCE,PWSTR,int) {
     if(app.auditCapturePath.empty()){app.auditDpi=0;app.auditReducedMotion=false;app.renderer.thumbnails.auditDelayMs=0;}
     if(!standalone){
         app.draftPath=descriptor.parent_path()/L"drafts.json";
-        try{std::ifstream saved(app.draftPath,std::ios::binary);if(saved){Json data;saved>>data;auto drafts=data.contains("drafts")?data["drafts"]:data;
-            if(drafts.is_object())for(auto it=drafts.begin();it!=drafts.end();++it)if(it.value().is_string()&&it.key().size()<512&&it.value().get<std::string>().size()<=48000)app.renderer.model.drafts[it.key()]=it.value().get<std::string>();
-            auto images=data.value("attachments",Json::object());if(images.is_object())for(auto it=images.begin();it!=images.end();++it)if(it.key().size()<512&&it.value().is_array()&&it.value().size()<=4){Json clean=Json::array();for(const auto& image:it.value())if(image.is_object()&&image.contains("id")&&image["id"].is_string()&&image.value("path","").size()<32768)clean.push_back(image);app.renderer.model.attachments[it.key()]=clean;}
-            auto ids=data.value("intentIds",Json::object());if(ids.is_object())for(auto it=ids.begin();it!=ids.end();++it)if(it.value().is_string()&&it.value().get<std::string>().size()==36&&(app.renderer.model.drafts.contains(it.key())||app.renderer.model.attachments.contains(it.key())))app.renderer.model.intentIds[it.key()]=it.value().get<std::string>();}}
-        catch(...){app.log("draft-storage-read-failed");app.draftPath.clear();}
+        try{if(std::filesystem::exists(app.draftPath)){
+            if(!std::filesystem::is_regular_file(app.draftPath)||std::filesystem::is_symlink(app.draftPath)||std::filesystem::file_size(app.draftPath)>32*1024*1024)throw std::runtime_error("Invalid draft file");
+            std::ifstream saved(app.draftPath,std::ios::binary);if(!saved)throw std::runtime_error("Unreadable draft file");Json data;saved>>data;data=draft_store::validate(data);
+            app.renderer.model.drafts=data["drafts"].get<std::map<std::string,std::string>>();app.renderer.model.attachments=data["attachments"].get<std::map<std::string,Json>>();app.renderer.model.intentIds=data["intentIds"].get<std::map<std::string,std::string>>();}}
+        catch(...){app.log("draft-storage-read-failed");app.draftPath.clear();app.renderer.model.message="Saved drafts need recovery. The original file is preserved.";}
     }
     int exitCode=0;
     try {

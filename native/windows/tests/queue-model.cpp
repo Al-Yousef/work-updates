@@ -2,7 +2,11 @@
 #include <cassert>
 #include <iostream>
 #include "../src/queue-model.h"
+#include "../src/draft-store.h"
 int main(){
+    auto legacyDraft=draft_store::validate({{"chat-a","Keep this private draft"}});assert(legacyDraft["version"]==3&&legacyDraft["drafts"]["chat-a"]=="Keep this private draft");
+    auto stableDraft=legacyDraft;stableDraft["intentIds"]["chat-a"]="12345678-1234-1234-1234-123456789abc";assert(draft_store::validate(stableDraft)==stableDraft);
+    for(auto corrupt:{Json{{"version",4},{"drafts",Json::object()}},Json{{"version",3},{"drafts",{{"chat-a",123}}}},Json{{"version",3},{"drafts",Json::object()},{"intentIds",{{"chat-a","lost"}}}}}){bool rejected=false;try{draft_store::validate(corrupt);}catch(...){rejected=true;}assert(rejected);}
     QueueModel model;
     Json first={{"id","a"},{"taskKey","a1"},{"primarySourceId","chat-a"},{"kind","observed"},{"at",200},{"status","needs"},
         {"sources",Json::array({{{"id","chat-a"}},{{"id","chat-b"}}})}};
