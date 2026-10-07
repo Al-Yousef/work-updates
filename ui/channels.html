@@ -1,0 +1,53 @@
+<!doctype html>
+<html lang="en">
+  <head>
+    <meta charset="utf-8" />
+    <meta name="viewport" content="width=device-width,initial-scale=1" />
+    <meta
+      http-equiv="Content-Security-Policy"
+      content="default-src 'self'; script-src 'self'; style-src 'self'; connect-src 'none'; object-src 'none'; base-uri 'none'; form-action 'none'"
+    />
+    <title>Private assistant channels</title>
+    <link rel="stylesheet" href="voice.css" />
+  </head>
+  <body>
+    <main>
+      <h1>Private assistant channels</h1>
+      <p id="status" role="status" aria-live="polite">Each client needs its own grant.</p>
+      <p>
+        Use this only for your own private device. Anyone holding its code can ask questions using
+        your private task context and pinned notes. A channel has its own conversation and receipts.
+        Existing desktop conversations are not copied. Group participants and task actions are
+        unsupported here.
+      </p>
+      <fieldset>
+        <legend>Invite your device</legend>
+        <label
+          >Private network address
+          <select id="host"></select
+        ></label>
+        <label>Device name <input id="label" maxlength="80" placeholder="My iPhone" /></label>
+        <label
+          >Grant duration in days <input id="days" type="number" min="1" max="30" value="7"
+        /></label>
+        <label
+          ><input id="consent" type="checkbox" /> This is my private device. I authorize it to use
+          my private task context and pinned notes for assistant questions, using existing model
+          quota.</label
+        >
+        <button id="invite">Create private assistant code</button>
+        <label>One-time code <input id="code" readonly type="password" autocomplete="off" /></label
+        ><button id="copy">Copy code</button>
+        <p>
+          Paste the code into the iPhone Assistant screen. This grant cannot control tasks or read
+          another channel's conversation. Revoke it here if the recipient or device changes. Closing
+          this window clears the displayed code.
+        </p>
+      </fieldset>
+      <h2>Current grants</h2>
+      <div id="grants"></div>
+      <button id="refresh">Refresh grants</button>
+    </main>
+    <script src="channels.js"></script>
+  </body>
+</html>

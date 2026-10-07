@@ -61,6 +61,17 @@ jobs:
           xcrun simctl launch "$simulator_id" io.workupdates.iphone --demo
           sleep 3
           xcrun simctl io "$simulator_id" screenshot artifacts/iphone-demo.png
+      - name: Export synthetic native screenshots
+        if: always()
+        run: xcrun xcresulttool export attachments --path artifacts/iphone-tests.xcresult --output-path artifacts/iphone-visuals
+      - name: Synthetic iPhone visual evidence
+        if: always()
+        uses: actions/upload-artifact@v4
+        with:
+          name: iphone-synthetic-visuals
+          path: artifacts/iphone-visuals/**/*.png
+          if-no-files-found: error
+          retention-days: 14
       - uses: actions/upload-artifact@v4
         if: always()
         with:

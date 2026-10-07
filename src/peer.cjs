@@ -167,6 +167,11 @@ class HostPeer extends EventEmitter {
     return this.contractState(this.options.state());
   }
   request(req, res) {
+    if(req.url?.startsWith('/assistant/')) {
+      if(!this.options.assistantChannels)return this.json(res,404,{error:'Assistant channels unsupported.'});
+      this.options.assistantChannels.request(req,res,(...args)=>this.json(...args)).catch(()=>{if(!res.writableEnded)this.json(res,409,{error:'Assistant channel unavailable.'});});
+      return;
+    }
     if (!this.authorized(req)) return this.json(res, 401, { error: 'Pairing required.' });
     if (req.method === 'GET' && req.url === '/state') return this.json(res, 200, this.state());
     if (req.method === 'GET' && req.url === '/events') {

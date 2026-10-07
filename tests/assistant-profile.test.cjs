@@ -86,3 +86,22 @@ test('capability presentation reports unknown entitlement and preserves negotiat
     'explicit_binding_required',
   );
 });
+test('private owner phone questions advertise their separate finite grant without widening task pairing, voice or audience', () => {
+  const result = capabilities({
+    privateChannels: {},
+    peerContract: require('../src/peer-contract.cjs').capabilities(),
+  });
+  assert.equal(
+    result.features.find((f) => f.name === 'Phone assistant').state,
+    'separate_private_owner_grant_required',
+  );
+  assert.equal(result.channels.find((c) => c.name === 'Paired phone').assistant, false);
+  const phone = result.channels.find((c) => c.name === 'Private owner phone channel');
+  assert.equal(phone.version, 1);
+  assert.equal(phone.assistantQuestions, true);
+  assert.equal(phone.grantRequired, true);
+  assert.equal(phone.taskActions, false);
+  assert.equal(phone.sharedAudience, false);
+  assert.equal(phone.voice, false);
+  assert.equal(phone.accountEntitlement, 'unverified');
+});
