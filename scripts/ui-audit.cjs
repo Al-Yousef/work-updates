@@ -27,7 +27,8 @@ const check = (condition, message) => {
   lastCheck = message;
 };
 async function waitFor(page, fn) {
-  await page.waitForFunction(fn, null, { timeout: 12000 });
+  try{await page.waitForFunction(fn, null, { timeout: 12000 });}
+  catch(error){console.error('Synthetic UI assertion state:',await page.evaluate(()=>({status:document.querySelector('#panel-status')?.textContent,userMessages:document.querySelectorAll('.message.user').length,taskError:document.querySelector('#task-error')?.textContent,notice:document.querySelector('#notice')?.textContent,draftLength:document.querySelector('#chat-input')?.value.length})));throw error;}
 }
 (async () => {
   try {

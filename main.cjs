@@ -126,7 +126,7 @@ const assistant = new Assistant({directory:dataDir,snapshot:()=>devices.snapshot
     subscribe:changed=>{queue.on('change',changed);devices.on('change',changed);return()=>{queue.off('change',changed);devices.off('change',changed);};},
     request:targets=>Promise.allSettled(targets.map(target=>devices.command('details',{id:target.id,taskKey:target.taskKey,sourceId:target.sourceId}))),
   },targets),
-  dispatch:(mode,input)=>devices.command(mode==='queue'?'queueMessage':'send',input)});
+  dispatch:(mode,input)=>devices.command(mode==='cancel'?'cancelMessage':mode==='queue'?'queueMessage':'send',input)});
 const csp =
   "default-src 'self'; script-src 'self'; style-src 'self'; img-src 'self' data:; connect-src 'none'; base-uri 'none'; object-src 'none'; form-action 'none'; frame-ancestors 'none'";
 function snapshot() {
@@ -407,6 +407,9 @@ async function performLocal(method, input = {}) {
   if (method === 'send')
     return messages.send(input);
   if (method === 'queueMessage') return messages.enqueue(input);
+  if (method === 'cancelMessage') {
+    const source=taskSource(queue.get(input.id,input.taskKey),input.sourceId);if(!source)throw new Error('Choose the source of that queued message.');return messages.cancel(input.messageId,source.id);
+  }
   if (method === 'clearMessages') {
     const source=taskSource(queue.get(input.id,input.taskKey),input.sourceId);
     return messages.clear(source.id,input.checked===true);

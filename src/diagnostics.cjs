@@ -124,6 +124,7 @@ const methods = new Set([
   'refresh',
   'send',
   'queueMessage',
+  'cancelMessage',
   'clearMessages',
   'logs',
   'assistantAsk',

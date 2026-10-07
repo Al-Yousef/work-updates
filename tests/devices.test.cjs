@@ -54,6 +54,7 @@ function setup(t) {
     state: () => local,
     command: async (method, input) => {
       calls.push({ method, input });
+      if(['send','queueMessage','cancelMessage'].includes(method))return {messageId:input.messageId||'generated-local',sourceId:input.sourceId,delivery:'sent',turnId:'local-turn'};
       return { id: 'new-local' };
     },
     encrypt: (s) => Buffer.from(s),
@@ -70,6 +71,7 @@ function setup(t) {
       };
       peer.command = async (method, input) => {
         peer.calls.push({ method, input });
+        if(['send','queueMessage','cancelMessage'].includes(method))return {messageId:input.messageId||'generated-remote',sourceId:input.sourceId,delivery:'sent',turnId:'remote-turn'};
         return { id: 'new-remote' };
       };
       peer.close = () => {
@@ -146,6 +148,12 @@ test('mixed-device identities and groups are rejected instead of falling back to
   );
   assert.equal(calls.length, 0);
   assert.equal(peers[0].calls.length, 0);
+});
+test('a task opened before startup resolves its sole newly created source before validating the delivery receipt',async t=>{
+  const {devices,local,calls}=setup(t);
+  const receipt=await devices.command('send',{id:'same-card',taskKey:'same-task',sourceId:null,text:'A follow-up after starting the queued task'});
+  assert.equal(calls[0].input.sourceId,'same-chat');assert.equal(receipt.sourceId,'same-chat');assert.equal(receipt.delivery,'sent');
+  local.cards[0].sources.push({id:'another-chat'});await assert.rejects(devices.command('send',{id:'same-card',taskKey:'same-task',text:'Ambiguous source'}),/exact source/);assert.equal(calls.length,1);
 });
 test('an offline computer keeps labeled last-known context but cannot receive a mutation', async (t) => {
   const { devices, calls, peers } = setup(t);

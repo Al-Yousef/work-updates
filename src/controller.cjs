@@ -268,6 +268,7 @@ class Controller extends EventEmitter {
         status: done ? 'done' : status,
         ...inferAttention(latest, status),
         notificationVersion: p.turn.id,
+        turnOutcome: ['completed','failed','interrupted'].includes(p.turn.status)?p.turn.status:'failed',
         completedAt: now(),
         error:
           p.turn.error?.message ||

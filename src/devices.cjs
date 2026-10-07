@@ -95,7 +95,7 @@ class Devices extends EventEmitter {
       id: p + card.id,
       taskKey: p + card.taskKey,
       primarySourceId: card.primarySourceId ? p + card.primarySourceId : undefined,
-      sources: card.sources.map((s) => ({ ...s, id: p + s.id })),
+      sources: card.sources.map((s) => ({ ...s, id: p + s.id,deliveryOutcomes:s.deliveryOutcomes?.map(d=>({...d,sourceId:p+d.sourceId})) })),
       owner: this.owner(entry),
     }, { health: entry.state?.health, collectedAt: entry.state?.collectedAt });
   }
@@ -308,6 +308,11 @@ class Devices extends EventEmitter {
     }
     if (entry && !entry.peer.connected)
       throw new Error(entry.name + ' is offline. Reconnect before sending this action.');
+    if(['send','queueMessage','cancelMessage'].includes(method)&&!next.sourceId){
+      const state=entry?entry.state:this.options.state(),card=[...(state?.cards||[]),...(state?.done||[])].find(c=>c.id===next.id&&(!next.taskKey||c.taskKey===next.taskKey));
+      if(card?.sources?.length!==1)throw new Error('Choose the exact source chat before sending this message.');
+      next.sourceId=card.sources[0].id;
+    }
     const generation = entry?.peer.generation || 0,
       eventCount = entry?.eventCount;
     const result = entry
@@ -332,6 +337,10 @@ class Devices extends EventEmitter {
       return this.snapshot();
     }
     recordUndo();
+    if(['send','queueMessage','cancelMessage'].includes(method)&&result&&typeof result==='object'){
+      if(!current()||!result.messageId||(input.messageId&&result.messageId!==input.messageId)||result.sourceId!==next.sourceId)throw Object.assign(new Error('The source did not return a matching delivery identity. Check it before retrying.'),{delivery:'uncertain',code:'DELIVERY_RECEIPT'});
+      return {...result,ownerId:entry?entry.id:this.local.id,sourceId:entry?prefix(entry.id)+next.sourceId:next.sourceId,...(entry&&result.taskId?{taskId:prefix(entry.id)+result.taskId}:{})};
+    }
     if (method === 'details' && entry) return this.card(result, entry);
     if (entry && result && typeof result === 'object') {
       const p = prefix(entry.id),

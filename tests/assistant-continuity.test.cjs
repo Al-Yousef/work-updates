@@ -11,7 +11,7 @@ function fixture(t,options={}) {
   const state={cards:[card()],done:[],collectedAt:Math.floor(Date.now()/1000),health:{ok:true}};
   const calls=[],dispatches=[];
   const provider={async answer(input){calls.push(input);return options.answer?options.answer(input):{answer:'Understood.',links:[],action:null};},close(){}};
-  const app=new Assistant({directory,snapshot:()=>state,provider,dispatch:async(mode,input)=>{dispatches.push({mode,input});return options.dispatch?options.dispatch(mode,input):{delivery:mode==='queue'?'queued':'sent',route:'synthetic'};},...options.appOptions});
+  const app=new Assistant({directory,snapshot:()=>state,provider,dispatch:async(mode,input)=>{dispatches.push({mode,input});return options.dispatch?options.dispatch(mode,input):{delivery:mode==='queue'?'queued':'sent',messageId:input.messageId,sourceId:input.sourceId,ownerId:'pc',turnId:mode==='queue'?null:'accepted-turn',route:'synthetic'};},...options.appOptions});
   t.after(()=>{app.close();fs.rmSync(directory,{recursive:true,force:true});});
   const ask=async(text,id=crypto.randomUUID())=>{app.ask({text,messageId:id});await app.work;return app.state.messages.find(m=>m.id===id);};
   return {app,state,directory,calls,dispatches,ask,provider};
@@ -72,16 +72,16 @@ test('offline and unavailable source context remains labelled and waits are boun
 test('a clear user instruction sends once to the focused chat and preserves the receipt across restart',async t=>{
   const f=fixture(t,{answer:async input=>({answer:'I will pass that instruction along.',links:[],action:{ref:input.requestedChatRef,text:'Fix the layout spacing.',mode:'send'}})});
   f.app.focus(f.state.cards[0]);const id=crypto.randomUUID(),question='Tell that chat to fix the layout spacing.';
-  const answer=await f.ask(question,id);assert.equal(answer.status,'completed');assert.match(answer.answer,/^Sent to Release review/);
+  const answer=await f.ask(question,id);assert.equal(answer.status,'completed');assert.match(answer.answer,/^Accepted by Codex for Release review/);
   assert.equal(f.dispatches.length,1);assert.equal(f.dispatches[0].input.sourceId,'source-release');
   f.app.ask({text:question,messageId:id});assert.equal(f.dispatches.length,1);
   const reloaded=new Assistant({directory:f.directory,snapshot:()=>f.state,provider:f.provider,dispatch:()=>{throw new Error('must not replay');}});t.after(()=>reloaded.close());
-  reloaded.ask({text:question,messageId:id});assert.equal(reloaded.state.messages.at(-1).action.status,'sent');
+  reloaded.ask({text:question,messageId:id});assert.equal(reloaded.state.messages.at(-1).action.status,'accepted');
 });
 test('working source instructions are queued and never reported as sent',async t=>{
   const f=fixture(t,{answer:async input=>({answer:'I will handle it.',links:[],action:{ref:input.requestedChatRef,text:'Check the next step.',mode:'send'}})});
   f.state.cards[0].sources[0].lifecycle='working';f.app.focus(f.state.cards[0]);
-  const answer=await f.ask('Tell this chat to check the next step.');assert.match(answer.answer,/^Queued for/);assert.equal(f.dispatches[0].mode,'queue');
+  const answer=await f.ask('Tell this chat to check the next step.');assert.match(answer.answer,/^Locally queued for/);assert.equal(f.dispatches[0].mode,'queue');
 });
 test('question, quoted command and draft requests cannot authorize an injected model action',async t=>{
   const f=fixture(t,{answer:async()=>({answer:'Doing it.',links:[],action:{ref:'c0',text:'Unrequested work',mode:'send'}})});f.app.focus(f.state.cards[0]);

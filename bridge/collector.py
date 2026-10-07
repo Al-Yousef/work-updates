@@ -383,6 +383,7 @@ def collect(config):
                            'conversationLoaded': requested_context,
                            'notificationAt': int(completed_at or evidence_at), 'completedAt': int(completed_at),
                            'readyForReview': ready, 'lifecycle': lifecycle, 'contextLoaded': True, 'turnId': turn_id,
+                           'turnOutcome': 'completed' if ready and turn_id else 'interrupted' if lifecycle == 'interrupted' and turn_id else None,
                            'status': status, 'label': label, 'fingerprint': fp,
                            'phase': phase, 'cwd': (r['cwd'] or '').removeprefix('\\\\?\\'),
                            'uri': 'codex://threads/' + r['id'], 'evidence': 'Recorded completion event' if ready else 'Local recorded chat activity'}
