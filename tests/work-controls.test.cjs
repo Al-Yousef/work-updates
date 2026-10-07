@@ -292,3 +292,156 @@ test('Codex interrupt validates the exact loaded active turn and returns a reque
   assert.equal(calls.length, 1);
   assert.equal(client.active.get('owned-source'), 'owned-turn');
 });
+
+test('stop-all remains available while the assistant awaits a real Research adapter read, discards its result and retains responding until it settles', async (t) => {
+  const f = fixture();
+  t.after(() => f.close());
+  await f.parent();
+  const { Research } = require('../src/research.cjs');
+  let release,
+    startedResolve,
+    reads = 0;
+  const started = new Promise((resolve) => (startedResolve = resolve)),
+    storeId = 'b'.repeat(64);
+  const reader = {
+    storeId: () => storeId,
+    read: async (request) => {
+      request.beforeRead();
+      reads++;
+      startedResolve();
+      await new Promise((resolve) => (release = resolve));
+      return {
+        schema: 1,
+        threadId: request.scope.sourceId,
+        storeId,
+        requestNonce: request.nonce,
+        since: request.since,
+        until: request.until,
+        capturedAt: Date.now() / 1000,
+        records: [
+          {
+            id: 'c'.repeat(64),
+            role: 'assistant',
+            text: 'Late synthetic original reply must be discarded after stop',
+            at: request.until,
+            truncated: false,
+          },
+        ],
+        coverage: {
+          exhaustive: false,
+          candidateRecords: 1,
+          includedRecords: 1,
+          bytesRead: 100,
+          byteLimit: 4194304,
+          recordLimit: request.limit,
+          skippedRecords: 0,
+          gaps: ['Bounded synthetic read'],
+        },
+      };
+    },
+    close() {},
+  };
+  const research = new Research({
+    directory: f.directory,
+    policy: f.policy,
+    reader,
+    snapshot: f.snapshot,
+    admission: (scope) => f.controls.readAdmission(scope),
+  });
+  t.after(() => research.close());
+  f.setResearch(research);
+  f.assistant.options.research = research;
+  const config = {
+    topic: 'synthetic result',
+    initialLookbackSeconds: 3600,
+    incrementalLookbackSeconds: 3600,
+    until: new Date(Date.now() + 3600000).toISOString().replace(/\.\d{3}Z$/, 'Z'),
+    maxReads: 8,
+    maxReadsPerDay: 4,
+    recordLimit: 8,
+    background: false,
+    intervalSeconds: 0,
+  };
+  const enabled = await f.ask('/research enable ' + f.source.id + ': ' + JSON.stringify(config));
+  assert.equal(enabled.status, 'completed', enabled.answer);
+  const first = f.ask('/research read ' + enabled.researchId);
+  await started;
+  assert.equal(f.assistant.active, true);
+  const stopped = await f.ask('/work stop-all');
+  assert.equal(stopped.status, 'completed', stopped.answer);
+  assert.equal(f.assistant.active, true);
+  assert.throws(
+    () => f.assistant.ask({ messageId: crypto.randomUUID(), text: 'New unrelated question' }),
+    /Hyphen is answering/,
+  );
+  release();
+  await first;
+  assert.equal(f.assistant.active, false);
+  assert.equal(research.entry(enabled.researchId).records.length, 0);
+  assert.equal(reads, 1);
+  await research.read(enabled.researchId, { manual: true });
+  assert.equal(reads, 1);
+});
+
+test('changed owner or task scope cannot turn a held queued intent into a verified resume', async (t) => {
+  const f = fixture();
+  t.after(() => f.close());
+  const id = await f.parent();
+  await f.ask('/work pause-main ' + id);
+  const original = f.controls.options.snapshot;
+  f.controls.options.snapshot = () => ({
+    ...f.snapshot(),
+    cards: f
+      .snapshot()
+      .cards.map((c) => ({ ...c, owner: { ...c.owner, id: 'replacement-owner' } })),
+  });
+  const refused = await f.ask('/work resume-main ' + id);
+  assert.equal(refused.status, 'failed');
+  assert.equal(f.controls.active('main', id).active, true);
+  assert.equal(f.calls, 0);
+  f.controls.options.snapshot = original;
+});
+
+test('a pause arriving during source preparation prevents its later send, and a post-interrupt journal failure keeps an unknown checkpoint', async (t) => {
+  const f = fixture();
+  t.after(() => f.close());
+  await f.parent();
+  f.sources[0].lifecycle = 'completed';
+  const started = await f.start(),
+    e = f.delegations.entry(started.delegationId);
+  let release, preparingResolve;
+  const preparing = new Promise((resolve) => (preparingResolve = resolve));
+  f.client.prepare = async (id) => {
+    f.client.loaded.add(id);
+    preparingResolve();
+    await new Promise((resolve) => (release = resolve));
+  };
+  const pumping = f.messages.pump();
+  await preparing;
+  await f.ask('/work pause-main ' + e.parentId);
+  release();
+  await pumping;
+  assert.equal(f.calls, 0);
+  // Separate owned profile avoids restoring an uncertain or refused pass.
+  const g = fixture();
+  t.after(() => g.close());
+  await g.parent();
+  g.sources[0].lifecycle = 'completed';
+  const accepted = await g.start(),
+    child = g.delegations.entry(accepted.delegationId);
+  await g.messages.pump();
+  g.observe();
+  const atomic = require('../src/private-store.cjs').atomicJSON;
+  g.controls.options.write = (file, value) => {
+    if (value.actions.some((a) => a.resources.some((r) => r.status === 'interrupt_requested')))
+      throw new Error('Synthetic result checkpoint failure');
+    atomic(file, value);
+  };
+  const result = await g.ask('/work stop-child ' + child.id);
+  assert.equal(g.interrupts, 1);
+  assert.equal(g.controls.action(result.workControlId).resources[0].status, 'unknown');
+  delete g.controls.options.write;
+  g.restartControls();
+  g.controls.reconcile();
+  assert.equal(g.interrupts, 1);
+});

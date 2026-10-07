@@ -654,7 +654,7 @@ app.whenReady().then(async () => {
         const result = await perform(method, input);
         return method === 'details' ? cardView(result, true,attachments) : ['send','queueMessage','assistantAsk','assistantUse','attachImages','openAttachment'].includes(method) ? result : {};
       },
-      status: () => ({activeWriters:Math.max(client.status?.().active ?? 0, client.status?.().pending ?? 0, queue.busy?.size ?? 0,messages.active.size,desktop?.pending.size||0,assistant.active?1:0,responsibilities.pending.size,schedules.pending.size,research.pending.size),
+      status: () => ({activeWriters:Math.max(client.status?.().active ?? 0, client.status?.().pending ?? 0, queue.busy?.size ?? 0,messages.active.size,desktop?.pending.size||0,assistant.active?1:0,responsibilities.pending.size,schedules.pending.size,research.pending.size,workControls.pending.size),
         mode:'native-backend', windowCount:BrowserWindow.getAllWindows().length,
         rendererCount:app.getAppMetrics().filter(p => p.type === 'Tab').length}),
       quit: () => {quitting=true; app.quit();},
@@ -864,7 +864,7 @@ app.whenReady().then(async () => {
       status: () => ({
         cornerConfigured: !!queue.state.settings.corner,
         launcherActive: !!corner && !corner.isDestroyed(),
-        activeWriters: Math.max(client.status?.().active ?? 0,client.status?.().pending??0,queue.busy.size,messages.active.size,desktop?.pending.size||0,assistant.active?1:0,responsibilities.pending.size,schedules.pending.size,research.pending.size),
+        activeWriters: Math.max(client.status?.().active ?? 0,client.status?.().pending??0,queue.busy.size,messages.active.size,desktop?.pending.size||0,assistant.active?1:0,responsibilities.pending.size,schedules.pending.size,research.pending.size,workControls.pending.size),
         windowMode: windowController.mode,
       }),
       quit: () => {quitting = true; app.quit();},
