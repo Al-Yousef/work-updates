@@ -31,7 +31,7 @@ Installed tooling needs absolute `HYPHEN_INSTALL_ROOT` containing `desktop/` and
 
 Default mode redirects private Explorer weather invocations while Windows renders the tile and owns hover timing. It does not use a covering hotspot/global hook. Hover reveals, pointer transfer retains, click pins and the next click hides. X/Escape hide; tray Exit closes. The covering-trigger experiment requires explicit `--legacy-trigger` and is not an automatic fallback.
 
-Only the exact module fingerprint and weather sender are supported. Mismatches preserve original handlers. Process-exit cleanup exists; hung-panel detection and wider physical coverage remain issue #6. Read the [adapter contract](taskbar-adapter/README.md) before changing it.
+Only the exact module fingerprint and weather sender are supported. Mismatches preserve original handlers. A bounded worker heartbeat restores original handlers for hung, stale or exited panels. Wider physical coverage remains issue #6. Read the [adapter contract](taskbar-adapter/README.md) before changing it.
 
 Model tests cover state/motion/detours in isolation. GUI checks use simulated input on owned windows. Physical cursor gestures, mixed DPI/monitors, Explorer restart and real Codex delivery need independent proof. An attached adapter, screenshot or mocked receipt alone does not establish those outcomes.
 

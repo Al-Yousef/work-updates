@@ -5,6 +5,7 @@
 
 namespace test {
 unsigned hoverCalls=0,taskbarClicks=0,launchClicks=0,leaveCalls=0,checks=0;
+std::atomic<bool> stallHello{false};std::atomic<HWND> healthWindow{nullptr};std::atomic<ULONG_PTR> healthCookie{0};
 std::vector<taskbar::Command> received;
 void check(bool result,const char* name) {++checks; if(!result)throw std::runtime_error(name);}
 __declspec(noinline) void WINAPI hover(void* object) {hoverCalls+=object?1:2; MemoryBarrier();}
@@ -29,13 +30,19 @@ struct Sender final:IInspectable {
 };
 LRESULT CALLBACK windowProc(HWND window,UINT message,WPARAM wp,LPARAM lp) {
     if(message==taskbar::message) {
-        if(!taskbar::accepted(endpoint,wp))return 0;
-        if(lp==static_cast<LPARAM>(taskbar::Command::Hello))return 1;
+        if(window==healthWindow.load()?wp!=healthCookie.load():!taskbar::accepted(endpoint,wp))return 0;
+        if(lp==static_cast<LPARAM>(taskbar::Command::Hello)){if(stallHello)Sleep(1000);return 1;}
         received.push_back(static_cast<taskbar::Command>(lp)); return 1;
     }
     return DefWindowProcW(window,message,wp,lp);
 }
 void drain(){MSG message; while(PeekMessageW(&message,nullptr,0,0,PM_REMOVE))DispatchMessageW(&message);}
+DWORD WINAPI healthThread(void*) {
+    const HWND window=CreateWindowW(L"WorkUpdatesAdapterIsolatedTest",L"",WS_POPUP,0,0,0,0,nullptr,nullptr,GetModuleHandleW(nullptr),nullptr);
+    healthWindow.store(window);MSG message;
+    while(GetMessageW(&message,nullptr,0,0)>0){DispatchMessageW(&message);if(!IsWindow(window))break;}
+    return 0;
+}
 }
 int main() {
     using namespace test;
@@ -56,6 +63,23 @@ int main() {
         const auto testDirectory=std::filesystem::temp_directory_path()/(L"work-updates-adapter-test-"+std::to_wstring(GetCurrentProcessId()));
         std::filesystem::create_directories(testDirectory/L"artifacts");
         endpoint=taskbar::publish(window,testDirectory/L"test-endpoint.exe");
+        const auto descriptor=taskbar::endpointPath(testDirectory/L"test-endpoint.exe");taskbar::Endpoint saved{};
+        check(taskbar::readEndpoint(descriptor,saved)&&saved.cookie==endpoint.cookie,"Published descriptor has one complete session");
+        const HANDLE lockedDescriptor=CreateFileW(descriptor.c_str(),GENERIC_READ,FILE_SHARE_READ,nullptr,OPEN_EXISTING,FILE_ATTRIBUTE_NORMAL,nullptr);
+        check(lockedDescriptor!=INVALID_HANDLE_VALUE,"Lock only the fixture descriptor against replacement");bool refused=false;
+        try{taskbar::publish(window,testDirectory/L"test-endpoint.exe");}catch(const std::exception&){refused=true;}CloseHandle(lockedDescriptor);
+        check(refused&&taskbar::readEndpoint(descriptor,saved)&&saved.cookie==endpoint.cookie,"Failed publication preserves the last complete session");
+        const auto previous=endpoint;endpoint=taskbar::publish(window,testDirectory/L"test-endpoint.exe");
+        check(endpoint.cookie!=previous.cookie&&!taskbar::accepted(endpoint,previous.cookie),"A replacement instance refuses the obsolete session cookie");
+        auto invalid=endpoint;invalid.version=2;
+        {std::ofstream file(descriptor,std::ios::binary|std::ios::trunc);file.write(reinterpret_cast<const char*>(&invalid),sizeof(invalid));}
+        saved=endpoint;check(!taskbar::readEndpoint(descriptor,saved)&&saved.cookie==endpoint.cookie,"Unsupported descriptors do not overwrite the current session");
+        {std::ofstream file(descriptor,std::ios::binary|std::ios::trunc);file.write(reinterpret_cast<const char*>(&endpoint),sizeof(endpoint));file.put('x');}
+        check(!taskbar::readEndpoint(descriptor,saved),"Oversized descriptors are refused");
+        {std::ofstream file(descriptor,std::ios::binary|std::ios::trunc);file.put('x');}
+        check(!taskbar::readEndpoint(descriptor,saved),"Partial descriptors are refused");
+        check(!taskbar::readEndpoint(testDirectory/L"artifacts",saved),"Directories are refused as descriptors");
+        endpoint=taskbar::publish(window,testDirectory/L"test-endpoint.exe");
         check(SendMessageW(window,taskbar::message,endpoint.cookie,static_cast<LPARAM>(taskbar::Command::Hello))==1,"Session hello accepted");
         check(SendMessageW(window,taskbar::message,endpoint.cookie^1,static_cast<LPARAM>(taskbar::Command::Hello))==0,"Forged session hello rejected");
         panelProcess=OpenProcess(SYNCHRONIZE,FALSE,GetCurrentProcessId());
@@ -69,7 +93,19 @@ int main() {
         volatile Hover callHover=&hover; volatile Click callClick=&click,callLaunch=&launch; volatile Leave callLeave=&leave;
         callHover(object); callClick(object,sender,args); drain();
         check(hoverCalls==1 && taskbarClicks==1 && received.empty(),"Disconnected adapter preserves real originals");
-        connected=true;
+        check(!health.fresh(GetTickCount64()),"An unacknowledged health lease must fail open");
+        healthCookie=endpoint.cookie;
+        const HANDLE healthWorker=CreateThread(nullptr,0,healthThread,nullptr,0,nullptr);check(healthWorker!=nullptr,"Create own health window thread");
+        for(unsigned i=0;i<40&&!healthWindow.load();++i)Sleep(25);check(healthWindow.load()!=nullptr,"Own health window is ready");
+        const auto originalWindow=endpoint.window;endpoint.window=reinterpret_cast<std::uintptr_t>(healthWindow.load());
+        check(panelHealthy(),"Fresh cookie and responsive panel renew health");
+        endpoint.pid^=1;check(!panelHealthy(),"A window from another PID does not renew health");endpoint.pid^=1;
+        endpoint.cookie^=1;check(!panelHealthy(),"Wrong cookie does not renew health");endpoint.cookie^=1;
+        stallHello=true;const auto probeAt=GetTickCount64();check(!panelHealthy(),"Hung live panel fails bounded health probe");
+        check(GetTickCount64()-probeAt<700,"Health timeout stays bounded on its worker");stallHello=false;
+        PostMessageW(healthWindow.load(),WM_CLOSE,0,0);check(WaitForSingleObject(healthWorker,2500)==WAIT_OBJECT_0,"Hung fixture resumes and exits without termination");CloseHandle(healthWorker);
+        endpoint.window=originalWindow;
+        health.acknowledge(GetTickCount64());connected=true;
         callHover(object); callClick(object,sender,args); callLaunch(object,sender,args); drain();
         check(hoverCalls==1 && taskbarClicks==1 && launchClicks==1,"Only connected weather invokes skip originals");
         check(received.size()==2 && received[0]==taskbar::Command::Hover && received[1]==taskbar::Command::Click,"Ordered async weather commands");
@@ -81,14 +117,18 @@ int main() {
         check(leaveCalls==1 && received.back()==taskbar::Command::Leave,"Leave keeps original cleanup and reports dismissal");
         const auto count=received.size(); callLeave(object,args); drain();
         check(leaveCalls==2 && received.size()==count,"Unrelated leave does not send extra dismissals");
+        sender=&weather;health.acknowledge(GetTickCount64()-taskbar::healthLeaseMs-1);callHover(object);callClick(object,sender,args);drain();
+        check(hoverCalls==2&&taskbarClicks==5&&received.size()==count,"Expired health cannot consume weather commands while the process still lives");
+        health.acknowledge(GetTickCount64()+1000);check(!health.fresh(GetTickCount64()),"Future health acknowledgements are refused");
+        health.acknowledge(GetTickCount64());
         connected=false; sender=&weather; callHover(object); callClick(object,sender,args); drain();
-        check(hoverCalls==2 && taskbarClicks==5 && received.size()==count,"Lease removal passes originals immediately");
+        check(hoverCalls==3 && taskbarClicks==6 && received.size()==count,"Lease removal passes originals immediately");
         connected=true; DestroyWindow(window); callHover(object); callClick(object,sender,args);
-        check(hoverCalls==3 && taskbarClicks==6,"Destroyed endpoint fails open to Widgets originals");
+        check(hoverCalls==4 && taskbarClicks==7,"Destroyed endpoint fails open to Widgets originals");
         connected=false;
         check(MH_DisableHook(MH_ALL_HOOKS)==MH_OK,"Disable isolated hooks");
         callHover(object); callClick(object,sender,args);
-        check(hoverCalls==4 && taskbarClicks==7,"Disabled function entries restored");
+        check(hoverCalls==5 && taskbarClicks==8,"Disabled function entries restored");
         check(MH_Uninitialize()==MH_OK,"Clean isolated hooks");
         CloseHandle(panelProcess); panelProcess=nullptr;
         std::filesystem::remove(testDirectory/L"artifacts/taskbar-adapter.info");

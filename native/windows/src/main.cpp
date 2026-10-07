@@ -1498,14 +1498,13 @@ LRESULT CALLBACK triggerProc(HWND window, UINT message, WPARAM wp, LPARAM lp) {
             case taskbar::Command::Click: app.weatherInside=true; app.weatherClick(); return 1;
             case taskbar::Command::Stopped: case taskbar::Command::Failed:
                 app.adapterReady=false; app.log(lp==static_cast<LPARAM>(taskbar::Command::Failed)?"adapter-failed":"adapter-stopped");
-                if(lp==static_cast<LPARAM>(taskbar::Command::Stopped)||!app.bridge.connected)PostQuitMessage(0);
-                else app.renderer.model.message="Weather shortcut unavailable. Open the queue from its tray icon.";
+                app.renderer.model.message="Weather shortcut unavailable. Open the queue from its tray icon.";
+                if(app.mode!=Mode::Hidden)app.renderer.paint();
                 return 1;
             }
             return 0;
         }
         if(message==app.taskbarCreated && app.taskbarCreated) {
-            if(!app.allowAdapterAttach)return 0;
             app.addTray(); app.moveHome();
             if(app.taskbarAdapter&&app.allowAdapterAttach) {app.adapterReady=false; app.attachAdapter(); app.log("explorer-restarted");}
             return 0;
