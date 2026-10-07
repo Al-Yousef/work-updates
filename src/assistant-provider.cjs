@@ -13,6 +13,7 @@ const outputSchema = { type:'object', additionalProperties:false, required:['ans
   answer:{type:'string'}, links:{type:'array',items:{type:'object',additionalProperties:false,required:['ref','draft'],properties:{ref:{type:'string'},draft:{type:'string'}}}},
   action:{anyOf:[{type:'null'},{type:'object',additionalProperties:false,required:['ref','text','mode'],properties:{ref:{type:'string'},text:{type:'string'},mode:{type:'string',enum:['send','queue']}}}]}
 }};
+const coordinationInstructions=' When requestedMessage is present, it is text from a human instruction with an explicitly resolved current destination. Copy its text exactly into action.text and use its mode; do not add source instructions or recalled context. A current destination choice may resolve the preceding clarification. Acceptance and queueing are distinct from later completion, which comes only from observed matching-turn evidence.';
 
 class AssistantProvider {
   constructor(options={}) { this.options=options; this.client=null; this.model=null; }
@@ -37,7 +38,7 @@ class AssistantProvider {
       for(const id of Object.keys(existing.plugins||{}))config[`plugins.${id}.enabled`]=false;
       fs.mkdirSync(this.options.directory,{recursive:true});
       const started=await client.call('thread/start',{ephemeral:true,model:this.model,cwd:this.options.directory,
-        approvalPolicy:'never',sandbox:'read-only',baseInstructions:instructions,developerInstructions:instructions,config,serviceName:'hyphen_assistant'});
+        approvalPolicy:'never',sandbox:'read-only',baseInstructions:instructions+coordinationInstructions,developerInstructions:instructions+coordinationInstructions,config,serviceName:'hyphen_assistant'});
       if(started.thread.ephemeral!==true)throw new Error('Hyphen could not create a private assistant session.');
       const threadId=started.thread.id;
       return await new Promise((resolve,reject)=>{

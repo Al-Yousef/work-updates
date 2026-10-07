@@ -1,0 +1,49 @@
+'use strict';
+// Opt-in real-chat transport audit. The structured answer provider is a fixture:
+// source turns use a real model only after explicit disposable-chat authorization.
+const fs=require('node:fs'),path=require('node:path'),crypto=require('node:crypto'),assert=require('node:assert/strict');
+const {Codex}=require('../src/codex.cjs'),{DemoCodex,feed}=require('../src/demo.cjs'),{Queue}=require('../src/queue.cjs'),{Controller}=require('../src/controller.cjs'),{Messages}=require('../src/messages.cjs'),{Assistant}=require('../src/assistant.cjs');
+const synthetic=process.argv.includes('--synthetic');
+if(!synthetic&&!process.argv.includes('--allow-disposable-chat'))throw new Error('Separate human authorization is required. This audit creates and archives one disposable chat and uses existing quota for three synthetic source turns.');
+const directory=path.resolve(process.argv.find(a=>a.startsWith('--output='))?.slice(9)||'artifacts/coordination-contract-'+Date.now());
+if(fs.existsSync(directory)&&fs.readdirSync(directory).length)throw new Error('Use a new empty audit directory, never installed app data.');fs.mkdirSync(directory,{recursive:true});
+const prompts=['Reply only COORDINATION_SEND_OK.','Write 150 numbered lines, each containing only its number and AUDIT. Do not call tools.','Reply only COORDINATION_QUEUE_OK.'];
+let client,queue,controller,messages,assistant,threadId,model,dispatches=0,archived=false,toolRequested=false;const accepted=[],outcomes=new Map(),transcript=[];
+const provider={async answer(input){return {answer:'Prepared synthetic instruction.',links:[],action:input.requestedMessage?{ref:input.requestedChatRef,text:input.requestedMessage.text,mode:input.requestedMessage.mode}:null};},close(){}};
+class AuditDemo extends DemoCodex {
+  async send(id){const turnId=crypto.randomUUID();setTimeout(()=>{this.active.set(id,turnId);this.emit('notification',{method:'turn/started',params:{threadId:id,turn:{id:turnId}}});setTimeout(()=>{this.active.delete(id);this.emit('notification',{method:'turn/completed',params:{threadId:id,turn:{id:turnId,status:'completed'}}});},700);},20);return {turn:{id:turnId}};}
+}
+function refresh(){const value=feed(),turnId=accepted.at(-1)||'',terminal=outcomes.get(turnId),working=!!turnId&&!terminal;value.threads=[{...value.threads[0],id:threadId,title:'Hyphen disposable coordination audit',taskTitle:'Synthetic coordination contract',body:'Synthetic audit source only',lifecycle:working?'working':'completed',turnId,turnOutcome:terminal||null,fingerprint:'audit-'+outcomes.size,updatedAt:Date.now()/1000}];value.monitoredCount=1;value.collectedAt=Date.now()/1000;queue.setFeed(value);assistant?.observe(snapshot());}
+function snapshot(){const value=messages.decorate(queue.snapshot());value.cards=value.cards.map(c=>({...c,owner:{id:'audit-owner',name:'Disposable audit PC',kind:'pc',online:true}}));return value;}
+function input(text){refresh();const card=queue.cards().find(c=>c.sources.some(s=>s.id===threadId));assert.ok(card);return {id:card.id,taskKey:card.taskKey,sourceId:threadId,messageId:crypto.randomUUID(),text};}
+function openAssistant(){assistant=new Assistant({directory,snapshot,provider,dispatch:async(mode,value)=>{assert.equal(value.sourceId,threadId);const receipt=mode==='cancel'?messages.cancel(value.messageId,value.sourceId):mode==='queue'?messages.enqueue(value):await messages.send(value);return {...receipt,ownerId:'audit-owner'};}});assistant.focus(snapshot().cards[0],threadId);}
+async function ask(text,id=crypto.randomUUID()){refresh();assistant.ask({text,messageId:id});await assistant.work;const value=assistant.state.messages.find(m=>m.id===id);assert.equal(value.status,'completed',value.error);return value;}
+async function wait(predicate){const deadline=Date.now()+90000;while(!predicate()){if(toolRequested)throw new Error('Unexpected tool request; audit stopped');if(Date.now()>deadline)throw new Error('Audit timed out; do not retry delivery');await new Promise(r=>setTimeout(r,100));}}
+async function idle(){const turnId=accepted.at(-1);await wait(()=>outcomes.has(turnId)&&!client.active.has(threadId));assert.equal(outcomes.get(turnId),'completed');refresh();}
+async function prepare(){
+  if(synthetic){model='synthetic-transport';threadId=crypto.randomUUID();client=new AuditDemo();}
+  else{
+    client=new Codex({requestTimeoutMs:15000});await client.connect();const available=await client.call('model/list',{includeHidden:false});model=['gpt-6-luna','gpt-5.6-luna'].find(id=>available.data.some(m=>m.model===id));assert.ok(model);
+    const {config:existing}=await client.call('config/read',{includeLayers:false}),config={project_doc_max_bytes:0,include_environment_context:false,include_apps_instructions:false,include_collaboration_mode_instructions:false,web_search:'disabled','tools.view_image':false,'agents.enabled':false,'features.code_mode.enabled':false};
+    for(const name of ['shell_tool','unified_exec','multi_agent','apps','hooks','memories','remote_plugin','goals'])config['features.'+name]=false;
+    for(const id of Object.keys(existing.mcp_servers||{})){config[`mcp_servers.${id}.enabled`]=false;config[`mcp_servers.${id}.required`]=false;}for(const id of Object.keys(existing.plugins||{}))config[`plugins.${id}.enabled`]=false;
+    const instructions='This is a disposable Hyphen coordination transport audit. Respond only to synthetic text. Never call tools, read files, use connectors or do external work.';
+    const value=await client.call('thread/start',{cwd:directory,model,approvalPolicy:'never',sandbox:'read-only',baseInstructions:instructions,developerInstructions:instructions,config,serviceName:'hyphen_coordination_audit'});threadId=value.thread.id;assert.ok(threadId);client.loaded.add(threadId);
+    fs.writeFileSync(path.join(directory,'private-audit-identity.json'),JSON.stringify({threadId,createdByAudit:true}));await client.call('thread/name/set',{threadId,name:'Hyphen disposable coordination audit'});
+  }
+  client.on('notification',event=>{if(event.params?.threadId===threadId&&event.method==='turn/completed')outcomes.set(event.params.turn.id,event.params.turn.status);});client.on('request',event=>{toolRequested=true;client.reject(event.id);});
+  const send=client.send.bind(client);client.send=async(id,text,images,options)=>{assert.equal(id,threadId,'Never dispatch to another chat');dispatches++;transcript.push(text);const value=await send(id,text,images,options);accepted.push(value.turn?.id||value.turnId);return value;};
+  queue=new Queue(directory);const initial=feed();initial.threads=[{...initial.threads[0],id:threadId,title:'Hyphen disposable coordination audit'}];queue.setFeed(initial);controller=new Controller(queue,client);messages=new Messages(queue,controller,{auto:false});refresh();openAssistant();
+}
+(async()=>{const started=Date.now();try{
+  await prepare();const first=await ask('Tell this chat to '+prompts[0]);assert.equal(first.action.status,'accepted');await idle();assert.equal(first.action.status,'completed');
+  await messages.send(input(prompts[1]));await wait(()=>client.active.has(threadId)||outcomes.has(accepted.at(-1)));assert.ok(client.active.has(threadId),'Queue and cancellation require a genuinely active source turn');
+  const cancelled=await ask('Queue this chat to keep this cancelled synthetic draft.');assert.equal(cancelled.action.status,'queued');await ask('Cancel that queued message');assert.equal(messages.state.entries.find(e=>e.id===cancelled.action.messageId).status,'cancelled');assert.equal(dispatches,2);
+  const queued=await ask('Queue this chat to '+prompts[2]);assert.equal(queued.action.status,'queued');assistant.close();openAssistant();assistant.ask({text:queued.text,messageId:queued.id});assert.equal(dispatches,2);await idle();await messages.pump();refresh();assert.equal(dispatches,3);await idle();
+  const restored=assistant.state.messages.find(m=>m.id===queued.id);assert.equal(restored.action.status,'completed');assert.equal(assistant.use({messageId:queued.id,index:0}).sourceId,threadId);
+  const result=await ask('Draft a reply for Hyphen disposable coordination audit.');assert.equal(result.action,undefined);assert.equal(dispatches,3);assert.equal(toolRequested,false);
+  const texts=synthetic?transcript:(await client.call('thread/read',{threadId,includeTurns:true})).thread.turns.flatMap(turn=>turn.items||[]).filter(item=>item.type==='userMessage').map(item=>(item.content||[]).filter(c=>c.type==='text').map(c=>c.text).join('\n'));
+  assert.equal(texts.length,3);for(const prompt of prompts)assert.equal(texts.filter(text=>text===prompt).length,1);
+  if(!synthetic){await client.call('thread/archive',{threadId});archived=true;}
+  const report={schema:1,passed:true,mode:synthetic?'synthetic transport':'actual Codex app-server',model,sourceModelTurns:synthetic?0:3,assistantModelCalls:0,structuredAnswerProvider:'deterministic fixture',dispatches,acceptedThenConfirmedCompletion:true,queuedCancellation:true,restartReplayPrevented:true,readOnlyDraft:true,exactSourceOpened:true,existingChatsTouched:0,createdChats:synthetic?0:1,archived,connectorCalls:0,elapsedMs:Date.now()-started,limits:'Verifies coordination with source receipts and terminal notifications. Assistant model selection, desktop ownership, native GUI and physical input are separate evidence.'};fs.writeFileSync(path.join(directory,'verification.json'),JSON.stringify(report,null,2));console.log(JSON.stringify(report));
+}catch(error){fs.writeFileSync(path.join(directory,'failure.json'),JSON.stringify({passed:false,error:error.message,dispatches,createdAuditChat:!!threadId&&!synthetic,archived,needsHumanReview:!!threadId&&!synthetic}));throw error;}finally{assistant?.close();messages?.close();client?.close();}})().catch(error=>{console.error(error.stack);process.exitCode=1;});

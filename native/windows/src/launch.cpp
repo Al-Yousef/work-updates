@@ -58,6 +58,7 @@ int WINAPI wWinMain(HINSTANCE,HINSTANCE,PWSTR argument,int) {
         if(!ready())return 7;
     }
     std::wstring command=L"\""+target+L"\""+(wcscmp(argument,L"--hidden")==0?L"":L" --show");
+    if(wcscmp(argument,L"--no-auto-attach")==0)command+=L" --no-auto-attach";
     STARTUPINFOW startup{}; startup.cb=sizeof(startup);startup.dwFlags=STARTF_USESHOWWINDOW;startup.wShowWindow=SW_HIDE;
     PROCESS_INFORMATION process{};
     if(!CreateProcessW(target.c_str(),command.data(),nullptr,nullptr,FALSE,0,nullptr,nullptr,&startup,&process)) return 5;

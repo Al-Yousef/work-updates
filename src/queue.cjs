@@ -6,6 +6,7 @@ const { EventEmitter } = require('node:events');
 const { inferAttention, statusLabel } = require('./attention.cjs');
 const { device, executionDevice, shortSummary, taskSummary } = require('./presentation.cjs');
 const { summaryKey } = require('./summary-key.cjs');
+const {atomicJSON,readStore}=require('./private-store.cjs');
 const { compareCards, projectStatus } = require('./status-contract.cjs');
 const now = () => Math.floor(Date.now() / 1000);
 const hash = (value) => crypto.createHash('sha256').update(value).digest('hex').slice(0, 24);
@@ -26,9 +27,7 @@ function text(value, max) {
   return value.trim();
 }
 function atomic(file, value) {
-  fs.mkdirSync(path.dirname(file), { recursive: true });
-  fs.writeFileSync(file + '.tmp', JSON.stringify(value), { mode: 0o600 });
-  fs.renameSync(file + '.tmp', file);
+  atomicJSON(file,value);
 }
 function read(file, fallback) {
   try {
@@ -55,14 +54,14 @@ class Queue extends EventEmitter {
     super();
     this.directory = directory;
     this.file = path.join(directory, 'state.json');
-    this.state = read(this.file, {
+    this.state = readStore(this.file, {missing: {
       version: 1,
       tasks: [],
       cards: {},
       done: {},
       groups: [],
       settings: { pin: true, corner: false, attention: true, queueSince: now() - 7 * 86400 },
-    });
+    }}).value;
     this.state.tasks ??= [];
     this.state.cards ??= {};
     this.state.done ??= {};
@@ -187,6 +186,8 @@ class Queue extends EventEmitter {
           contextLoaded: !!s.contextLoaded,
           cwd: s.cwd || '',
           lifecycle: s.lifecycle,
+          turnId:s.turnId||null,
+          turnOutcome:s.turnOutcome||null,
         })),
         reviewed: state.dismissed === fp,
         snoozed: state.snoozedUntil > now(),
@@ -216,7 +217,8 @@ class Queue extends EventEmitter {
         const card = make(task.id, observed.title, [observed]);
         card.sources = card.sources.map(source=>({...source,
           conversation:conversation(source.conversation,task.messages),
-          conversationLoaded:source.conversationLoaded||!!task.messages?.length}));
+          conversationLoaded:source.conversationLoaded||!!task.messages?.length,
+          turnOutcome:source.turnId===task.turnId&&task.notificationVersion===task.turnId?task.turnOutcome:source.turnOutcome}));
         result.push({
           ...card,
           taskKey: task.id,
@@ -287,6 +289,7 @@ class Queue extends EventEmitter {
                 contextLoaded: true,
                 cwd: task.cwd,
                 lifecycle: task.status,
+                turnId:task.turnId,turnOutcome:task.notificationVersion===task.turnId?task.turnOutcome:null,
               },
             ]
           : [],

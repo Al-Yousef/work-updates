@@ -19,6 +19,9 @@ const {
 const fs = require('node:fs');
 const path = require('node:path');
 const os = require('node:os');
+const crypto=require('node:crypto');
+const {inspectStores,versions:storeVersions}=require('./src/private-store.cjs');
+const {acquireBackend,maintenanceActive}=require('./src/profile-lease.cjs');
 const { Queue, read, atomic, now } = require('./src/queue.cjs');
 const { Codex } = require('./src/codex.cjs');
 const { Controller } = require('./src/controller.cjs');
@@ -63,7 +66,6 @@ const dataDir = dataDirectory({
 const nativeBackend = args.includes('--native-backend') ||
   (process.platform === 'win32' && fs.existsSync(path.join(dataDir, 'native-backend.enabled')));
 fs.mkdirSync(dataDir, { recursive: true });
-const attachments=new Attachments(dataDir);
 app.setPath('userData', dataDir);
 app.setName('Hyphen');
 app.setAppUserModelId('io.workupdates.desktop');
@@ -74,6 +76,15 @@ if (!demo && !app.requestSingleInstanceLock()) {
   app.quit();
   process.exit(0);
 }
+let profileLease;
+try{profileLease=acquireBackend(dataDir);inspectStores(dataDir);}
+catch(error){profileLease?.close();dialog.showErrorBox('Hyphen needs recovery',error.message);app.quit();process.exit(1);}
+process.once('exit',()=>profileLease.close());
+const attachments=new Attachments(dataDir);
+const updateIdentity={updateToken:process.env.HYPHEN_UPDATE_TOKEN||null,
+  sourceHash:crypto.createHash('sha256').update(fs.readFileSync(__filename)).digest('hex'),
+  packageHash:app.isPackaged?crypto.createHash('sha256').update(require('original-fs').readFileSync(path.join(process.resourcesPath,'app.asar'))).digest('hex'):null,
+  protocols:{descriptor:1,snapshot:1},storeVersions};
 let window,
   tray,
   corner,
@@ -115,7 +126,7 @@ const assistant = new Assistant({directory:dataDir,snapshot:()=>devices.snapshot
     subscribe:changed=>{queue.on('change',changed);devices.on('change',changed);return()=>{queue.off('change',changed);devices.off('change',changed);};},
     request:targets=>Promise.allSettled(targets.map(target=>devices.command('details',{id:target.id,taskKey:target.taskKey,sourceId:target.sourceId}))),
   },targets),
-  dispatch:(mode,input)=>devices.command(mode==='queue'?'queueMessage':'send',input)});
+  dispatch:(mode,input)=>devices.command(mode==='cancel'?'cancelMessage':mode==='queue'?'queueMessage':'send',input)});
 const csp =
   "default-src 'self'; script-src 'self'; style-src 'self'; img-src 'self' data:; connect-src 'none'; base-uri 'none'; object-src 'none'; form-action 'none'; frame-ancestors 'none'";
 function snapshot() {
@@ -337,6 +348,7 @@ function configure() {
     : 'Shortcut unavailable';
 }
 async function perform(method, input = {}) {
+  if(!['state','details'].includes(method)&&maintenanceActive(dataDir))throw Object.assign(new Error('Hyphen is completing an update. Wait for maintenance to finish before sending or changing tasks.'),{code:'UPDATE_IN_PROGRESS'});
   const state=devices.snapshot(),card=[...state.cards,...state.done].find(c=>c.id===input.id&&(!input.taskKey||c.taskKey===input.taskKey));
   return diagnostics.scope({messageId:input.messageId,sourceId:input.sourceId,cardId:card?.id,taskKey:card?.taskKey,ownerId:card?.owner?.id},()=>performBound(method,input));
 }
@@ -395,6 +407,9 @@ async function performLocal(method, input = {}) {
   if (method === 'send')
     return messages.send(input);
   if (method === 'queueMessage') return messages.enqueue(input);
+  if (method === 'cancelMessage') {
+    const source=taskSource(queue.get(input.id,input.taskKey),input.sourceId);if(!source)throw new Error('Choose the source of that queued message.');return messages.cancel(input.messageId,source.id);
+  }
   if (method === 'clearMessages') {
     const source=taskSource(queue.get(input.id,input.taskKey),input.sourceId);
     return messages.clear(source.id,input.checked===true);
@@ -530,7 +545,7 @@ function startCollection() {
       { helper, helperScript, log: diagnostics },
       (feed, health) => {
         queue.setFeed(feed || queue.feed, health);
-        if (feed && health.ok) {
+        if (feed && health.ok && !maintenanceActive(dataDir)) {
           summaries.refresh();
           if (retryFailedSummaries) {
             retryFailedSummaries = false;
@@ -584,7 +599,7 @@ app.whenReady().then(async () => {
         const result = await perform(method, input);
         return method === 'details' ? cardView(result, true,attachments) : ['send','queueMessage','assistantAsk','assistantUse','attachImages','openAttachment'].includes(method) ? result : {};
       },
-      status: () => ({activeWriters:Math.max(client.status?.().active ?? 0, client.status?.().pending ?? 0, queue.busy?.size ?? 0,assistant.active?1:0),
+      status: () => ({activeWriters:Math.max(client.status?.().active ?? 0, client.status?.().pending ?? 0, queue.busy?.size ?? 0,messages.active.size,desktop?.pending.size||0,assistant.active?1:0),
         mode:'native-backend', windowCount:BrowserWindow.getAllWindows().length,
         rendererCount:app.getAppMetrics().filter(p => p.type === 'Tab').length}),
       quit: () => {quitting=true; app.quit();},
@@ -594,7 +609,7 @@ app.whenReady().then(async () => {
     const runtime = () => {
       if (quitting) return;
       atomic(path.join(dataDir, 'runtime.json'), {
-      appPid:process.pid, version:app.getVersion(), mode:'native-backend',
+      appPid:process.pid, version:app.getVersion(), mode:'native-backend',...updateIdentity,
       windowCount:BrowserWindow.getAllWindows().length,
       rendererCount:app.getAppMetrics().filter(p => p.type === 'Tab').length,
       collectorPid:observer?.pid || null, chats:queue.feed.monitoredCount || 0,
@@ -794,7 +809,7 @@ app.whenReady().then(async () => {
       status: () => ({
         cornerConfigured: !!queue.state.settings.corner,
         launcherActive: !!corner && !corner.isDestroyed(),
-        activeWriters: Math.max(client.status?.().active ?? 0,assistant.active?1:0),
+        activeWriters: Math.max(client.status?.().active ?? 0,client.status?.().pending??0,queue.busy.size,messages.active.size,desktop?.pending.size||0,assistant.active?1:0),
         windowMode: windowController.mode,
       }),
       quit: () => {quitting = true; app.quit();},
@@ -807,6 +822,7 @@ app.whenReady().then(async () => {
     atomic(path.join(dataDir, 'runtime.json'), {
       appPid: process.pid,
       version: app.getVersion(),
+      ...updateIdentity,
       collectorPid: observer?.pid || null,
       chats: queue.feed.monitoredCount || 0,
       feedCollectedAt: queue.feed.collectedAt || 0,
