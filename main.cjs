@@ -168,6 +168,8 @@ const voice=new VoiceSession({directory:dataDir,actorId:'human:'+devices.local.i
 let voiceWindow;
 function openVoice(){voiceWindow??=new VoiceWindow({BrowserWindow,session:require('electron').session,ipcMain,ledger:voice,provider:voiceProvider,actorId:voice.actorId});return voiceWindow.open();}
 const outcomes=new OutcomeVerification({directory:dataDir,actorId:'human:'+devices.local.id,responsibilities,snapshot:()=>devices.snapshot(),maintenance:()=>quitting||maintenanceActive(dataDir),admission:entry=>workControls.responsibilityAdmission(entry)});
+const documents=new (require('./src/documents.cjs').Documents)({directory:dataDir,actorId:authorization.actorId,
+  admission:()=>quitting||maintenanceActive(dataDir)||privacy?.activeRemoval||workControls.closed||workControls.storageFailed||workControls.active('all','all')?'deny':'allow'});
 responsibilities.options.outcomeRequired=entry=>outcomes.required(entry);
 responsibilities.options.outcomeAdmission=(entry,human)=>outcomes.admission(entry,human);
 const assistant = new Assistant({directory:dataDir,snapshot:()=>devices.snapshot(),attachments,
@@ -184,6 +186,7 @@ const assistant = new Assistant({directory:dataDir,snapshot:()=>devices.snapshot
   reflections,
   delegations,
   workControls,
+  documents,
   binary:queue.state.settings.codexBinary,log:diagnostics,
   loadContext:targets=>require('./src/assistant-context.cjs').loadContext({
     snapshot:()=>devices.snapshot(),
@@ -264,6 +267,8 @@ const reflectionTimer=setInterval(driveReflections,60000);reflectionTimer.unref(
 function driveTriage(){void triage.pump().catch(()=>diagnostics.write('notification.recovery_failed',{code:'NOTIFICATION_STORAGE_FAILED',noResend:true}));}
 triage.on('change',()=>publish());
 const triageTimer=setInterval(driveTriage,60000);triageTimer.unref();queueMicrotask(driveTriage);
+function driveDocuments(){try{documents.tick();}catch{diagnostics.write('app.command.failed',{code:'DOCUMENT_STORAGE_FAILED',noResend:true});}}
+const documentTimer=setInterval(driveDocuments,60000);documentTimer.unref();queueMicrotask(driveDocuments);
 function driveDelegations(){void delegations.tick().catch(()=>diagnostics.write('delegation.recovery_failed',{code:'DELEGATION_RECOVERY_FAILED',noResend:true}));}
 delegations.on('change',()=>publish());
 const delegationTimer=setInterval(driveDelegations,60000);delegationTimer.unref();
@@ -995,6 +1000,7 @@ app.on('activate', () => window && show());
 app.on('window-all-closed', () => {});
 app.on('before-quit', () => {
   quitting = true;
+  clearInterval(documentTimer);
   clearInterval(runtimeTimer);
   diagnostics.write('app.stopping', { pid: process.pid });
   queue.save();
