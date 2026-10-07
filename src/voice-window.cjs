@@ -36,7 +36,7 @@ class VoiceWindow {
           };
         }
       });
-    ledger.options.stopAudio = (id) => this.window?.webContents.send('hyphen:voice:stop', id);
+    ledger.options.stopAudio = (id) => this.notifyStop(id);
     this.timer = setInterval(() => {
       try {
         ledger.expire();
@@ -77,9 +77,8 @@ class VoiceWindow {
     if (name === 'steer') return this.ledger.steer(this.human(), v.id, v.text);
     if (name === 'mute') return this.ledger.mute(this.human(), v.id, v.muted);
     if (name === 'end') {
-      const result = this.ledger.end(this.human(), v.id);
-      this.ledger.options.stopAudio(v.id);
-      return result;
+      const result = this.ledger.end(this.human(), v.id, 'human_end', v.retryTermination === true);
+      return { ...result, providerTermination: await this.ledger.waitForTermination(v.id) };
     }
     if (name === 'disconnected') return this.ledger.disconnect(v.id);
     throw new Error('Unsupported voice control.');
@@ -133,14 +132,22 @@ class VoiceWindow {
     owned.loadFile(this.file);
     return { opened: true, microphoneStarted: false };
   }
+  notifyStop(id) {
+    try {
+      if (this.window && !this.window.isDestroyed() && !this.window.webContents.isDestroyed())
+        this.window.webContents.send('hyphen:voice:stop', id);
+    } catch {
+      /* Window teardown cannot block provider termination or application quit. */
+    }
+  }
   stop() {
     try {
-      this.ledger.close();
+      Promise.resolve(this.ledger.close()).catch(() => {});
     } catch {
       this.ledger.live?.abort.abort();
       this.ledger.live = null;
     } finally {
-      this.window?.webContents.send('hyphen:voice:stop', null);
+      this.notifyStop(null);
     }
   }
   close() {

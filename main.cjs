@@ -778,7 +778,7 @@ app.whenReady().then(async () => {
         const result = await perform(method, input);
         return method === 'details' ? cardView(result, true,attachments) : ['send','queueMessage','assistantAsk','assistantUse','attachImages','openAttachment'].includes(method) ? result : {};
       },
-      status: () => ({activeWriters:Math.max(client.status?.().active ?? 0, client.status?.().pending ?? 0, queue.busy?.size ?? 0,messages.active.size,desktop?.pending.size||0,assistant.active?1:0,[...assistantChannels.live.values()].filter(a=>a.active).length,responsibilities.pending.size,schedules.pending.size,research.pending.size,workControls.pending.size,triage.pending.size),
+      status: () => ({activeWriters:Math.max(client.status?.().active ?? 0, client.status?.().pending ?? 0, queue.busy?.size ?? 0,messages.active.size,desktop?.pending.size||0,assistant.active?1:0,voice.active?1:0,[...assistantChannels.live.values()].filter(a=>a.active).length,responsibilities.pending.size,schedules.pending.size,research.pending.size,workControls.pending.size,triage.pending.size),
         mode:'native-backend', windowCount:BrowserWindow.getAllWindows().length,
         rendererCount:app.getAppMetrics().filter(p => p.type === 'Tab').length}),
       quit: () => {quitting=true; app.quit();},
@@ -990,7 +990,7 @@ app.whenReady().then(async () => {
       status: () => ({
         cornerConfigured: !!queue.state.settings.corner,
         launcherActive: !!corner && !corner.isDestroyed(),
-        activeWriters: Math.max(client.status?.().active ?? 0,client.status?.().pending??0,queue.busy.size,messages.active.size,desktop?.pending.size||0,assistant.active?1:0,[...assistantChannels.live.values()].filter(a=>a.active).length,responsibilities.pending.size,schedules.pending.size,research.pending.size,workControls.pending.size,triage.pending.size),
+        activeWriters: Math.max(client.status?.().active ?? 0,client.status?.().pending??0,queue.busy.size,messages.active.size,desktop?.pending.size||0,assistant.active?1:0,voice.active?1:0,[...assistantChannels.live.values()].filter(a=>a.active).length,responsibilities.pending.size,schedules.pending.size,research.pending.size,workControls.pending.size,triage.pending.size),
         windowMode: windowController.mode,
       }),
       quit: () => {quitting = true; app.quit();},
@@ -1057,7 +1057,16 @@ app.whenReady().then(async () => {
 });
 app.on('activate', () => window && show());
 app.on('window-all-closed', () => {});
-app.on('before-quit', () => {
+let voiceShutdownCompleted=false,voiceShutdownStarted=false;
+app.on('before-quit', (event) => {
+  if(!voiceShutdownCompleted&&voice.active){
+    event.preventDefault();quitting=true;
+    if(voiceShutdownStarted)return;
+    voiceShutdownStarted=true;
+    voiceWindow?.stop();
+    Promise.resolve(voice.close()).catch(()=>{}).finally(()=>{voiceShutdownCompleted=true;app.quit();});
+    return;
+  }
   quitting = true;
   browsers.shutdown();
   clearInterval(documentTimer);

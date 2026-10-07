@@ -72,6 +72,8 @@
         ><button id="end" disabled>End voice</button>
       </fieldset>
       <p id="device"></p>
+      <p id="terminationStatus" role="status" aria-live="polite"></p>
+      <button id="retryTermination" hidden>Retry provider end request</button>
       <audio id="audio" autoplay controls></audio>
       <label>Say it in text <textarea id="text" maxlength="4000" rows="3"></textarea></label>
       <button id="steer" disabled>Send to this voice conversation</button>

@@ -327,10 +327,11 @@ function retainedAdapters({
       bytes: (value) => value?.bytes || 0,
       summary: (value) => ({ files: value ? [{ name: value.name, bytes: value.bytes }] : [] }),
       dependencies: () =>
-        voice().live ? ['End the current voice session before removing its key'] : [],
+        voice().live || voice().active ? ['End the current voice session and wait for its provider end request before removing its key'] : [],
       remove: (_, selected) => {
-        if (voice().live) throw new Error('Voice is still active.');
+        if (voice().live || voice().active) throw new Error('Voice is still active or ending.');
         if (selected) removeFiles([selected], 4096);
+        voice().forgetProviderCredentials?.();
       },
       removed: (value) => value === null,
       kept: 'Voice session/usage checkpoints and provider-side account data remain. This removes the local encrypted key only.',

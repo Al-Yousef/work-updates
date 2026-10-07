@@ -6,6 +6,19 @@ let call = null,
   muted = false,
   contextPreview = null,
   contextGeneration = 0;
+let terminationId = null;
+function termination(result) {
+  terminationId = result?.sessionId || null;
+  $('terminationStatus').textContent =
+    result?.state === 'initiated'
+      ? 'The provider accepted the end request. Final usage and billing remain unknown.'
+      : result?.state === 'pending'
+        ? 'Local audio is off. Waiting for the provider end request.'
+        : result
+          ? 'Local audio is off. The provider end request is unconfirmed; final usage remains unknown.'
+          : '';
+  $('retryTermination').hidden = !result?.retryAvailable;
+}
 async function invoke(name, value) {
   const r = await api.call(name, value);
   if (!r.ok) throw new Error(r.error);
@@ -90,17 +103,23 @@ function stopLocal() {
 }
 async function disconnect() {
   const old = stopLocal();
+  const generation = epoch;
   status('Voice disconnected. Start again with new consent.');
   resetConsent();
+  if (old?.id) termination({ sessionId: old.id, state: 'pending' });
   if (old?.id)
     try {
       await invoke('disconnected', { id: old.id });
+      const state = await invoke('state');
+      if (epoch === generation && !call)
+        termination(state.providerTermination?.find((s) => s.sessionId === old.id));
     } catch {}
 }
 api.onStop((id) => {
   if (!id || call?.id === id) {
-    stopLocal();
-    status('Voice ended. Other work continues.');
+    const old = stopLocal();
+    if (old?.id) termination({ sessionId: old.id, state: 'pending' });
+    status('Voice ended locally. Other work continues.');
     resetConsent();
   }
 });
@@ -120,6 +139,8 @@ $('start').onclick = async () => {
   const generation = ++epoch;
   controls(true);
   status('Requesting microphone access…');
+  termination(null);
+  $('captions').textContent = '';
   try {
     const info = await invoke('begin', {
       maxSeconds: Number($('seconds').value),
@@ -231,12 +252,30 @@ $('mute').onclick = async () => {
 };
 $('end').onclick = async () => {
   const old = stopLocal();
+  const endedEpoch = epoch;
   resetConsent();
+  status('Voice ended locally. Other work continues.');
+  if (old?.id) termination({ sessionId: old.id, state: 'pending' });
   try {
-    if (old?.id) await invoke('end', { id: old.id });
-    status('Voice ended locally. Remote termination is not verified. Other work continues.');
+    const result = old?.id ? await invoke('end', { id: old.id }) : null;
+    if (epoch === endedEpoch && !call) termination(result?.providerTermination);
   } catch (e) {
-    status(e.message);
+    if (epoch === endedEpoch && !call) status(e.message);
+  }
+};
+$('retryTermination').onclick = async () => {
+  if (!terminationId || call) return;
+  const id = terminationId,
+    generation = epoch;
+  $('retryTermination').disabled = true;
+  try {
+    const result = await invoke('end', { id, retryTermination: true });
+    if (epoch === generation && !call && terminationId === id)
+      termination(result.providerTermination);
+  } catch (e) {
+    if (epoch === generation && !call) status(e.message);
+  } finally {
+    $('retryTermination').disabled = false;
   }
 };
 $('steer').onclick = async () => {
@@ -254,6 +293,8 @@ $('steer').onclick = async () => {
 };
 invoke('state')
   .then((s) => {
+    const last = s.providerTermination?.at(-1);
+    if (last && ['pending', 'unconfirmed', 'initiated'].includes(last.state)) termination(last);
     $('provider').textContent = s.support.configured
       ? 'Encrypted provider configured; account access unverified'
       : 'No voice provider configured';
@@ -263,10 +304,15 @@ invoke('state')
 window.addEventListener('beforeunload', () => stopLocal());
 setInterval(async () => {
   const active = call;
-  if (!active?.selection) return;
+  if (!active?.selection && !terminationId) return;
   try {
     const state = await invoke('state');
+    if (!call && terminationId) {
+      const result = state.providerTermination?.find((s) => s.sessionId === terminationId);
+      if (result) termination(result);
+    }
     if (call !== active) return;
+    if (!active?.selection) return;
     const selected = state.contextChoices.choices.find(
       (c) =>
         c.selection.sourceId === active.selection.sourceId &&

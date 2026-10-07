@@ -298,6 +298,10 @@ test('voice key preview exposes only file metadata, requires end before removal 
   await assert.rejects(f.remove(p), /dependencies changed/);
   assert.ok(fs.existsSync(keyFile));
   f.voice.live = null;
+  f.voice.active = true;
+  await assert.rejects(f.remove(p), /dependencies changed/);
+  f.voice.active = false;
+  let cleared=false;f.voice.forgetProviderCredentials=()=>{cleared=true;};
   const foreign = { ...f.input('/privacy delete ' + p.previewId), actorId: 'human:another-owner' };
   await assert.rejects(f.privacy.remove(foreign, p.previewId), /current human/);
   assert.throws(
@@ -306,6 +310,7 @@ test('voice key preview exposes only file metadata, requires end before removal 
   );
   assert.equal((await f.remove(p)).status, 'completed');
   assert.ok(!fs.existsSync(keyFile));
+  assert.equal(cleared,true);
   assert.ok(f.privacy.inspect().removals.some((o) => o.status === 'completed'));
   f.restartPrivacy();
   assert.equal(f.privacy.options.adapters['voice-configuration'].read(), null);
