@@ -10,9 +10,9 @@ const {check:checkDeadline}=require('./dispatch-deadline.cjs');
 const terminal=new Set(['sent','cancelled']);
 const unknown=error=>error.delivery==='uncertain'||(error.delivery!=='not-sent'&&['CODEX_TIMEOUT','CODEX_DISCONNECTED','DESKTOP_RECEIPT'].includes(error.code));
 class Messages extends EventEmitter {
-  constructor(queue,controller,{log,auto=true,attachments,admission=()=> 'allow'}={}) {
+  constructor(queue,controller,{log,auto=true,attachments,admission=()=> 'allow',authorize}={}) {
     super();this.queue=queue;this.controller=controller;this.log=log;this.file=path.join(queue.directory,'messages.json');
-    this.attachments=attachments||new Attachments(queue.directory);this.admission=admission;
+    this.attachments=attachments||new Attachments(queue.directory);this.admission=admission;this.authorize=authorize;
     this.active=new Set();this.closed=false;this.state={version:1,entries:[],barriers:{}};
     this.state=readStore(this.file,{missing:this.state}).value;
     this.state.receipts??={};
@@ -68,9 +68,11 @@ class Messages extends EventEmitter {
   }
   create(input,mode){
     const {card,source,value,images}=this.validate(input);
+    const messageId=input.messageId||crypto.randomUUID();
+    if(this.authorize){const decision=this.authorize({...input,messageId,text:value,attachmentIds:images});if(decision?.decision!=='act')throw Object.assign(new Error(decision?.decision==='ask'?'Human approval is required before this message can be queued.':'This action requires its source owner or a new scoped human instruction.'),{delivery:'not-sent',code:'AUTHORIZATION_REFUSED'});}
     if(this.state.entries.filter(e=>!terminal.has(e.status)).length>=100)
       throw new Error('The message queue is full. Clear queued messages before adding more.');
-    const entry={id:input.messageId||crypto.randomUUID(),sourceId:source.id,cardId:card.id,taskKey:card.taskKey,
+    const entry={id:messageId,sourceId:source.id,cardId:card.id,taskKey:card.taskKey,
       textHash:messageHash(value,images),attachmentIds:images,
       text:value,mode,status:mode==='queue'?'queued':'sending',createdAt:Date.now(),...(input.expiresAt!==undefined?{expiresAt:input.expiresAt}:{}),...(input.scheduleId?{scheduleId:input.scheduleId,runId:input.runId}:{})};
     this.state.entries.push(entry);try{this.save();}catch(error){this.state.entries.pop();throw error;}

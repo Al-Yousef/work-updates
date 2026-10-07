@@ -86,13 +86,14 @@ function validate(value) {
           !uuid(c.messageId) ||
           !text(c.text) ||
           !text(c.actorId, 200) ||
-          !['revoke', 'mode'].includes(c.kind) ||
+          !['revoke', 'mode', 'limits'].includes(c.kind) ||
           !Number.isSafeInteger(c.at),
       )
     )
       throw new Error('Invalid authorization grant');
     scopeKey(grant.scope);
-    if (grant.payloadHash !== payload(grant)) throw new Error('Authorization payload changed');
+    if (grant.payloadHash !== payload(grant) || !grant.origin.text.includes(grant.instruction))
+      throw new Error('Authorization payload changed');
     grants.add(grant.id);
   }
   for (const op of value.operations) {
@@ -120,6 +121,16 @@ function validate(value) {
           !Number.isSafeInteger(op.approval.at)))
     )
       throw new Error('Invalid authorization operation');
+    const grant = value.grants.find((g) => g.id === op.grantId);
+    if (
+      op.action !== grant.action ||
+      op.payloadHash !== grant.payloadHash ||
+      op.scopeHash !== scopeKey(grant.scope) ||
+      (op.state === 'approved' && !op.approval) ||
+      (op.approval && op.approval.actorId !== grant.origin.actorId) ||
+      (op.humanOnly !== undefined && typeof op.humanOnly !== 'boolean')
+    )
+      throw new Error('Operation lost its human grant');
     operations.add(op.id);
   }
   for (const account of value.revokedAccounts)
@@ -128,11 +139,27 @@ function validate(value) {
       !text(account.kind, 512) ||
       !uuid(account.human?.messageId) ||
       !text(account.human.text) ||
-      !text(account.human.actorId, 200)
+      !text(account.human.actorId, 200) ||
+      (account.state !== undefined && !['revoked', 'restored'].includes(account.state)) ||
+      (account.changes !== undefined &&
+        (!Array.isArray(account.changes) ||
+          account.changes.length > 64 ||
+          account.changes.some(
+            (c) =>
+              !uuid(c.messageId) ||
+              !text(c.text) ||
+              !text(c.actorId, 200) ||
+              !['revoke', 'restore'].includes(c.kind) ||
+              !Number.isSafeInteger(c.at),
+          )))
     )
       throw new Error('Invalid revoked account');
   if (new Set(value.grants.map((g) => g.key)).size !== value.grants.length)
     throw new Error('Duplicate authorization key');
+  if (
+    value.grants.some((g) => value.operations.filter((o) => o.grantId === g.id).length > g.maxUses)
+  )
+    throw new Error('Authorization use limit changed');
   return value;
 }
 class Authorization extends EventEmitter {
@@ -241,13 +268,61 @@ class Authorization extends EventEmitter {
     const human = this.human(input);
     if (!text(kind, 512) || !text(id, 512)) throw new Error('Choose an exact account');
     this.change((next) => {
-      if (!next.revokedAccounts.some((a) => a.kind === kind && a.id === id))
-        next.revokedAccounts.push({ kind, id, human, at: this.now() });
+      let account = next.revokedAccounts.find((a) => a.kind === kind && a.id === id);
+      if (!account) {
+        account = { kind, id, human, at: this.now(), state: 'revoked', changes: [] };
+        next.revokedAccounts.push(account);
+      } else {
+        account.state = 'revoked';
+        account.changes ??= [];
+        if (account.changes.length === 64) throw new Error('Account permission history is full');
+        account.changes.push({ ...human, kind: 'revoke', at: this.now() });
+      }
+      for (const grant of next.grants.filter(
+        (g) => g.scope.accountKind === kind && g.scope.accountId === id && g.state === 'active',
+      )) {
+        grant.state = 'revoked';
+        if (grant.changes.length < 64)
+          grant.changes.push({ ...human, kind: 'revoke', at: this.now() });
+      }
+    });
+  }
+  restoreAccount(kind, id, input, current) {
+    const human = this.human(input);
+    if (
+      kind !== 'source_owner' ||
+      current?.id !== id ||
+      current.local !== true ||
+      current.fresh !== true ||
+      current.online !== true
+    )
+      throw new Error('The account requires its verified local source owner');
+    this.change((next) => {
+      const account = next.revokedAccounts.find((a) => a.kind === kind && a.id === id);
+      if (!account) throw new Error('Account revocation unavailable');
+      account.changes ??= [];
+      if (account.changes.length === 64) throw new Error('Account permission history is full');
+      account.state = 'restored';
+      account.changes.push({ ...human, kind: 'restore', at: this.now() });
+    });
+  }
+  retime(id, input, { endAt, maxUses }) {
+    const human = this.human(input),
+      grant = this.grant(id);
+    if (grant.state !== 'active' || grant.duration.kind !== 'until')
+      throw new Error('A revoked grant cannot inherit new timing');
+    this.change((next) => {
+      const current = next.grants.find((g) => g.id === id);
+      current.duration = { kind: 'until', endAt };
+      current.maxUses = maxUses;
+      current.changes.push({ ...human, kind: 'limits', endAt, maxUses, at: this.now() });
     });
   }
   decide(grant, request) {
     if (!grant || grant.state !== 'active')
       return { decision: 'deny', reason: 'grant_revoked_or_missing' };
+    if (grant.origin.actorId !== this.actorId)
+      return { decision: 'deny', reason: 'human_principal_changed' };
     let key;
     try {
       key = scopeKey(request.scope);
@@ -278,11 +353,18 @@ class Authorization extends EventEmitter {
       return { decision: 'deny', reason: 'grant_expired' };
     if (
       this.state.revokedAccounts.some(
-        (a) => a.kind === grant.scope.accountKind && a.id === grant.scope.accountId,
+        (a) =>
+          a.kind === grant.scope.accountKind &&
+          a.id === grant.scope.accountId &&
+          a.state !== 'restored',
       )
     )
       return { decision: 'deny', reason: 'account_revoked' };
-    if (request.humanOnly) return { decision: 'handoff', reason: 'human_only_checkpoint' };
+    if (
+      request.humanOnly ||
+      this.state.operations.find((o) => o.id === request.operationId)?.humanOnly
+    )
+      return { decision: 'handoff', reason: 'human_only_checkpoint' };
     const supported =
       grant.scope.accountKind === 'source_owner' &&
       request.current.local === true &&

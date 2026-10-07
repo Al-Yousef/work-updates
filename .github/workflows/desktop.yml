@@ -55,6 +55,7 @@ jobs:
       - run: node scripts/update-fault-audit.cjs
       - run: node scripts/responsibility-contract-audit.cjs --require-clean
       - run: node scripts/schedule-contract-audit.cjs --require-clean
+      - run: node scripts/authorization-contract-audit.cjs --require-clean
       - run: npm run test:shutdown
       - run: npm run test:ui
       - run: npm run test:devices
@@ -77,6 +78,7 @@ jobs:
             artifacts/update-faults/verification.json
             artifacts/responsibility-audit/verification.json
             artifacts/schedule-audit/verification.json
+            artifacts/authorization-audit/verification.json
           if-no-files-found: error
           retention-days: 14
   release:

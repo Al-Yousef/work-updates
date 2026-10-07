@@ -231,19 +231,25 @@ class Assistant extends EventEmitter {
       const state=policy.snapshot(),grants=state.grants.slice(-12),pending=state.operations.filter(o=>o.state==='waiting_human').slice(-12);
       message.answer=grants.length?grants.map(g=>g.action+' · '+g.mode+' · '+g.state+'\n'+g.id+'\nDestination: '+g.scope.destination+'\nAccount: '+g.scope.accountKind+' / '+g.scope.accountId+'\nDuration: '+(g.duration.kind==='until'?new Date(g.duration.endAt).toISOString():'until the responsibility ends')+' · uses '+state.operations.filter(o=>o.grantId===g.id).length+'/'+g.maxUses).join('\n\n'):'No authorization grants yet.';
       if(pending.length)message.answer+='\n\nWaiting for your approval:\n'+pending.map(o=>o.action+' · '+o.id).join('\n');
+    }else if(command.kind==='inspect'){
+      const grant=policy.grant(command.id);message.answer=grant.action+' · '+grant.mode+' · '+grant.state+'\n'+grant.id+'\n'+Object.entries(grant.scope).map(([key,value])=>key+': '+value).join('\n')+'\nDuration: '+(grant.duration.kind==='until'?new Date(grant.duration.endAt).toISOString():'until this responsibility ends')+' · maximum uses '+grant.maxUses+'\nHuman instruction: '+clip(grant.instruction,1800)+(grant.instruction.length>1800?'\nInstruction preview is truncated. Review its full draft in the source queue.':'')+'\nAttachments: '+(grant.attachmentIds.length?grant.attachmentIds.join(', '):'none');
     }else{
       if(command.kind==='revoke')policy.revoke(command.id,human);
       else if(command.kind==='mode')policy.setMode(command.id,command.mode,human);
-      else if(command.kind==='account')policy.revokeAccount(command.accountKind,command.accountId,human);
+      else if(command.kind==='account'){
+        if(command.operation==='revoke')policy.revokeAccount(command.accountKind,command.accountId,human);
+        else{const snapshot=this.options.snapshot(),owner=snapshot.cards.find(c=>c.owner?.id===command.accountId)?.owner;policy.restoreAccount(command.accountKind,command.accountId,human,{id:owner?.id,local:owner?.local===true,fresh:coordination.fresh(snapshot),online:owner?.online!==false});}
+      }
       else if(command.kind==='approve'){
         const store=this.options.responsibilities,entry=store?.state.entries.find(e=>e.currentStep.messageId===command.id);
-        if(!entry)throw new Error('Open the owning source for this operation. It cannot be approved from an unrelated chat.');
-        policy.approve(command.id,human,bridge.request(entry,this.options.snapshot()));
-        if(entry.state==='waiting_approval'&&entry.wakeReason.kind==='authorization_ask'){store.wake(entry.id,{role:'human',messageId:message.id,text:message.text,kind:'approval'});await store.dispatch(entry.id);}
+        const request=entry?bridge.request(entry,this.options.snapshot()):this.options.authorizationRequest?.(command.id);
+        if(!request)throw new Error('Open the owning source for this operation. It cannot be approved from an unrelated chat.');
+        policy.approve(command.id,human,request);
+        if(entry?.state==='waiting_approval'&&entry.wakeReason.kind==='authorization_ask'){store.wake(entry.id,{role:'human',messageId:message.id,text:message.text,kind:'approval'});await store.dispatch(entry.id);}
       }
       message.answer='Saved your authorization '+command.kind+' control. Accepted work keeps its existing source receipt.';
     }
-    message.status='completed';
+    message.answer=clip(message.answer,5800);message.status='completed';
   }
   async manageResponsibility(message,command){
     const store=this.options.responsibilities;if(!store)throw new Error('Responsibilities are unavailable in this session.');

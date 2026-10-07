@@ -43,6 +43,8 @@ const { Responsibilities }=require('./src/responsibilities.cjs');
 const responsibilityTarget=require('./src/responsibility-target.cjs');
 const {Schedules}=require('./src/schedules.cjs');
 const scheduledResponsibility=require('./src/scheduled-responsibility.cjs');
+const {Authorization}=require('./src/authorization.cjs');
+const responsibilityAuthorization=require('./src/responsibility-authorization.cjs');
 let nativeControl;
 const args = process.argv;
 function argument(name) {
@@ -114,7 +116,11 @@ const client = demo
   : new Codex({ binary: queue.state.settings.codexBinary, log: diagnostics });
 const desktop = demo ? null : new CodexDesktop({log:diagnostics});
 const controller = new Controller(queue, client, {desktop,log:diagnostics});
-const messages = new Messages(queue,controller,{log:diagnostics,attachments,admission:entry=>scheduledResponsibility.admission(responsibilities,schedules,entry)});
+function authorizationAdmission(entry){
+  const scheduled=scheduledResponsibility.admission(responsibilities,schedules,entry);if(scheduled!=='allow')return scheduled;
+  try{return responsibilityAuthorization.messageAdmission(authorization,responsibilities,devices.snapshot(),entry,schedules);}catch{diagnostics.write('authorization.recovery_failed',{code:'AUTHORIZATION_STORAGE_FAILED',noResend:true});return 'wait';}
+}
+const messages = new Messages(queue,controller,{log:diagnostics,attachments,admission:authorizationAdmission,authorize:input=>responsibilityAuthorization.authorizeDispatch(authorization,input,devices.snapshot())});
 const devices = new Devices({
   directory: dataDir,
   state: () => messages.decorate(queue.snapshot()),
@@ -123,7 +129,9 @@ const devices = new Devices({
   decrypt: (value) => safeStorage.decryptString(value),
 });
 diagnostics.setContext({deviceId:devices.local.id});
+const authorization=new Authorization({directory:dataDir,actorId:'human:'+devices.local.id});
 const responsibilities=new Responsibilities({directory:dataDir,snapshot:()=>devices.snapshot(),log:diagnostics,maintenance:()=>quitting||maintenanceActive(dataDir),...responsibilityTarget,
+  authorize:entry=>responsibilityAuthorization.prepare(authorization,entry,devices.snapshot(),entry.currentStep.schedule?schedules.entry(entry.currentStep.schedule.id):null),
   outcome:require('./src/assistant-coordination.cjs').outcome,
   dispatch:(mode,input)=>devices.command(mode==='queue'?'queueMessage':'send',input),cancel:input=>devices.command('cancelMessage',input)});
 const schedules=new Schedules({directory:dataDir,log:diagnostics,maintenance:()=>quitting||maintenanceActive(dataDir),
@@ -131,6 +139,8 @@ const schedules=new Schedules({directory:dataDir,log:diagnostics,maintenance:()=
 const assistant = new Assistant({directory:dataDir,snapshot:()=>devices.snapshot(),attachments,
   responsibilities,
   schedules,
+  authorization,
+  authorizationRequest:id=>{const entry=messages.state.entries.find(e=>e.id===id&&e.status==='queued');return entry?responsibilityAuthorization.dispatchRequest({...entry,messageId:id},devices.snapshot()):null;},
   binary:queue.state.settings.codexBinary,log:diagnostics,
   loadContext:targets=>require('./src/assistant-context.cjs').loadContext({
     snapshot:()=>devices.snapshot(),
@@ -173,7 +183,8 @@ function publish() {
   hostPeer?.broadcast(devices.localState());
   nativeControl?.broadcast(nativeView(state));
 }
-messages.on('change', () => publish());
+messages.on('change', () => {try{responsibilityAuthorization.observe(authorization,messages);}catch{diagnostics.write('authorization.recovery_failed',{code:'AUTHORIZATION_STORAGE_FAILED',noResend:true});}publish();});
+authorization.on('change',()=>{publish();queueMicrotask(()=>messages.pump().catch(()=>diagnostics.write('authorization.recovery_failed',{code:'AUTHORIZATION_STORAGE_FAILED',noResend:true})));});
 assistant.on('change', () => publish());
 function driveSchedules(){try{schedules.observe();}catch{diagnostics.write('schedule.recovery_failed',{code:'SCHEDULE_RECOVERY_FAILED',noResend:true});}void schedules.tick().catch(()=>diagnostics.write('schedule.recovery_failed',{code:'SCHEDULE_RECOVERY_FAILED',noResend:true}));}
 schedules.on('change',()=>publish());
@@ -910,6 +921,7 @@ app.on('before-quit', () => {
   assistant.close();
   responsibilities.close();
   schedules.close();
+  authorization.close();
   hostPeer?.close();
   devices.close();
   nativeControl?.close();

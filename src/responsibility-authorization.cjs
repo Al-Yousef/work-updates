@@ -81,13 +81,26 @@ function prepare(policy, entry, snapshot, schedule) {
         ? { scheduleOrigin: structuredClone(schedule.origin), scheduleId: schedule.id }
         : {}),
     });
+  if (schedule) {
+    const grant = policy.grant(id),
+      change = schedule.changes.findLast((c) => c.kind === 'reschedule');
+    if (
+      grant.state === 'active' &&
+      change &&
+      (grant.duration.endAt !== schedule.schedule.endAt || grant.maxUses !== schedule.maxRuns)
+    )
+      policy.retime(id, human(policy, change), {
+        endAt: schedule.schedule.endAt,
+        maxUses: schedule.maxRuns,
+      });
+  }
   return { ...policy.reserve(id, request(entry, snapshot)), grantId: id };
 }
 function messageAdmission(policy, responsibilities, snapshot, message, schedules) {
   const entry = responsibilities.state.entries.find((e) =>
     [e.currentStep, ...(e.pastSteps || [])].some((s) => s.messageId === message.id),
   );
-  if (!entry) return 'allow';
+  if (!entry) return directAdmission(policy, message, snapshot);
   const step = [entry.currentStep, ...(entry.pastSteps || [])].find(
     (s) => s.messageId === message.id,
   );

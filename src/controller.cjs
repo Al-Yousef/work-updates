@@ -166,7 +166,7 @@ class Controller extends EventEmitter {
       checkDeadline(options);
       this.log?.write('dispatch.owner',{owner:'app-server',route:'app-server'});
       if (!task) {
-        task = q.create({ title: card.title, prompt: value, cwd: source.cwd });
+        task = q.create({ title: card.title, prompt: value||'Image attachment', cwd: source.cwd });
         q.patch(task.id, { threadId: source.id, adopted: true,adoptedTaskKey:card.taskKey });
         if (source.body) q.message(task.id, 'assistant', source.body);
       }

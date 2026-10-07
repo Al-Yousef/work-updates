@@ -135,7 +135,8 @@ test('revocation, account revocation, expiry and changed current scope are check
     g.scope.accountId,
     g.human('Revoke access to this source owner'),
   );
-  assert.equal(g.policy.decide(g.policy.grant(other), g.request).reason, 'account_revoked');
+  assert.equal(g.policy.decide(g.policy.grant(other), g.request).decision, 'deny');
+  assert.equal(g.policy.grant(other).state, 'revoked');
   const h = fixture(t),
     expired = h.policy.create(h.human(h.instruction), h.spec);
   h.policy.now = () => h.spec.duration.endAt + 1;
@@ -195,6 +196,7 @@ test('handoff policies and adapter-owned human checkpoints never become generic 
     g.policy.reserve(grant, { ...g.request, humanOnly: true }).reason,
     'human_only_checkpoint',
   );
+  assert.equal(g.policy.reserve(grant, g.request).reason, 'human_only_checkpoint');
   assert.throws(
     () => g.policy.approve(g.request.operationId, g.human('Approve'), g.request),
     /checkpoint/,
@@ -256,4 +258,46 @@ test('corrupt or unsupported authorization stores preserve bytes and block incom
     assert.throws(() => new Authorization(f.policy.options), /preserved/);
     assert.equal(fs.readFileSync(f.policy.file, 'utf8'), invalid);
   }
+});
+test('restoring verified account access retains revoked old grants and requires a fresh human intent', (t) => {
+  const f = fixture(t),
+    id = f.policy.create(f.human(f.instruction), f.spec);
+  f.policy.reserve(id, f.request);
+  f.policy.revokeAccount(f.scope.accountKind, f.scope.accountId, f.human('Revoke this account'));
+  assert.throws(
+    () =>
+      f.policy.restoreAccount(f.scope.accountKind, f.scope.accountId, f.human('Restore'), {
+        id: f.scope.accountId,
+        local: false,
+        fresh: true,
+        online: true,
+      }),
+    /verified local/,
+  );
+  f.policy.restoreAccount(
+    f.scope.accountKind,
+    f.scope.accountId,
+    f.human('Restore this verified account'),
+    { id: f.scope.accountId, local: true, fresh: true, online: true },
+  );
+  assert.equal(f.policy.reserve(id, f.request).decision, 'deny');
+  const next = f.policy.create(f.human(f.instruction), { ...f.spec, key: 'new-human-intent' });
+  assert.equal(
+    f.policy.reserve(next, { ...f.request, operationId: crypto.randomUUID() }).decision,
+    'act',
+  );
+  assert.equal(f.policy.state.revokedAccounts[0].changes.at(-1).kind, 'restore');
+});
+test('changing the human principal or losing current scope never borrows the previous grant', (t) => {
+  const f = fixture(t),
+    id = f.policy.create(f.human(f.instruction), f.spec);
+  assert.equal(
+    f.policy.reserve(id, {
+      ...f.request,
+      current: { scope: {}, online: true, fresh: true, local: true },
+    }).decision,
+    'deny',
+  );
+  f.policy.actorId = 'another-human';
+  assert.equal(f.policy.reserve(id, f.request).reason, 'human_principal_changed');
 });
