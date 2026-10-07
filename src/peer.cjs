@@ -152,9 +152,19 @@ class HostPeer extends EventEmitter {
     });
     res.end(JSON.stringify(value));
   }
+  contractState(state) {
+    const contract = peerContract.capabilities(this.options.commands);
+    if (state.executorReport !== undefined) {
+      require('./executor-report.cjs').validate(state.executorReport, state.host?.id);
+      contract.executorReports = 1;
+    }
+    return {
+      ...(state.stateVersion ? state : this.publisher.stamp(state)),
+      peerContract: contract,
+    };
+  }
   state() {
-    const state = this.options.state();
-    return {...(state.stateVersion ? state : this.publisher.stamp(state)), peerContract:peerContract.capabilities(this.options.commands)};
+    return this.contractState(this.options.state());
   }
   request(req, res) {
     if(req.url?.startsWith('/assistant/')) {
@@ -163,8 +173,7 @@ class HostPeer extends EventEmitter {
       return;
     }
     if (!this.authorized(req)) return this.json(res, 401, { error: 'Pairing required.' });
-    if (req.method === 'GET' && req.url === '/state')
-      return this.json(res, 200, this.state());
+    if (req.method === 'GET' && req.url === '/state') return this.json(res, 200, this.state());
     if (req.method === 'GET' && req.url === '/events') {
       if (this.clients.size >= 8)
         return this.json(res, 429, { error: 'Too many connected devices.' });
@@ -218,12 +227,17 @@ class HostPeer extends EventEmitter {
           value: await this.options.command(input.method, input.input),
         });
       } catch (error) {
-        this.json(res, 400, { ok: false, error: error.message, code:error.code, delivery:error.delivery });
+        this.json(res, 400, {
+          ok: false,
+          error: error.message,
+          code: error.code,
+          delivery: error.delivery,
+        });
       }
     });
   }
   broadcast(state) {
-    this.latest = {...(state.stateVersion ? structuredClone(state) : this.publisher.stamp(state)),peerContract:peerContract.capabilities(this.options.commands)};
+    this.latest = this.contractState(structuredClone(state));
     if (this.broadcastTimer) return;
     this.broadcastTimer = setTimeout(() => {
       this.broadcastTimer = null;
@@ -383,9 +397,17 @@ class RemotePeer extends EventEmitter {
             const value = JSON.parse(event.slice(6));
             peerContract.negotiate(value);
             const previous = this.state?.stateVersion;
-            if (!previous || !value.stateVersion || previous.epoch !== value.stateVersion.epoch || previous.revision < value.stateVersion.revision) this.state = value;
+            if (
+              !previous ||
+              !value.stateVersion ||
+              previous.epoch !== value.stateVersion.epoch ||
+              previous.revision < value.stateVersion.revision
+            )
+              this.state = value;
             this.emit('state', value);
-          } catch (error) { if(error.code === 'PEER_CAPABILITY') res.destroy(); }
+          } catch (error) {
+            if (error.code === 'PEER_CAPABILITY') res.destroy();
+          }
         }
       }
     });
@@ -420,9 +442,25 @@ class RemotePeer extends EventEmitter {
     if (!allowed.has(method)) throw new Error('Unknown paired action.');
     if (!this.connected) throw new Error('Reconnect to your desktop before sending this action.');
     const contract = peerContract.negotiate(this.state);
-    peerContract.admission(this.state, method, contract.version === 2 ? {peerProtocolVersion:2,hostEpoch:this.state?.stateVersion?.epoch} : undefined);
-    const out = await this.json('/command', 'POST', { method, input, ...(contract.version === 2 ? {peerProtocolVersion:2,hostEpoch:this.state?.stateVersion?.epoch} : {}) });
-    if (!out.ok) throw Object.assign(new Error(out.error || 'The desktop rejected this action.'),{code:out.code,delivery:out.delivery});
+    peerContract.admission(
+      this.state,
+      method,
+      contract.version === 2
+        ? { peerProtocolVersion: 2, hostEpoch: this.state?.stateVersion?.epoch }
+        : undefined,
+    );
+    const out = await this.json('/command', 'POST', {
+      method,
+      input,
+      ...(contract.version === 2
+        ? { peerProtocolVersion: 2, hostEpoch: this.state?.stateVersion?.epoch }
+        : {}),
+    });
+    if (!out.ok)
+      throw Object.assign(new Error(out.error || 'The desktop rejected this action.'), {
+        code: out.code,
+        delivery: out.delivery,
+      });
     return out.value;
   }
   close() {

@@ -726,6 +726,7 @@ struct App {
     POINT savedPosition{};
     std::filesystem::path tracePath,capturePath,draftPath,auditCapturePath;
     Json lastPressAudit=Json::object();
+    unsigned long long pressSequence=0;
     std::vector<std::filesystem::path> temporaryImages;
     bool saveDrafts() {
         if(draftPath.empty()){renderer.model.message="Saved drafts need recovery. The original file is preserved.";return false;}
@@ -1065,7 +1066,10 @@ struct App {
         updateTooltip();
     }
     void cancelPress() {
-        if(!pointerPressed)return;lastPressAudit["disposition"]="cancelled";pointerPressed=false;pressOutsideMenu=false;composerPressKey.clear();renderer.pressedKey.clear();renderer.paint();log("ui-press-cancelled");
+        if(!pointerPressed)return;
+        lastPressAudit["selectedAtDecision"]=renderer.model.selectedId;lastPressAudit["sourceAtDecision"]=renderer.model.sourceId;
+        lastPressAudit["disposition"]="cancelled";pointerPressed=false;pressOutsideMenu=false;composerPressKey.clear();renderer.pressedKey.clear();renderer.paint();log("ui-press-cancelled");
+        lastPressAudit["selectedAfterDecision"]=renderer.model.selectedId;lastPressAudit["sourceAfterDecision"]=renderer.model.sourceId;
     }
     bool composerAt(float x,float y) const {
         return renderer.popover.empty()&&IsWindowVisible(editor)&&renderer.model.canDraft()&&x>=chatlayout::composerLeft&&x<chatlayout::sendTargetLeft&&y>=renderer.composeY()&&y<=HEIGHT-22;
@@ -1083,7 +1087,7 @@ struct App {
     }
     void pointerDown(float x,float y) {
         pin();renderer.pointerX=x;renderer.pointerY=y;renderer.pointerInside=x>=0&&y>=0&&x<=WIDTH&&y<=HEIGHT;pointerPressed=true;renderer.pressedKey=renderer.pointerKey();pressOutsideMenu=!renderer.popover.empty()&&renderer.pressedKey.empty();
-        lastPressAudit={{"expectedKey",renderer.pressedKey},{"selectedBefore",renderer.model.selectedId},{"sourceBefore",renderer.model.sourceId},{"disposition","down"}};
+        lastPressAudit={{"sequence",++pressSequence},{"expectedKey",renderer.pressedKey},{"selectedBefore",renderer.model.selectedId},{"sourceBefore",renderer.model.sourceId},{"disposition","down"}};
         composerPressKey=renderer.pressedKey.empty()&&composerAt(x,y)?renderer.model.composerKey():std::string();
         if(!composerPressKey.empty())SetFocus(editor);
         SetCapture(panel);if(composerPressKey.empty())renderer.paint();log("ui-press");
@@ -1092,11 +1096,13 @@ struct App {
         if(!pointerPressed)return;renderer.pointerX=x;renderer.pointerY=y;renderer.pointerInside=x>=0&&y>=0&&x<=WIDTH&&y<=HEIGHT;
         const auto expected=renderer.pressedKey;const bool same=!expected.empty()&&expected==renderer.pointerKey();const bool dismiss=pressOutsideMenu&&renderer.pointerKey().empty();
         lastPressAudit["actualKey"]=renderer.pointerKey();lastPressAudit["disposition"]=same?"accepted":"cancelled";
+        lastPressAudit["selectedAtDecision"]=renderer.model.selectedId;lastPressAudit["sourceAtDecision"]=renderer.model.sourceId;
         const bool composer=!composerPressKey.empty()&&composerPressKey==renderer.model.composerKey()&&renderer.pointerKey().empty()&&composerAt(x,y);
         pointerPressed=false;pressOutsideMenu=false;composerPressKey.clear();renderer.pressedKey.clear();if(GetCapture()==panel)ReleaseCapture();
         const auto before=renderer.draws;
         if(same)click(x,y);else if(dismiss)dismissMenu();else if(composer)focusComposerAt(x,y);else log("ui-press-cancelled");
         if(renderer.draws==before&&!composer)renderer.paint();
+        lastPressAudit["selectedAfterDecision"]=renderer.model.selectedId;lastPressAudit["sourceAfterDecision"]=renderer.model.sourceId;
     }
     void contextMenu(float x,float y) {
         if(!renderer.popover.empty()){dismissMenu();return;}

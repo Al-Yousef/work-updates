@@ -4,6 +4,7 @@ if($env:CI -ne 'true' -or $env:RUNNER_OS -ne 'Windows'){throw 'This isolated nat
 $taskRepo=[IO.Path]::GetFullPath((Join-Path $PSScriptRoot '..'))
 . (Join-Path $PSScriptRoot 'owned-process-metrics.ps1')
 . (Join-Path $PSScriptRoot 'dev-paths.ps1')
+. (Join-Path $PSScriptRoot 'performance-press-proof.ps1')
 $taskNode=Get-HyphenNode
 $taskElectron=Join-Path $taskRepo 'node_modules/electron/dist/electron.exe'
 $taskCandidate=Join-Path $taskRepo 'native/windows/build/candidate'
@@ -89,12 +90,15 @@ foreach($taskCount in @(100,500,1500)){
                     $taskState=Get-PerfState $taskPanel $taskRun;$taskCards=@($taskState.hits|Where-Object {$_.action -eq 'card'});if($taskCards.Count -lt 2){throw 'Two visible source cards are required'}
                     $taskHit=$taskCards[$taskIteration%2];$taskLatency=Click-PerfHit $taskPanel $taskHit
                     $taskLive=Get-PerfState $taskPanel $taskRun
-                    $taskSelectionAccepted=$taskLive.source -eq $taskHit.sourceId
+                    $taskProof=Get-HyphenSelectionProof $taskState $taskLive $taskHit
+                    $taskSelectionAccepted=$taskProof -eq 'accepted'
                     if(-not $taskSelectionAccepted){
                         $taskPress=$taskLive.lastPress
-                        if($taskPress.disposition -eq 'cancelled' -and $taskPress.expectedKey -eq $taskHit.key -and $taskLive.source -eq $taskPress.sourceBefore -and $taskLive.selected -eq $taskPress.selectedBefore){
+                        if($taskProof -eq 'cancelled'){
                             # A row changing between press and release is deliberately cancelled by
-                            # the real input guard. It is not an accepted selection or send sample.
+                            # the real input guard. Its fresh exact press record proves the guard
+                            # preserved selection at the decision, independently of later feed updates.
+                            # It is not an accepted selection or send sample.
                             $taskLatencies+=@{operation='cancelled_selection_press';ms=$taskLatency;reason='target_changed_before_release';selectionAccepted=$false}
                         }else{
                             @{count=$taskCount;phase=$taskPhase;iteration=$taskIteration;expected=$taskHit;before=$taskState;after=$taskLive}|ConvertTo-Json -Depth 12|Set-Content -LiteralPath (Join-Path $taskRun 'selection-failure.json') -Encoding utf8

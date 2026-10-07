@@ -108,6 +108,7 @@ public struct TaskCard: Codable, Identifiable, Sendable {
     public var notificationVersion: String?
     public var error: String?
     public var replyError: String?
+    public var executor:ExecutorPresentation?
     public var priorityRank: Int {
         if status == "needs" || (["blocked", "waiting"].contains(status) && waitingOn?.kind == "you") { return 0 }
         if urgent == true { return 1 }
@@ -194,6 +195,7 @@ public struct QueueState: Codable, Sendable {
         }
         if let protocolVersion=state.protocolVersion, ![2,3].contains(protocolVersion) {throw PeerError.unsupportedState}
         try state.peerContract?.validate()
+        for task in state.cards + state.done {try task.executor?.validate()}
         if state.peerContract != nil && state.stateVersion == nil {throw PeerError.unsupportedState}
         guard state.cards.count + state.done.count <= 10_000,
               (state.cards + state.done).allSatisfy({ !$0.id.isEmpty && !$0.taskKey.isEmpty && $0.id.count <= 2048 }) else { throw PeerError.unsupportedState }
