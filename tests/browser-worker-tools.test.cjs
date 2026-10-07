@@ -15,6 +15,7 @@ const { ExecutorBindings } = require('../src/executor-bindings.cjs'),
   { BrowserSessions } = require('../src/browser-sessions.cjs'),
   { BrowserWorkerTools, names, operationId } = require('../src/browser-worker-tools.cjs');
 const { ResourceBudgets, defaults } = require('../src/resource-budgets.cjs');
+const { admission: browserAdmission } = require('../src/browser-admission.cjs');
 const delay = () => new Promise((r) => setTimeout(r, 5));
 async function until(fn) {
   for (let i = 0; i < 400; i++) {
@@ -465,4 +466,52 @@ test('a source pause while awaiting exact executor identity stops browser I/O an
     () => new ExecutorBindings({ directory: f.directory, actorId: f.actorId, deviceId: 'local' }),
     { code: 'PRIVATE_STORE_RECOVERY' },
   );
+});
+
+test('actual main pause and executor revocation hold direct browser commands and worker tools through the same admission', async (t) => {
+  const f = await fixture(t),
+    work = require('./fixtures/work-control-profile.cjs').fixture();
+  t.after(() => work.close());
+  work.source.id = f.task.threadId;
+  const card = work.snapshot().cards.find((c) => c.sources.some((s) => s.id === f.task.threadId));
+  work.assistant.focus(card, f.task.threadId);
+  const responsibilityId = await work.parent();
+  assert.equal(work.responsibilities.entry(responsibilityId).scope.sourceId, f.task.threadId);
+  const admission = (scope) =>
+    browserAdmission(scope, {
+      executors: f.executors,
+      workControls: work.controls,
+      responsibilities: work.responsibilities,
+      privacy: { disconnected: () => false },
+      unavailable: () => false,
+    });
+  f.browsers.options.admission = admission;
+  f.tools.options.admission = admission;
+  await f.returnControl();
+  const lease = f.browsers.lease(f.id);
+  await f.browsers.read(lease);
+  assert.equal(f.reads, 1);
+  for (const [pause, resume] of [
+    ['/work pause-main ' + responsibilityId, '/work resume-main ' + responsibilityId],
+    ['/work stop-all', '/work resume-all'],
+  ]) {
+    assert.equal((await work.ask(pause)).status, 'completed');
+    assert.equal(admission(f.browsers.entry(f.id)), 'deny');
+    await assert.rejects(f.browsers.read(lease), { code: 'BROWSER_SESSION_HELD' });
+    await assert.rejects(f.browsers.navigate(lease, f.origin + '/held'), {
+      code: 'BROWSER_SESSION_HELD',
+    });
+    assert.equal((await f.send(f.message())).success, false);
+    assert.equal((await f.send(f.message(names[0], {}))).success, false);
+    assert.equal(f.reads, 1);
+    assert.equal(f.navigations, 0);
+    assert.equal((await work.ask(resume)).status, 'completed');
+    assert.equal(admission(f.browsers.entry(f.id)), 'allow');
+  }
+  assert.equal((await f.send(f.message())).success, true);
+  assert.equal(f.reads, 2);
+  assert.equal((await work.ask('/work revoke-executor fixture-policy-pc')).status, 'completed');
+  await assert.rejects(f.browsers.read(lease), { code: 'BROWSER_SESSION_HELD' });
+  assert.equal((await f.send(f.message())).success, false);
+  assert.equal(f.reads, 2);
 });
