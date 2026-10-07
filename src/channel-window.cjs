@@ -41,6 +41,7 @@ class ChannelWindow {
     throw new Error();
   }
   open() {
+    if (this.window?.isDestroyed()) this.window = null;
     if (this.window) {
       this.window.show();
       this.window.focus();
