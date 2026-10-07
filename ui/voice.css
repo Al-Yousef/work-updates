@@ -1,0 +1,59 @@
+:root {
+  font-family: system-ui, sans-serif;
+  color-scheme: light dark;
+}
+body {
+  margin: 0;
+}
+main {
+  max-width: 38rem;
+  margin: auto;
+  padding: 24px;
+}
+h1 {
+  font-size: 28px;
+}
+h2 {
+  font-size: 18px;
+}
+p {
+  line-height: 1.5;
+}
+label {
+  display: block;
+  margin: 12px 0;
+}
+fieldset,
+details {
+  border: 1px solid #8886;
+  border-radius: 12px;
+  padding: 16px;
+  margin: 18px 0;
+}
+button,
+input,
+textarea {
+  font: inherit;
+}
+button {
+  padding: 8px 12px;
+  margin: 4px;
+  border-radius: 8px;
+  border: 1px solid #8888;
+}
+textarea,
+input[type='password'] {
+  box-sizing: border-box;
+  width: 100%;
+  padding: 8px;
+}
+audio {
+  width: 100%;
+}
+#status {
+  font-weight: 600;
+}
+#captions {
+  white-space: pre-wrap;
+  overflow-wrap: anywhere;
+}
