@@ -48,6 +48,7 @@ const responsibilityAuthorization=require('./src/responsibility-authorization.cj
 const {Commitments}=require('./src/commitments.cjs');
 const {Research}=require('./src/research.cjs');
 const {Reflections}=require('./src/reflections.cjs');
+const {OutcomeVerification}=require('./src/outcome-verification.cjs');
 const {Triage}=require('./src/triage.cjs');
 const {Delegations}=require('./src/delegations.cjs');
 const {WorkControls}=require('./src/work-controls.cjs');
@@ -155,7 +156,10 @@ const budgets=new (require('./src/resource-budgets.cjs').ResourceBudgets)({direc
   scopes:(id,input)=>{const matches=input.kind==='read'?responsibilities.state.entries.filter(r=>r.scope.sourceId===input.sourceId):responsibilities.state.entries.filter(r=>r.currentStep.messageId===id);return matches.flatMap(r=>{const d=delegations.state.entries.find(d=>d.childId===r.id);return [r.id,...(d?[d.parentId]:[])];});}});
 messages.budgets=budgets;
 research.options.reader=budgets.reader(researchReader);
-const assistant = new Assistant({directory:dataDir,snapshot:()=>devices.snapshot(),attachments,budgets,
+const outcomes=new OutcomeVerification({directory:dataDir,actorId:'human:'+devices.local.id,responsibilities,snapshot:()=>devices.snapshot(),maintenance:()=>quitting||maintenanceActive(dataDir),admission:entry=>workControls.responsibilityAdmission(entry)});
+responsibilities.options.outcomeRequired=entry=>outcomes.required(entry);
+responsibilities.options.outcomeAdmission=(entry,human)=>outcomes.admission(entry,human);
+const assistant = new Assistant({directory:dataDir,snapshot:()=>devices.snapshot(),attachments,budgets,outcomes,
   responsibilities,
   schedules,
   authorization,
@@ -977,6 +981,7 @@ app.on('before-quit', () => {
   commitments.close();
   research.close();clearInterval(researchTimer);
   activity.close();
+  outcomes.close();
   reflections.close();clearInterval(reflectionTimer);
   triage.close();clearInterval(triageTimer);
   delegations.close();clearInterval(delegationTimer);

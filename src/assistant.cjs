@@ -18,6 +18,7 @@ const {command:researchCommand}=require('./research-command.cjs');
 const {command:reflectionCommand}=require('./reflection-command.cjs');
 const {command:triageCommand}=require('./triage-command.cjs');
 const activityControl=require('./activity-command.cjs');
+const outcomeControl=require('./outcome-command.cjs');
 const {command:delegationCommand}=require('./delegation-command.cjs');
 const {command:workCommand}=require('./work-command.cjs');
 class Assistant extends EventEmitter {
@@ -154,6 +155,7 @@ class Assistant extends EventEmitter {
       const work=workCommand(message.text);if(work){await require('./work-control.cjs').manage(this.options.workControls,message,work);this.save();return;}
       const reflection=reflectionCommand(message.text);if(reflection){require('./reflection-control.cjs').manage(this.options.reflections,message,reflection);this.save();return;}
       const activity=activityControl.command(message.text);if(activity){activityControl.manage(this.options.activity,message,activity);this.save();return;}
+      const outcome=outcomeControl.command(message.text);if(outcome){outcomeControl.manage(this.options.outcomes,message,outcome);this.save();return;}
       const notice=triageCommand(message.text);if(notice){require('./triage-control.cjs').manage(this.options.triage,message,notice);this.save();return;}
       const authorization=authorizationCommand(message.text);
       if(authorization){await this.manageAuthorization(message,authorization);this.save();return;}
@@ -195,6 +197,7 @@ class Assistant extends EventEmitter {
         reflections:this.options.reflections?.context(),
         notifications:this.options.triage?.context(),
         activity:this.options.activity?.context(),
+        outcomes:this.options.outcomes?.context(),
         delegations:this.options.delegations?.snapshot().slice(-8).map(e=>({id:e.id,parentId:e.parentId,parentRevision:e.parentRevision,childId:e.childId,chatName:e.scope.chatName,ownerId:e.scope.ownerId,purpose:clip(e.purpose,500),phase:e.phase,limits:e.limits,cancelRequested:e.cancelRequested,review:e.review?{kind:e.review.kind,text:clip(e.review.text,300)}:null,missingEvidence:e.missingEvidence,parentGoalVerification:'Tracked separately on the parent responsibility'})),
         canRequestChatMessage:!!this.options.dispatch&&!!requestedRef,requestedChatRef:requestedRef,requestedMessage:requested?.proposal||null});
       if(this.closed)return;
