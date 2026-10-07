@@ -4,6 +4,7 @@ const fs = require('node:fs'),
   crypto = require('node:crypto');
 const { spawn } = require('node:child_process');
 const hash = (file) => crypto.createHash('sha256').update(fs.readFileSync(file)).digest('hex');
+const storageCode = error => ['EACCES','EPERM','ENOSPC','EMFILE','ENFILE','EIO','EEXIST','EISDIR','ENOENT','ENOTDIR'].includes(error?.code) ? error.code : 'UNKNOWN';
 
 // Commands come from the reviewed matrix, never from an account or source message.
 // Only the process created by this invocation can be terminated on interruption.
@@ -20,8 +21,23 @@ function execute(
       started = performance.now();
     const stdoutFile = path.join(directory, 'stdout.txt'),
       stderrFile = path.join(directory, 'stderr.txt');
-    const stdout = fs.openSync(stdoutFile, 'wx', 0o600),
+    let stdout, stderr;
+    try {
+      stdout = fs.openSync(stdoutFile, 'wx', 0o600);
       stderr = fs.openSync(stderrFile, 'wx', 0o600);
+    } catch (error) {
+      let cleanup = 'not_started';
+      for (const fd of [stdout, stderr]) if (fd !== undefined) {
+        try { fs.closeSync(fd); } catch { cleanup = 'unverified'; }
+      }
+      // No process has started and an existing path is never overwritten or
+      // hashed as evidence from this invocation. Retain only the bounded code.
+      resolve({status:'storage_failed', started:false, processId:null, startedAt,
+        completedAt:new Date().toISOString(), durationMs:Math.round(performance.now()-started),
+        stopDurationMs:null, exitCode:null, terminationSignal:null, exitObserved:false,
+        cleanup, storageFailureCode:storageCode(error), reason:'log_open_failed', logs:[]});
+      return;
+    }
     let child,
       timer,
       killTimer,
@@ -34,9 +50,7 @@ function execute(
       storageFailureCode = null;
     const storageFailure = (error) => {
       failure ||= 'storage_failed';
-      storageFailureCode = ['EACCES', 'EPERM', 'ENOSPC', 'EMFILE', 'EIO'].includes(error.code)
-        ? error.code
-        : 'UNKNOWN';
+      storageFailureCode = storageCode(error);
     };
     const finish = (exitCode, terminationSignal, exitObserved = true) => {
       if (finished) return;

@@ -293,3 +293,66 @@ test('unexpected driver failure remains unconfirmed and stops every later lane',
   assert.equal(report.lanes[1].reason, 'prior_case_cleanup_unverified');
   assert.ok(!JSON.stringify(report).includes('private failure text'));
 });
+test('a log-open failure releases its already-opened descriptor and never launches a child', async (t) => {
+  const directory = temp(t), marker = path.join(directory, 'must-not-launch.txt');
+  let opened = null;
+  t.after(() => { if(opened !== null) { try { fs.closeSync(opened); } catch {} } });
+  fs.mkdirSync(path.join(directory, 'stderr.txt'));
+  const originalOpen = fs.openSync;
+  fs.openSync = (file, ...args) => {
+    const fd = originalOpen(file, ...args);
+    if(file === path.join(directory, 'stdout.txt')) opened = fd;
+    return fd;
+  };
+  let result;
+  try {
+    result = await execute({ file: process.execPath, args: ['-e',
+      "require('node:fs').writeFileSync(process.argv[1], 'unexpected child')", marker] }, {
+      cwd: root, directory, timeoutMs: 5000,
+    });
+  } catch (error) {
+    t.diagnostic('Original stdout descriptor still open before cleanup: ' + fs.fstatSync(opened).isFile());
+    throw error;
+  } finally { fs.openSync = originalOpen; }
+  assert.throws(() => fs.fstatSync(opened), {code:'EBADF'});
+  assert.equal(result.status, 'storage_failed');
+  assert.equal(result.storageFailureCode, 'EEXIST');
+  assert.equal(result.started, false);
+  assert.equal(result.cleanup, 'not_started');
+  assert.equal(result.exitObserved, false);
+  assert.equal(fs.existsSync(marker), false);
+  assert.equal(JSON.stringify(result).includes('private storage detail'), false);
+});
+test('a pre-existing stdout file is preserved and cannot become evidence from a new QA child', async (t) => {
+  const directory = temp(t), marker = path.join(directory, 'must-not-launch.txt'), file = path.join(directory, 'stdout.txt');
+  fs.writeFileSync(file, 'original synthetic bytes');
+  const before = fs.readFileSync(file);
+  const result = await execute({file:process.execPath, args:['-e',
+    "require('node:fs').writeFileSync(process.argv[1], 'unexpected child')", marker]},
+    {cwd:root, directory, timeoutMs:5000});
+  assert.equal(result.status, 'storage_failed');
+  assert.equal(result.storageFailureCode, 'EEXIST');
+  assert.equal(result.started, false);
+  assert.equal(result.cleanup, 'not_started');
+  assert.deepEqual(result.logs, []);
+  assert.deepEqual(fs.readFileSync(file), before);
+  assert.equal(fs.existsSync(marker), false);
+  assert.equal(fs.existsSync(path.join(directory, 'stderr.txt')), false);
+});
+test('unavailable log evidence stops every later QA lane before its candidate can be prepared', async (t) => {
+  let calls = 0;
+  const report = await run({root, directory:path.join(temp(t),'run'), lanes:['isolated','simulated'], revision,
+    verifyCandidate: () => { throw new Error('Later candidate must not be prepared'); },
+    executeCase: (command, options) => {
+      calls++;
+      fs.mkdirSync(path.join(options.directory, 'stderr.txt'));
+      return execute(command, options);
+    },
+  });
+  assert.equal(calls, 1);
+  assert.equal(report.passed, false);
+  assert.equal(report.lanes[0].cases[0].started, false);
+  assert.equal(report.lanes[0].cases[0].status, 'storage_failed');
+  assert.equal(report.lanes[1].status, 'blocked');
+  assert.equal(report.lanes[1].reason, 'prior_case_cleanup_unverified');
+});
