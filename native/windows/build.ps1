@@ -53,7 +53,9 @@ try {
     if($LASTEXITCODE -ne 0) {throw 'Input checks failed'}
     & $taskCompiler @taskCompilerFlags tests/queue-model.cpp -std=c++20 -O2 -static -o (Join-Path $taskBuild 'queue-tests.exe')
     if($LASTEXITCODE -ne 0) {throw 'Queue model test build failed'}
-    & (Join-Path $taskBuild 'queue-tests.exe')
+    & node (Join-Path $taskRepo 'scripts/status-contract-fixtures.cjs')
+    if($LASTEXITCODE -ne 0) {throw 'Status fixture generation failed'}
+    & (Join-Path $taskBuild 'queue-tests.exe') (Join-Path $taskRepo 'artifacts/status-contract/fixtures.json')
     if($LASTEXITCODE -ne 0) {throw 'Queue model checks failed'}
     & $taskCompiler @taskCompilerFlags tests/taskbar-adapter.cpp @taskObjects -std=c++20 -O2 -static -Wall -Wextra -o (Join-Path $taskBuild 'adapter-tests.exe') -lbcrypt -lruntimeobject -lole32 -luser32
     if($LASTEXITCODE -ne 0){throw 'Adapter test build failed'}

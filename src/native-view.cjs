@@ -14,10 +14,12 @@ function sourceMessage(message,attachments) {
   return {role:message.role==='user'?'user':'assistant',text:clipped(text,6000),images:attachments?attachments.output([...new Set(refs)]):[]};
 }
 function cardView(card, details = false, attachments) {
-  const keys = ['id', 'taskKey', 'kind', 'status', 'primarySourceId', 'at', 'reviewed',
-    'snoozed', 'snoozedUntil', 'done', 'urgent', 'readyForReview', 'summaryOrigin','queuedMessages'];
+  const keys = ['id', 'taskKey', 'kind', 'status', 'at', 'reviewed',
+    'snoozed', 'snoozedUntil', 'done', 'urgent', 'readyForReview', 'summaryOrigin','queuedMessages',
+    'availability', 'activity', 'sourceStatus', 'summaryState', 'summaryNotice'];
   return {
     ...Object.fromEntries(keys.filter(key => card[key] !== undefined).map(key => [key, card[key]])),
+    primarySourceId: typeof card.primarySourceId === 'string' ? card.primarySourceId : '',
     chatName: clipped(card.chatName, 180), title: clipped(card.title, 240),
     summary: clipped(card.summary, 600), label: clipped(card.label, 160),
     device: card.device, waitingOn: card.waitingOn,

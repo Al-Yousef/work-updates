@@ -9,7 +9,7 @@ const {Messages}=require('../src/messages.cjs');
 const {Assistant}=require('../src/assistant.cjs');
 const {Attachments}=require('../src/attachments.cjs');
 const {nativeView,cardView}=require('../src/native-view.cjs');
-const {DemoCodex,feed}=require('../src/demo.cjs');
+const {DemoCodex,feed,startDemoObserver}=require('../src/demo.cjs');
 const directory=path.resolve(process.argv[2]);fs.mkdirSync(directory,{recursive:true});
 const delayOption=(flag,fallback=0)=>{const at=process.argv.indexOf(flag);return at<0?fallback:Math.min(5000,Math.max(0,Number(process.argv[at+1])||0));};
 const detailsDelay=delayOption('--details-delay-ms'),sendDelay=delayOption('--send-delay-ms',250),attachDelay=delayOption('--attach-delay-ms');
@@ -27,7 +27,7 @@ sample.threads[2].conversation=[
 sample.threads[2].conversationLoaded=true;
 if(process.argv.includes('--long-history'))for(let i=0;i<12;i++)sample.threads[2].conversation.push({role:i%2?'assistant':'user',text:'Reading history '+i+'. '+('This longer conversation verifies that returning to a chat preserves the position you were reading. '.repeat(8))});
 if(process.argv.includes('--many-chats'))for(let i=10;i<16;i++)sample.threads.push({id:'10000000-0000-4000-8000-'+String(i).padStart(12,'0'),title:'Sample chat '+i,taskTitle:'Review sample context',body:'A synthetic scrolling fixture.',summary:'A synthetic scrolling fixture.',status:'unknown',lifecycle:'completed',readyForReview:false,contextLoaded:true,updatedAt:Math.floor(Date.now()/1000)-1000,fingerprint:'sample-'+i,device:{kind:'pc',label:'Windows PC'}});
-sample.monitoredCount=sample.threads.length;queue.setFeed(sample);
+sample.monitoredCount=sample.threads.length;const demoObserver=startDemoObserver(queue,{initial:sample});
 const client=new DemoCodex(),sent=[];
 client.prepare=async threadId=>{
   if(threadId.endsWith('000002')) {const error=new Error('already has an active writer');error.code=-32600;throw error;}
@@ -45,7 +45,7 @@ const assistant=new Assistant({directory,snapshot:()=>queue.snapshot(),attachmen
 const state=()=>({...messages.decorate(queue.snapshot()),assistant:assistant.snapshot()});
 let uxWatch,uxOverride={},uxPaused=false,detailFailures=0;
 const fixtureView=()=>({...nativeView(state()),...uxOverride});
-function close(){uxWatch?.close();assistant.close();messages.close();control?.close();client.close();process.exitCode=0;}
+function close(){uxWatch?.close();demoObserver.close();assistant.close();messages.close();control?.close();client.close();process.exitCode=0;}
 (async()=>{
   control=await new NativeControl({directory,changed:()=>{},status:()=>({activeWriters:Math.max(client.active.size,queue.busy.size)}),quit:close,
     state:fixtureView,command:async(method,input)=>{
@@ -53,7 +53,10 @@ function close(){uxWatch?.close();assistant.close();messages.close();control?.cl
       if(method==='openAttachment'){attachments.resolve([input.attachmentId]);return {opened:true};}
       if(method==='assistantAsk')return assistant.ask(input);
       if(method==='assistantUse'){const result=assistant.use(input);return {...result,card:cardView(result.card,true,attachments)};}
-      if(method==='details'){await pause(detailsDelay);if(detailFailures>0){detailFailures--;throw new Error('Synthetic detail failure');}return cardView(messages.decorate({cards:[queue.get(input.id,input.taskKey)]}).cards[0],true,attachments);}
+      if(method==='details'){await pause(detailsDelay);if(detailFailures>0){detailFailures--;throw new Error('Synthetic detail failure');}
+        if(process.argv.includes('--status-audit')){const fixture=(uxOverride.cards||[]).find(card=>card.id===input.id&&card.taskKey===input.taskKey);
+          if(fixture)return {...fixture,sources:fixture.sources.map(source=>({...source,body:fixture.summary,conversation:[],contextLoaded:true}))};}
+        return cardView(messages.decorate({cards:[queue.get(input.id,input.taskKey)]}).cards[0],true,attachments);}
       if(method==='send')return controller.send(input.id,input.text,input.sourceId,input.taskKey,{messageId:input.messageId,images:attachments.resolve(input.attachmentIds||[])});
       if(method==='queueMessage')return messages.enqueue(input);
       if(method==='clearMessages')return messages.clear(input.sourceId,input.checked);
