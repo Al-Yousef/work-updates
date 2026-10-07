@@ -10,8 +10,8 @@ test('watcher reports health changes even when no new feed can be written', asyn
   const home = path.join(dir, 'missing-store');
   fs.mkdirSync(home);
   let watcher;
-  t.after(() => {
-    watcher?.close();
+  t.after(async () => {
+    await watcher?.closeAndWait();
     fs.rmSync(dir, { recursive: true, force: true });
   });
   const result = await new Promise((resolve, reject) => {
@@ -40,4 +40,8 @@ test('watcher reports health changes even when no new feed can be written', asyn
   });
   assert.equal(result.feed, null);
   assert.match(result.health.message, /OperationalError/);
+  watcher.ignore(['11111111-1111-4111-8111-111111111111']);
+  const saved=JSON.parse(fs.readFileSync(path.join(dir,'observer/config.json'),'utf8'));
+  assert.equal(saved.codexHome,home);
+  assert.deepEqual(saved.ignoredThreadIds,['11111111-1111-4111-8111-111111111111']);
 });
