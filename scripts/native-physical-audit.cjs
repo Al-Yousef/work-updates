@@ -34,8 +34,17 @@ async function main() {
     descriptors.push(stdout);
     const stderr = fs.openSync(path.join(directory,label+'.stderr.txt'),'wx',0o600);
     descriptors.push(stderr);
-    const child = spawn(file,args,{cwd:root,windowsHide:true,stdio:['ignore',stdout,stderr]});
+    const child = spawn(file,args,{cwd:root,windowsHide:true,stdio:['ignore','pipe','pipe']});
     const entry = {child,closed:false,code:null,error:false};
+    let bytes = 0;
+    const capture = fd => chunk => {
+      const room = Math.max(0,2*1024*1024-bytes);
+      try {fs.writeSync(fd,chunk.subarray(0,room));}
+      catch {entry.error=true;controller.abort();child.kill();}
+      bytes += chunk.length;
+      if(bytes>2*1024*1024){entry.error=true;controller.abort();child.kill();}
+    };
+    child.stdout.on('data',capture(stdout));child.stderr.on('data',capture(stderr));
     child.on('error',()=>{entry.error=true;});
     child.on('close',code=>{entry.closed=true;entry.code=code;});
     children.push(entry);return entry;
