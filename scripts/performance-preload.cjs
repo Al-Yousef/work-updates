@@ -120,6 +120,10 @@ demo.startDemoObserver = function (value) {
   return observer;
 };
 const start = NativeControl.prototype.start;
+const broadcast = NativeControl.prototype.broadcast;
+NativeControl.prototype.broadcast = function (state) {
+  return broadcast.call(this, { ...state, ...overlay });
+};
 NativeControl.prototype.start = async function () {
   const state = this.state;
   this.state = () => ({ ...state(), ...overlay });

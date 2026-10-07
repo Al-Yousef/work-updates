@@ -88,6 +88,11 @@ jobs:
         with:
           name: native-windows-failure-diagnostics
           path: |
+            artifacts/performance/**/metadata.json
+            artifacts/performance/**/*.samples.json
+            artifacts/performance/**/*.workload.json
+            artifacts/performance/**/cleanup.json
+            artifacts/performance/**/*.stderr.txt
             artifacts/baseline-runtime/verification.json
             artifacts/update-runtime/verification.json
             artifacts/update-faults/verification.json
