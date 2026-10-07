@@ -422,9 +422,12 @@ class OutcomeVerification extends EventEmitter {
     if (record.origin.actorId !== this.options.actorId || record.binding !== binding(entry))
       return 'changed';
     if (record.spec.until <= this.now()) return 'stale';
-    if (this.options.maintenance?.() || this.options.admission?.(entry) === 'hold')
-      return 'inaccessible';
     try {
+      if (
+        this.options.maintenance?.() ||
+        (this.options.admission && this.options.admission(entry) !== 'allow')
+      )
+        return 'inaccessible';
       this.options.responsibilities.refreshScope(entry, this.options.snapshot());
     } catch {
       return 'inaccessible';
