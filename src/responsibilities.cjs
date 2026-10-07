@@ -274,7 +274,7 @@ class Responsibilities extends EventEmitter {
       }
     } else {
       entry.state =
-        entry.completionCriteria.kind === 'source_terminal' ? 'completed' : 'waiting_user';
+        entry.completionCriteria.kind === 'source_terminal'&&!this.options.outcomeRequired?.(entry) ? 'completed' : 'waiting_user';
       entry.wakeReason = {
         kind:
           entry.state === 'completed'
@@ -575,11 +575,13 @@ class Responsibilities extends EventEmitter {
       entry = this.entry(id);
     if (
       entry.currentStep.status !== 'completed' ||
-      entry.completionCriteria.kind !== 'human_verified'
+      entry.completionCriteria.kind !== 'human_verified'&&!this.options.outcomeRequired?.(entry)
     )
       throw new Error('An exact source outcome is required before verification');
     if (entry.currentStep.text !== entry.instruction)
       throw new Error('The newer human instruction has not completed its source pass');
+    if(this.options.outcomeAdmission&&!this.options.outcomeAdmission(entry,{...human,role:'human'}))
+      throw new Error('The expected outcome is not verified on its current source and revision. Inspect /outcome before finishing.');
     this.change((next) => {
       const current = next.entries.find((x) => x.id === id);
       current.state = 'completed';
