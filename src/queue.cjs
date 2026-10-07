@@ -221,7 +221,7 @@ class Queue extends EventEmitter {
           turnOutcome:source.turnId===task.turnId&&task.notificationVersion===task.turnId?task.turnOutcome:source.turnOutcome}));
         result.push({
           ...card,
-          taskKey: task.id,
+          taskKey: task.adoptedTaskKey||task.id,
           threadId: task.threadId,
           messages: [],
           notificationVersion: observed.fingerprint,
@@ -254,7 +254,7 @@ class Queue extends EventEmitter {
         device: sourceDevice,
         primarySourceId: task.threadId,
         kind: 'local',
-        taskKey: task.id,
+        taskKey: task.adoptedTaskKey||task.id,
         ...inferAttention(
           task.messages?.filter((m) => m.role === 'assistant').at(-1)?.text,
           task.status,

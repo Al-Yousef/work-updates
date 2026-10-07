@@ -6,12 +6,13 @@ const {taskSource}=require('./task-source.cjs');
 const {Attachments,attachmentIds,messageHash}=require('./attachments.cjs');
 const {readStore}=require('./private-store.cjs');
 const {maintenanceActive}=require('./profile-lease.cjs');
+const {check:checkDeadline}=require('./dispatch-deadline.cjs');
 const terminal=new Set(['sent','cancelled']);
 const unknown=error=>error.delivery==='uncertain'||(error.delivery!=='not-sent'&&['CODEX_TIMEOUT','CODEX_DISCONNECTED','DESKTOP_RECEIPT'].includes(error.code));
 class Messages extends EventEmitter {
-  constructor(queue,controller,{log,auto=true,attachments}={}) {
+  constructor(queue,controller,{log,auto=true,attachments,admission=()=> 'allow'}={}) {
     super();this.queue=queue;this.controller=controller;this.log=log;this.file=path.join(queue.directory,'messages.json');
-    this.attachments=attachments||new Attachments(queue.directory);
+    this.attachments=attachments||new Attachments(queue.directory);this.admission=admission;
     this.active=new Set();this.closed=false;this.state={version:1,entries:[],barriers:{}};
     this.state=readStore(this.file,{missing:this.state}).value;
     this.state.receipts??={};
@@ -28,13 +29,15 @@ class Messages extends EventEmitter {
     const keep=this.state.entries.filter(e=>!terminal.has(e.status));
     const allHistory=this.state.entries.filter(e=>terminal.has(e.status));
     const receipts={...this.state.receipts};
-    for(const entry of allHistory.slice(0,-200))if(entry.textHash)receipts[entry.id]={id:entry.id,sourceId:entry.sourceId,textHash:entry.textHash,status:entry.status,receipt:entry.receipt,receiptIdentity:entry.receiptIdentity};
+    for(const entry of allHistory.slice(0,-200))if(entry.textHash)receipts[entry.id]={id:entry.id,sourceId:entry.sourceId,textHash:entry.textHash,status:entry.status,receipt:entry.receipt,receiptIdentity:entry.receiptIdentity,completedAt:entry.completedAt};
     const history=allHistory.slice(-200);
     const next={...this.state,entries:[...history,...keep],receipts};
     atomic(this.file,next);this.state=next;this.emit('change');
   }
   record(event,entry,extra={}){this.log?.write('message.'+event,{messageId:entry.id,sourceId:entry.sourceId,cardId:entry.cardId,taskKey:entry.taskKey,mode:entry.mode,queueDepth:this.state.entries.filter(e=>!terminal.has(e.status)).length,...extra});}
   validate(input){
+    checkDeadline(input.expiresAt);
+    if(input.scheduleId!==undefined&&(!/^[a-f0-9-]{36}$/i.test(input.scheduleId)||!/^[a-f0-9-]{36}$/i.test(input.runId)||input.expiresAt===undefined))throw new Error('Invalid scheduled message identity');
     const card=this.queue.get(input.id,input.taskKey),value=text(input.text,12000),source=taskSource(card,input.sourceId);
     const images=attachmentIds(input.attachmentIds||[]);this.attachments.resolve(images);
     if(!value&&!images.length)throw new Error('Write a message or attach an image first.');
@@ -57,7 +60,7 @@ class Messages extends EventEmitter {
       try{this.save();}catch(error){entry.status='uncertain';entry.text=draft;error.delivery='uncertain';error.messageId=entry.id;throw error;}
       this.record('reconciled',entry,{turnId:proof.turnId,route:entry.receipt.route});
     }
-    if(entry.status==='sent')return {...entry.receipt,messageId:entry.id,sourceId:entry.sourceId,delivery:'sent'};
+    if(entry.status==='sent')return {...entry.receipt,messageId:entry.id,sourceId:entry.sourceId,delivery:'sent',acceptedAt:entry.completedAt};
     if(entry.status==='queued')return {messageId:entry.id,sourceId:entry.sourceId,delivery:'queued',route:'hyphen'};
     if(entry.status==='cancelled'){const error=new Error('That message was cancelled. Use a new message identity for a new draft.');error.code='DELIVERY_CANCELLED';error.messageId=entry.id;error.delivery='not-sent';throw error;}
     const error=new Error(entry.error||'This delivery is still unconfirmed. Check the chat before retrying.');
@@ -69,7 +72,7 @@ class Messages extends EventEmitter {
       throw new Error('The message queue is full. Clear queued messages before adding more.');
     const entry={id:input.messageId||crypto.randomUUID(),sourceId:source.id,cardId:card.id,taskKey:card.taskKey,
       textHash:messageHash(value,images),attachmentIds:images,
-      text:value,mode,status:mode==='queue'?'queued':'sending',createdAt:Date.now()};
+      text:value,mode,status:mode==='queue'?'queued':'sending',createdAt:Date.now(),...(input.expiresAt!==undefined?{expiresAt:input.expiresAt}:{}),...(input.scheduleId?{scheduleId:input.scheduleId,runId:input.runId}:{})};
     this.state.entries.push(entry);try{this.save();}catch(error){this.state.entries.pop();throw error;}
     this.record(mode==='queue'?'queued':'requested',entry);return entry;
   }
@@ -83,9 +86,10 @@ class Messages extends EventEmitter {
     const draft=entry.text,clearedFailures=[];
     this.active.add(entry.sourceId);entry.status='sending';entry.attemptedAt=Date.now();
     try {
+      require('./dispatch-deadline.cjs').admission({expiresAt:entry.expiresAt,beforeDispatch:()=>this.admission(entry)});
       this.save();this.record('dispatching',entry);
       const images=this.attachments.resolve(entry.attachmentIds||[]);
-      const result=await this.controller.send(input.id,entry.text,entry.sourceId,input.taskKey,{messageId:entry.id,images});
+      const result=await this.controller.send(input.id,entry.text,entry.sourceId,input.taskKey,{messageId:entry.id,images,beforeDispatch:()=>this.admission(entry),...(entry.expiresAt!==undefined?{expiresAt:entry.expiresAt}:{})});
       if(!result||typeof result.turnId!=='string'||!result.turnId.trim()||(result.messageId&&result.messageId!==entry.id)||(result.sourceId&&result.sourceId!==entry.sourceId))
         throw Object.assign(new Error('Codex did not return a matching acceptance receipt. Check this chat before retrying.'),{code:'DELIVERY_RECEIPT',delivery:'uncertain'});
       entry.status='sent';entry.receipt=result;entry.completedAt=Date.now();delete entry.text;
@@ -94,13 +98,14 @@ class Messages extends EventEmitter {
       const source=this.queue.feed.threads.find(s=>s.id===entry.sourceId);
       this.state.barriers[entry.sourceId]={turnId:result.turnId||'',fingerprint:source?.fingerprint||'',at:Date.now()};
       this.save();this.record('sent',entry,{route:result.route,turnId:result.turnId,elapsedMs:Date.now()-entry.attemptedAt});
-      return {...result,messageId:entry.id,sourceId:entry.sourceId,delivery:'sent'};
+      return {...result,messageId:entry.id,sourceId:entry.sourceId,delivery:'sent',acceptedAt:entry.completedAt};
     } catch(error) {
       // A lost acknowledgement can mean it was delivered. Never retry it
       // automatically or allow another queued message to pass that uncertainty.
       entry.text=draft;
       for(const old of clearedFailures){old.entry.status=old.status;old.entry.text=old.text;}
-      entry.status=unknown(error)||entry.status==='sent'?'uncertain':'failed';entry.code=error.code||'SEND_FAILED';
+      entry.status=['SCHEDULE_EXPIRED','SCHEDULE_CANCELLED'].includes(error.code)?'cancelled':error.code==='SCHEDULE_PAUSED'?'queued':unknown(error)||entry.status==='sent'?'uncertain':'failed';entry.code=error.code||'SEND_FAILED';
+      if(entry.status==='cancelled')delete entry.text;
       entry.error=entry.status==='uncertain'?'Delivery unconfirmed. Check this chat before retrying.':error.message;
       try{this.save();}catch{entry.status='uncertain';}
       this.record(entry.status,entry,{code:entry.code,route:error.route,method:error.method,phase:error.phase,
@@ -124,6 +129,8 @@ class Messages extends EventEmitter {
       if(!card||card.done||this.queue.busy.has(sourceId))continue;
       if(this.controller.client?.active?.has(sourceId)||card.sources.some(s=>s.id===sourceId&&['working','starting'].includes(s.lifecycle)))continue;
       const entry=this.state.entries.find(e=>e.sourceId===sourceId&&e.status==='queued');
+      const admission=this.admission(entry);if(admission==='wait')continue;if(admission==='deny'){try{this.cancel(entry.id,sourceId);}catch{}continue;}
+      if(entry.expiresAt!==undefined&&Date.now()>entry.expiresAt){try{this.cancel(entry.id,sourceId);}catch{}continue;}
       try{await this.deliver(entry,{id:card.id,taskKey:card.taskKey});}catch{}
     }
   }
@@ -150,7 +157,7 @@ class Messages extends EventEmitter {
       deliveryIssue:this.state.entries.findLast(e=>e.sourceId===source.id&&['failed','uncertain'].includes(e.status))?.error||'',
       messageQueue:this.state.entries.filter(e=>e.sourceId===source.id&&['queued','sending','failed','uncertain'].includes(e.status)).map(e=>({id:e.id,text:e.text,status:e.status,error:e.error||''})),
       deliveryOutcomes:[...Object.values(this.state.receipts),...this.state.entries].filter(e=>e.sourceId===source.id).slice(-100).map(e=>({messageId:e.id,sourceId:e.sourceId,status:e.status,
-        turnId:e.receiptIdentity?.messageId===e.id&&e.receiptIdentity?.sourceId===e.sourceId&&e.receiptIdentity?.textHash===e.textHash&&e.receiptIdentity?.turnId===e.receipt?.turnId?e.receipt.turnId:null}))})),
+        turnId:e.receiptIdentity?.messageId===e.id&&e.receiptIdentity?.sourceId===e.sourceId&&e.receiptIdentity?.textHash===e.textHash&&e.receiptIdentity?.turnId===e.receipt?.turnId?e.receipt.turnId:null,acceptedAt:e.status==='sent'?e.completedAt:undefined}))})),
     queuedMessages:this.state.entries.filter(e=>card.sources.some(s=>s.id===e.sourceId)&&e.status==='queued').length,
   });return {...state,cards:state.cards.map(decorateCard),done:(state.done||[]).map(decorateCard)};}
   close(){this.closed=true;clearInterval(this.timer);clearTimeout(this.scheduled);this.queue.off('change',this.changed);}

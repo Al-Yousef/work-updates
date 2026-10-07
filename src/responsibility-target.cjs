@@ -14,7 +14,7 @@ function currentScope(identity, snapshot) {
       'The original source is unavailable or its state is stale. The responsibility is kept.',
     );
   const { card, source } = match,
-    device = source.device || card.device || {};
+    device = typeof card.owner?.local==='boolean'?{kind:card.owner.kind,label:card.owner.name}:source.device || card.device || {};
   return {
     id: card.id,
     taskKey: card.taskKey,

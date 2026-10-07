@@ -38,7 +38,7 @@ function outcome(snapshot,action){
   else if(delivery?.status==='sent'&&delivery.turnId){status='accepted';turnId=delivery.turnId;}
   if(turnId&&source.turnId===turnId&&['completed','failed','interrupted'].includes(source.turnOutcome))status=source.turnOutcome==='completed'?'completed':'failed';
   if(status===action.status&&turnId===action.turnId)return null;
-  return {status,turnId,link:link(match.card,action.sourceId)};
+  return {status,turnId,acceptedAt:delivery?.status==='sent'?delivery.acceptedAt:undefined,link:link(match.card,action.sourceId)};
 }
 function receiptMatches(receipt,action){return receipt?.messageId===action.messageId&&receipt.sourceId===action.sourceId&&receipt.ownerId===action.ownerId&&
   (receipt.delivery==='queued'||receipt.delivery==='sent'&&typeof receipt.turnId==='string'&&!!receipt.turnId.trim());}
