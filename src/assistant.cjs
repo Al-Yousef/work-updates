@@ -9,6 +9,8 @@ const {context,history,conversation,revision,messageTarget}=require('./assistant
 const hash=value=>crypto.createHash('sha256').update(value).digest('hex');
 const clip=(value,n)=>String(value??'').toWellFormed().slice(0,n);
 const coordination=require('./assistant-coordination.cjs');
+const {command:responsibilityCommand}=require('./responsibility-command.cjs');
+const {currentScope}=require('./responsibility-target.cjs');
 class Assistant extends EventEmitter {
   constructor(options) {
     super();this.options=options;this.file=path.join(options.directory,'assistant.json');this.active=false;this.closed=false;this.error='';
@@ -41,7 +43,7 @@ class Assistant extends EventEmitter {
     if(JSON.stringify(next)===JSON.stringify(this.state.focus))return;const prior=this.state.focus;this.state.focus=next;
     try{this.save();}catch{this.state.focus=prior;this.log('focus_save_failed',{code:'ASSISTANT_STORAGE_FAILED'});}}
   snapshot(){const visible=new Set([...this.state.messages.filter(conversation).slice(-27),...this.state.messages.filter(m=>m.kind==='update').slice(-3)]);
-    return {responding:this.active,error:this.error,model:this.provider.model||null,memoryCount:this.state.notes.length,
+    return {responding:this.active,error:this.error,model:this.provider.model||null,memoryCount:this.state.notes.length,responsibilityCount:this.options.responsibilities?.snapshot().filter(r=>!['completed','cancelled'].includes(r.state)).length||0,
     messages:this.state.messages.filter(m=>visible.has(m)).map(m=>({...m,focus:undefined,action:undefined,links:m.links.map(({chatName,draft},index)=>({chatName,draft:clip(draft,12000),index}))}))};}
   log(event,details){this.options.log?.write('assistant.'+event,details);}
   observe(snapshot) {
@@ -138,6 +140,8 @@ class Assistant extends EventEmitter {
   async generate(message) {
     const started=Date.now();
     try {
+      const ongoing=responsibilityCommand(message.text);
+      if(ongoing){await this.manageResponsibility(message,ongoing);this.save();return;}
       const cancel=coordination.cancellation(this.state.messages,message);
       if(cancel){
         if(!cancel.target){message.status='completed';message.answer='Which queued message should I cancel? Name its chat. The queue is unchanged.';this.save();return;}
@@ -160,7 +164,9 @@ class Assistant extends EventEmitter {
       let images=message.images||[];
       if(!images.length&&/\b(image|photo|picture|screenshot|attachment|shown|left|right|colou?r|previous|earlier|that|this)\b/i.test(message.text)){const prior=recent.findLast(m=>m.imageIds.length);if(prior){try{images=this.attachments.resolve(prior.imageIds);}catch{prior.imagesUnavailable=true;}}}
       const value=await this.provider.answer({question:message.text||'Describe the attached image and help me understand it.',images,imagesFromHistory:!(message.images||[]).length&&!!images.length,history:recent,recalledHistory:recalled.recalled,userEvidence:recalled.userEvidence,historyCoverage:recalled.coverage,savedNotes:this.state.notes,
-        savedNotesProvenance:'explicit_pinned_notes',memoryCoverage:{retentionExchanges:500,retentionAlerts:40,pinnedNoteLimit:32,pinnedNoteCharacters:this.state.notes.join('').length},queue:current.data,canRequestChatMessage:!!this.options.dispatch&&!!requestedRef,requestedChatRef:requestedRef,requestedMessage:requested?.proposal||null});
+        savedNotesProvenance:'explicit_pinned_notes',memoryCoverage:{retentionExchanges:500,retentionAlerts:40,pinnedNoteLimit:32,pinnedNoteCharacters:this.state.notes.join('').length},queue:current.data,
+        responsibilities:this.options.responsibilities?.snapshot().slice(-8).map(r=>({id:r.id,origin:{text:clip(r.origin.text,600),provenance:'accepted_human_instruction'},instruction:clip(r.instruction,800),revision:r.revision,state:r.state,chatName:r.scope.chatName,ownerId:r.ownerId,stepStatus:r.currentStep.status,wakeReason:r.wakeReason.kind,completionCriteria:r.completionCriteria})),
+        canRequestChatMessage:!!this.options.dispatch&&!!requestedRef,requestedChatRef:requestedRef,requestedMessage:requested?.proposal||null});
       if(this.closed)return;
       if(typeof value.answer!=='string'||!value.answer.trim()||value.answer.length>6000||!Array.isArray(value.links)||value.links.length>3)
         throw new Error('Hyphen returned an invalid answer.');
@@ -204,6 +210,7 @@ class Assistant extends EventEmitter {
     const message=this.state.messages.find(m=>m.id===input.messageId&&m.status==='completed');
     if(!Number.isInteger(input.index)||input.index<0)throw new Error('Choose a related update from Hyphen’s answer.');
     const link=message?.links[input.index];if(!link)throw new Error('That related update is unavailable.');
+    if(link.responsibilityId){const entry=this.options.responsibilities?.entry(link.responsibilityId),match=entry&&coordination.sourceFor(this.options.snapshot(),entry.scope);if(!match)throw new Error('The responsibility source is unavailable on its original device.');return {card:match.card,sourceId:entry.scope.sourceId,draft:''};}
     if(link.coordinationId){const action=this.state.messages.find(m=>m.id===link.coordinationId)?.action;const match=action&&coordination.sourceFor(this.options.snapshot(),action);if(!match)throw new Error('The source chat is unavailable on its original device.');return {card:match.card,sourceId:action.sourceId,draft:''};}
     const state=this.options.snapshot();const card=[...(state.cards||[]),...(state.done||[])].find(c=>c.id===link.id&&c.taskKey===link.taskKey&&
       (c.owner?.id||'local')===link.ownerId&&revision(c)===link.revision);
@@ -211,5 +218,27 @@ class Assistant extends EventEmitter {
     return {card,sourceId:link.sourceId,draft:link.draft};
   }
   close(){this.closed=true;this.provider.close();}
+  async manageResponsibility(message,command){
+    const store=this.options.responsibilities;if(!store)throw new Error('Responsibilities are unavailable in this session.');
+    const human={role:'human',messageId:message.id,text:message.text};let id=command.id;
+    if(command.kind==='list'){
+      const entries=store.snapshot().slice(-12);message.answer=entries.length?entries.map(r=>r.scope.chatName+' · '+r.state.replaceAll('_',' ')+'\n'+r.id+'\n'+clip(r.instruction,180)).join('\n\n'):'No responsibilities yet. Open a source chat, then use /responsibility start INSTRUCTION.';
+    }else{
+      if(command.kind==='start'){
+        if(!message.focus?.sourceId)throw new Error('Open the source chat first, then start its responsibility. Your instruction is saved; nothing was dispatched.');
+        const scope=currentScope(message.focus,this.options.snapshot());
+        id=store.create({...human,instruction:command.instruction},scope,{kind:command.completionKind,description:command.completionKind==='source_terminal'?'The requested source pass reaches its matching terminal completion.':'The human verifies the requested result against the originating instruction.'});
+        await store.dispatch(id);
+      }else if(command.kind==='steer'){store.steer(id,{...human,instruction:command.instruction});await store.dispatch(id);}
+      else if(command.kind==='wait')store.wait(id,command.state,command.reason,human);
+      else if(command.kind==='wake'||command.kind==='approve'){store.wake(id,{...human,kind:command.kind==='approve'?'approval':'wake'});await store.dispatch(id);}
+      else if(command.kind==='cancel')await store.cancel(id,human);
+      else if(command.kind==='verify')store.confirm(id,human);
+      const entry=store.entry(id);message.responsibilityId=id;message.answer=entry.scope.chatName+' · '+entry.state.replaceAll('_',' ')+'\nResponsibility '+id+'\n'+clip(entry.instruction,3500)+'\nStep: '+entry.currentStep.status+'.';
+      if(entry.wakeReason.kind==='source_finished_outcome_unverified')message.answer+=' The source pass finished; the broader requested result still needs verification.';
+      const match=coordination.sourceFor(this.options.snapshot(),entry.scope);message.links=match?[{...coordination.link(match.card,entry.scope.sourceId),responsibilityId:id}]:[];
+    }
+    message.status='completed';
+  }
 }
 module.exports={Assistant,context,revision};
