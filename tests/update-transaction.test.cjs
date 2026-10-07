@@ -3,8 +3,17 @@ const test=require('node:test'),assert=require('node:assert/strict'),fs=require(
 const {fixture}=require('./fixtures/update-profile.cjs');
 const {digest,validateManifest,ready}=require('../src/update-transaction.cjs');
 const {acquireBackend,acquireLease,readLease}=require('../src/profile-lease.cjs');
+const {spawn}=require('node:child_process'),{once}=require('node:events');
 const store=(f,name)=>JSON.parse(fs.readFileSync(path.join(f.dataDirectory,name)));
 const phases=['prepared','staged','stopping','stopped','replacing','replaced','starting','healthy','launching'];
+test('abrupt installer process exit at every phase leaves a recoverable journal and dead ownership record',async t=>{
+  for(const phase of phases){const f=await fixture();try{
+    const file=path.join(f.directory,'installer-fixture.json');fs.writeFileSync(file,JSON.stringify({installRoot:f.installRoot,dataDirectory:f.dataDirectory,packageDirectory:f.packageDirectory,sourceRoot:f.sourceRoot,manifest:f.manifest}));
+    const child=spawn(process.execPath,[path.join(__dirname,'fixtures/update-installer-crash.cjs'),file,phase],{windowsHide:true,stdio:'ignore'});const [code]=await once(child,'exit');assert.equal(code,85);
+    assert.equal(readLease(path.join(f.dataDirectory,'.update-lease.json')).pid,child.pid);
+    const recovery=await f.transaction().recover();assert.equal(recovery.phase,'rolled-back');assert.equal(digest(f.original),f.manifest.components[0].baselineSha256);assert.equal(store(f,'messages.json').entries[0].id,'stable-intent');
+  }finally{await f.close();}}
+});
 test('interruption between atomic component replacements recovers every component independently',async t=>{
   const f=await fixture();t.after(()=>f.close());const target=path.join(f.installRoot,'desktop/resources/helper/collector.exe');fs.mkdirSync(path.dirname(target));fs.writeFileSync(target,'prior collector');const next=path.join(f.packageDirectory,'collector.exe');fs.writeFileSync(next,'candidate collector');
   f.manifest.components.push({role:'collector',path:'desktop/resources/helper/collector.exe',file:'collector.exe',sha256:digest(next),baselineSha256:digest(target)});
