@@ -1,6 +1,8 @@
 'use strict';
 function command(text) {
-  if (text === '/privacy inventory' || text === '/privacy inspect') return { kind: text.slice(9) };
+  if (text === '/privacy inspect') return {kind:'inspect'};
+  const inventory=text.match(/^\/privacy inventory(?: (\d{1,2}))?$/);
+  if(inventory){const page=Number(inventory[1]||1);if(page<1)throw new Error('Choose an inventory page starting at 1.');return {kind:'inventory',page};}
   let m = text.match(/^\/privacy (disconnect|delete) ([a-f0-9-]{36})$/);
   if (m) return { kind: m[1], id: m[2] };
   m = text.match(/^\/privacy preview (notes|conversation|source-cache)(?: ([a-f0-9-]{36}))?$/);
@@ -30,9 +32,11 @@ async function manage(privacy, message, intent) {
             : intent.kind === 'delete'
               ? await privacy.remove(input, intent.id)
               : privacy.export(input, intent.dataClass, intent.sourceId);
+  const page=intent.page||1,pages=intent.kind==='inventory'?Math.ceil(result.length/8):0;
+  if(intent.kind==='inventory'&&page>pages)throw new Error('That inventory page is unavailable. Start at /privacy inventory.');
   message.answer =
     intent.kind === 'inventory'
-      ? result.map((row) => row.name + ' · ' + row.location + '\n' + row.retention + '. ' + row.removal).join('\n\n')
+      ? result.slice((page-1)*8,page*8).map((row) => row.name + ' · ' + row.location + '\n' + row.retention + '. ' + row.removal).join('\n\n')+'\n\nInventory '+page+' of '+pages+(page<pages?' · Next: /privacy inventory '+(page+1):'')
       : typeof result === 'string'
         ? result
         : JSON.stringify(result, null, 2).slice(0, 6000);

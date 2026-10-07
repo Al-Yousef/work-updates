@@ -332,7 +332,8 @@ test('source export stays scoped and refuses a redirected private export directo
 test('every private store has inspectable retention and removal semantics', async (t) => {
   const f=fixture(t),names=Object.keys(require('../src/private-store.cjs').versions);
   for(const name of names){const row=f.privacy.inventory().find(r=>r.name===name);assert.ok(row?.retention&&row.access&&row.removal);}
-  const result=await f.ask('/privacy inventory');assert.equal(result.status,'completed');assert.ok(result.answer.includes('Codex chats / provider storage'));assert.ok(result.answer.length<=6000);assert.equal(f.calls,0);
+  const result=await f.ask('/privacy inventory');assert.equal(result.status,'completed');assert.ok(result.answer.includes('state.json'));assert.ok(result.answer.length<=6000);
+  const last=await f.ask('/privacy inventory '+Math.ceil(f.privacy.inventory().length/8));assert.ok(last.answer.includes('Codex chats / provider storage'));assert.ok(last.answer.length<=6000);assert.equal(f.calls,0);
 });
 
 test('a concurrent confirmation cannot overlap a pending removal', async (t) => {
