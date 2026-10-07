@@ -10,13 +10,17 @@ A task's first explicit start establishes its grant before thread/inference crea
 
 ## Coverage and remaining acceptance
 
-| Execution route | Binding coverage | Remaining proof |
-| --- | --- | --- |
-| Hyphen local Codex task creation/continuation | Versioned local grant with workspace/profile/account/task checks | Separately authorized actual account/device check |
-| Already observed Codex desktop chat | Existing exact source-owner delivery contract; no new full executor claim | Supported desktop runtime/account capability discovery |
-| Paired desktop | Existing authenticated device protocol; no silent local fallback | Independent executor handshake and unavailable/revoked-device conformance |
-| Assistant inference and reader | Existing separate provider and source-read contracts | Unified provider/executor accounting |
-| API-key or Bedrock task executor | Held: supported account response supplies no stable identity here | Explicit account identity adapter |
-| Cloud provisioning | Unsupported, no provisioning or paid-service calls | Separate opt-in provider, cost and access implementation |
+Paired owners can now receive a version-one, negotiated report of the original desktop's recorded local task grants. HTTP and ordered event snapshots carry the same capability version. Reports identify the original device, exact task/source/grant, recorded app-server version, access state, last verified time and supported local capability set. Workspace/account/profile references are private keyed fingerprints; no workspace path, account email, profile path or journal salt is exposed. This report performs no RPC, inference, new grant or cloud provisioning.
+
+Recorded grant access and provider transport are separate. Disconnected transport does not revoke a grant, and a connected computer does not establish current account/executor verification. A revoked grant stays revoked across offline/reconnect/restart. Changed or redirected journal storage reports a hold with no available grants. Unbound/observed chats remain explicitly unreported. Per-task views preserve namespaced identities on the original owner, while actual dispatch rechecks the original private binding on that owner. Reports never authorize migration, execution or permissions. `/executor inspect` shows local grants plus paired reporting coverage; the native iPhone task sheet labels recorded/revoked/unreported grants. Older peers remain compatible and explicitly lack report support; future report versions and widened capability claims are refused. A whole-device projection reads the registry once and indexes grants once for all cards.
+
+| Execution route                               | Binding coverage                                                                                 | Remaining proof                                                                                      |
+| --------------------------------------------- | ------------------------------------------------------------------------------------------------ | ---------------------------------------------------------------------------------------------------- |
+| Hyphen local Codex task creation/continuation | Versioned local grant with workspace/profile/account/task checks                                 | Separately authorized actual account/device check                                                    |
+| Already observed Codex desktop chat           | Existing exact source-owner delivery contract; no new full executor claim                        | Supported desktop runtime/account capability discovery                                               |
+| Paired desktop                                | Original owner's negotiated recorded grants and authenticated device protocol; no local fallback | Separately authorized physical/account check; each dispatch still needs its original owner handshake |
+| Assistant inference and reader                | Existing separate provider and source-read contracts                                             | Unified provider/executor accounting                                                                 |
+| API-key or Bedrock task executor              | Held: supported account response supplies no stable identity here                                | Explicit account identity adapter                                                                    |
+| Cloud provisioning                            | Unsupported, no provisioning or paid-service calls                                               | Separate opt-in provider, cost and access implementation                                             |
 
 The synthetic protocol tests exercise the actual Codex client and durable registry. They prove admission and checkpoint behavior; they do not establish physical-device or real-provider conformance. #27 stays open for those remaining routes and gates.

@@ -31,6 +31,7 @@ struct ChatView:View {
                 ScrollView {
                     VStack(alignment:.leading,spacing:18) {
                         NotificationCard(card:card,online:available,computerName:store.name(card.computerID))
+                        if let executor=task.executor {Text(executor.caption).font(.caption).foregroundStyle(.secondary).accessibilityIdentifier("executor-status")}
                         if !available {
                             Label("\(store.name(card.computerID)) is offline. This is its last recorded update.",systemImage:"wifi.slash")
                                 .font(.subheadline).foregroundStyle(.secondary)

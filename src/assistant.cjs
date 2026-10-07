@@ -188,7 +188,12 @@ class Assistant extends EventEmitter {
           if(!executorControl[2])throw new Error('Specify the exact executor grant from /executor inspect.');
           this.options.executors.revoke(executorControl[2].toLowerCase(),this.options.executors.actorId);
           message.answer='Revoked future access for this executor grant. Its existing source records remain; an already accepted turn requires the separate stop control.';
-        }else message.answer=JSON.stringify(this.options.executors.inspect().slice(-8),null,2).slice(0,6000);
+        }else {
+          const snapshot=this.options.snapshot();
+          message.answer=JSON.stringify({localGrants:this.options.executors.inspect().slice(-8),
+            devices:(snapshot.devices||[]).slice(0,9).map(d=>({name:d.name,online:d.online,executor:d.executor||{supported:false}})),
+            coverage:'Recorded grants and current transport are distinct. A connected computer is not proof of a current executor/account handshake. Observed chats without grants and cloud execution remain unreported/unsupported.'},null,2).slice(0,6000);
+        }
         message.status='completed';this.save();return;
       }
       const work=workCommand(message.text);if(work){await require('./work-control.cjs').manage(this.options.workControls,message,work);this.save();return;}

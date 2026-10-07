@@ -69,6 +69,7 @@ function negotiate(state) {
     value.assistant !== false ||
     value.orderedSnapshots !== true ||
     value.sourceBoundMessages !== true ||
+    (value.executorReports !== undefined && value.executorReports !== 1) ||
     !Array.isArray(value.commands) ||
     value.commands.length > commands.length ||
     value.commands.some((x) => !commands.includes(x)) ||

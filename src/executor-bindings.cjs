@@ -42,9 +42,10 @@ function validate(state) {
       e.capabilities.join(',') !== 'task_create,task_continue,turn_interrupt'
     )
       throw refusal('Invalid executor binding. The original journal is preserved.');
-    else if(e.browserTools!==undefined) {
+    else if (e.browserTools !== undefined) {
       require('./browser-worker-tools.cjs').validateContract(e.browserTools);
-      if(!e.threadId || e.browserTools.serverVersion!==e.serverVersion) throw refusal('Invalid browser tool registration.');
+      if (!e.threadId || e.browserTools.serverVersion !== e.serverVersion)
+        throw refusal('Invalid browser tool registration.');
     }
 }
 class ExecutorBindings {
@@ -175,10 +176,11 @@ class ExecutorBindings {
     this.save((next) => {
       const bound = next.entries.find((e) => e.taskId === taskId);
       bound.threadId = threadId;
-      if(browserTools!==undefined) {
+      if (browserTools !== undefined) {
         require('./browser-worker-tools.cjs').validateContract(browserTools);
-        if(browserTools.serverVersion!==bound.serverVersion) throw refusal('Browser tool version is unavailable.');
-        bound.browserTools=structuredClone(browserTools);
+        if (browserTools.serverVersion !== bound.serverVersion)
+          throw refusal('Browser tool version is unavailable.');
+        bound.browserTools = structuredClone(browserTools);
       }
       bound.verifiedAt = this.now();
     });
@@ -199,12 +201,58 @@ class ExecutorBindings {
     });
   }
   inspect() {
+    if (this.report().coverage === 'storage_held')
+      throw refusal(
+        'Executor storage needs recovery; retained grants are not current verification.',
+      );
     return this.state.entries.map(({ accountHash, profileHash, ...entry }) => ({
       ...entry,
       accountVerified: true,
       profileVerified: true,
       online: 'unknown_until_next_handshake',
     }));
+  }
+  report(transport = 'unknown') {
+    let held = this.failed;
+    try {
+      const stored = readStore(this.file);
+      if (!stored.missing) validate(stored.value);
+      held ||= (stored.missing ? null : digest(fs.readFileSync(this.file))) !== this.diskHash;
+    } catch {
+      held = true;
+    }
+    const workspaceRef = (value) =>
+      crypto
+        .createHmac('sha256', Buffer.from(this.state.salt, 'hex'))
+        .update('workspace:' + value)
+        .digest('hex');
+    return require('./executor-report.cjs').validate(
+      {
+        schema: 1,
+        deviceId: this.deviceId,
+        location: 'local',
+        cloud: false,
+        liveExecutorVerified: false,
+        coverage: held ? 'storage_held' : 'recorded_grants',
+        transport,
+        reportedAt: this.now(),
+        grants: held
+          ? []
+          : this.state.entries.map((e) => ({
+              id: e.id,
+              taskId: e.taskId,
+              threadId: e.threadId,
+              serverVersion: e.serverVersion,
+              access: e.access,
+              workspaceRef: workspaceRef(e.workspace),
+              accountRef: e.accountHash,
+              profileRef: e.profileHash,
+              verifiedAt: e.verifiedAt,
+              capabilities: [...e.capabilities],
+            })),
+      },
+      this.deviceId,
+    );
   }
 }
 module.exports = { ExecutorBindings, workspace, validate };
