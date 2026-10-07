@@ -10,7 +10,7 @@ function startObserver(root, options, onFeed) {
   atomic(path.join(root, 'config.json'), {
     codexHome: home,
     pollSeconds: options.pollSeconds || 3,
-    ignoredThreadIds: [],
+    ignoredThreadIds: options.ignoredThreadIds || [],
   });
   let binary, args;
   const bundled = path.join(
@@ -156,6 +156,20 @@ function startObserver(root, options, onFeed) {
   const timer = setInterval(poll, options.checkMs || 700);
   poll();
   return {
+    ignore(ids) {
+      if(!Array.isArray(ids)||ids.length>2048||ids.some(id=>typeof id!=='string'||!id))throw new Error('Invalid disconnected source list');
+      const file=path.join(root,'config.json'),config=read(file,null);
+      if(!config)throw new Error('Observer configuration is unavailable');
+      atomic(file,{...config,ignoredThreadIds:[...new Set(ids)]});
+    },
+    async closeAndWait() {
+      stopped=true;clearInterval(timer);clearTimeout(retry);
+      const own=child;if(!own||own.exitCode!==null||own.signalCode!==null)return;
+      await new Promise((resolve,reject)=>{
+        const deadline=setTimeout(()=>reject(new Error('The owned collector did not confirm shutdown. Removal is held.')),10000);
+        own.once('exit',()=>{clearTimeout(deadline);resolve();});own.kill();
+      });
+    },
     get pid() {
       return child?.pid;
     },

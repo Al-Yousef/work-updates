@@ -152,6 +152,8 @@ class Assistant extends EventEmitter {
     const started=Date.now();
     try {
       const budget=require('./budget-command.cjs').command(message.text);if(budget){require('./budget-command.cjs').manage(this.options.budgets,message,budget);this.save();return;}
+      const privacyControl=require('./privacy-command.cjs'),privacy=privacyControl.command(message.text);
+      if(privacy){await privacyControl.manage(this.options.privacy,message,privacy);this.save();return;}
       const executorControl=message.text.match(/^\/executor (inspect|revoke)(?: ([a-f0-9-]{36}))?$/i);
       if(executorControl){
         if(!this.options.executors)throw new Error('Executor binding controls are unavailable.');

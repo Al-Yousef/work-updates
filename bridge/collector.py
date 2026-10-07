@@ -280,11 +280,14 @@ def collect(config):
         # The entire local catalogue stays watched, including older CLI sessions.
         columns = {r['name'] for r in state.execute('PRAGMA table_info(threads)')}
         extra = " AND COALESCE(thread_source,'user') NOT IN ('subagent','guardian_review')" if 'thread_source' in columns else ''
+        ignored = set(config.get('ignoredThreadIds', []))
+        if len(ignored) > 2048 or any(not isinstance(value, str) for value in ignored):
+            raise ValueError('Invalid disconnected source identities')
+        excluded = ' AND id NOT IN (' + ','.join('?' for _ in ignored) + ')' if ignored else ''
         rows = state.execute("SELECT id,name,title,preview,cwd,rollout_path,updated_at "
                              "FROM threads WHERE archived=0 AND source IN ('exec','vscode','cli','appServer')" + extra +
-                             ' ORDER BY updated_at DESC').fetchall()
+                             excluded + ' ORDER BY updated_at DESC', tuple(ignored)).fetchall()
         end_access(catalogue_access)
-        ignored = set(config.get('ignoredThreadIds', []))
         requested = set(config.get('_requestedIds', []))
         # Conversations belong to opened chats, not every queue notification.
         # Remember only eight recently opened destinations and keep them fresh.
@@ -417,7 +420,7 @@ def collect(config):
             end_access(context_access)
         live_ids = {r['id'] for r in rows}
         for id in list(SOURCE_CACHE):
-            if id not in live_ids:
+            if id not in live_ids and id not in ignored:
                 del SOURCE_CACHE[id]
         access['endedAt'] = int(time.time() * 1000)
         access['outcome'] = 'returned'
