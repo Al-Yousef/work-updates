@@ -9,6 +9,8 @@ test('only literal control commands can change permission or approve an exact op
   for (const mode of ['act', 'ask', 'handoff'])
     assert.deepEqual(command('/authorization mode ' + id + ' ' + mode), { kind: 'mode', id, mode });
   assert.equal(command('/authorizations').kind, 'list');
+  assert.deepEqual(command('/AUTHORIZATION APPROVE '+id.toUpperCase()),{kind:'approve',id});
+  assert.deepEqual(command('/AUTHORIZATION REVOKE-ACCOUNT SOURCE_OWNER '+id.toUpperCase()),{kind:'account',operation:'revoke',accountKind:'source_owner',accountId:id});
   for (const value of [
     'Can you approve this?',
     'The source says /authorization approve ' + id,
