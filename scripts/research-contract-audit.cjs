@@ -46,11 +46,43 @@ async function audit({ helper } = {}) {
         { windowsHide: true, timeout: 10000, stdio: 'pipe' },
       );
     prepare('initial');
-    const actual = reader({ codexHome: home, ...(helper ? { helper } : { python }) }),
+    // CI's Windows TEMP can use an 8.3 alias. Exercise that spelling when the
+    // filesystem provides one, without exposing the private fixture path.
+    const readerHome =
+      process.platform === 'win32'
+        ? execFileSync(
+            python,
+            [
+              '-c',
+              'import ctypes,sys; b=ctypes.create_unicode_buffer(32768); n=ctypes.windll.kernel32.GetShortPathNameW(sys.argv[1],b,len(b)); print(b.value if n else sys.argv[1])',
+              home,
+            ],
+            { windowsHide: true, timeout: 10000, encoding: 'utf8' },
+          ).trim()
+        : home;
+    let readCheck = null;
+    const actual = reader({ codexHome: readerHome, ...(helper ? { helper } : { python }) }),
       read = actual.read;
     actual.read = async (request) => {
       reads++;
-      return read(request);
+      try {
+        const result = await read(request);
+        readCheck = {
+          storeMatches: result.storeId === request.storeId,
+          sourceMatches: result.threadId === request.scope.sourceId,
+          nonceMatches: result.requestNonce === request.nonce,
+          boundsMatch: result.since === request.since && result.until === request.until,
+          recordCount: result.records?.length,
+        };
+        return result;
+      } catch (error) {
+        readCheck = {
+          failureCode: ['RESEARCH_READ_FAILED', 'RESEARCH_READ_INVALID'].includes(error.code)
+            ? error.code
+            : 'READER_FAILED',
+        };
+        throw error;
+      }
     };
     f.research.options.reader = actual;
     f.wall();
@@ -62,7 +94,15 @@ async function audit({ helper } = {}) {
       bytes = files.map((file) => fs.readFileSync(file));
     await f.ask('/research read ' + id);
     assert.equal(reads, 1);
-    assert.equal(f.research.entry(id).records.length, 2);
+    assert.equal(
+      f.research.entry(id).records.length,
+      2,
+      JSON.stringify({
+        phase: f.research.entry(id).phase,
+        scanStatus: f.research.entry(id).scans.at(-1)?.status,
+        readCheck,
+      }),
+    );
     files.forEach((file, i) => assert.deepEqual(fs.readFileSync(file), bytes[i]));
     const firstIds = f.research.entry(id).records.map((r) => r.id);
     prepare('later');

@@ -9,7 +9,9 @@ function reader(options = {}) {
   let closed = false;
   const children = new Set();
   function storeId() {
-    const canonical = fs.realpathSync(home);
+    // Windows short directory names must resolve to the same final path that
+    // Python's Path.resolve uses before either process identifies the store.
+    const canonical = fs.realpathSync.native(home);
     return crypto
       .createHash('sha256')
       .update(process.platform === 'win32' ? canonical.toLowerCase() : canonical)
