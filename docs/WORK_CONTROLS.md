@@ -71,8 +71,8 @@ proof, preserves parent verification, tests restart and resume without resend,
 and cancels tracked unsent work under stop all. It uses no accounts or models.
 CI runs the audit on Windows and both Mac architectures.
 
-The original-record research adapter is integrated with the research candidate
-before final acceptance: it checks the durable read hold before and after I/O,
+The original-record research adapter is integrated with the research candidate:
+it checks the durable read hold before and after I/O,
 discards an in-flight response after pause or revocation, and requires a reader
 checkpoint before resume. Its implementation and separately scoped live-reader
 audit belong to #19. A generic reader fixture alone does not establish that
