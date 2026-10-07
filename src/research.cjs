@@ -341,6 +341,7 @@ class Research extends EventEmitter {
     return e ? this.request(e, id) : null;
   }
   gate(e, id, { manual = false } = {}) {
+    if(this.options.admission&&this.options.admission(e.scope)!=='allow')return {decision:'deny',reason:'work_control_hold'};
     if (
       this.closed ||
       this.options.maintenance?.() ||

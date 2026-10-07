@@ -215,6 +215,7 @@ class Delegations extends EventEmitter {
     const p = this.parent(e),
       grant = this.options.policy.state.grants.find((g) => g.id === e.parentGrantId),
       snapshot = this.options.snapshot();
+    if(p&&this.options.workAdmission&&this.options.workAdmission(p)!=='allow')return {decision:'ask',reason:'work_control_hold'};
     if (
       this.closed ||
       e.cancelRequested ||

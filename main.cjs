@@ -48,7 +48,8 @@ const responsibilityAuthorization=require('./src/responsibility-authorization.cj
 const {Commitments}=require('./src/commitments.cjs');
 const {Research}=require('./src/research.cjs');
 const {Delegations}=require('./src/delegations.cjs');
-let nativeControl,delegations;
+const {WorkControls}=require('./src/work-controls.cjs');
+let nativeControl,delegations,workControls;
 const args = process.argv;
 function argument(name) {
   const index = args.indexOf(name);
@@ -120,11 +121,12 @@ const client = demo
 const desktop = demo ? null : new CodexDesktop({log:diagnostics});
 const controller = new Controller(queue, client, {desktop,log:diagnostics});
 function authorizationAdmission(entry){
+  const work=workControls?.messageAdmission(entry);if(work&&work!=='allow')return work;
   const childAdmission=delegations?.admission(entry);if(childAdmission&&childAdmission!=='allow')return childAdmission;
   const scheduled=scheduledResponsibility.admission(responsibilities,schedules,entry);if(scheduled!=='allow')return scheduled;
   try{return responsibilityAuthorization.messageAdmission(authorization,responsibilities,devices.snapshot(),entry,schedules);}catch{diagnostics.write('authorization.recovery_failed',{code:'AUTHORIZATION_STORAGE_FAILED',noResend:true});return 'wait';}
 }
-const messages = new Messages(queue,controller,{log:diagnostics,attachments,admission:authorizationAdmission,authorize:input=>{const child=delegations?.admission(input,{creating:true});return child&&child!=='allow'?{decision:child==='wait'?'ask':'deny',reason:'delegation_writer_or_permission_gate'}:responsibilityAuthorization.authorizeDispatch(authorization,input,devices.snapshot());}});
+const messages = new Messages(queue,controller,{log:diagnostics,attachments,admission:authorizationAdmission,authorize:input=>{const work=workControls?.messageAdmission(input);if(work&&work!=='allow')return {decision:work==='wait'?'ask':'deny',reason:'work_control_hold'};const child=delegations?.admission(input,{creating:true});return child&&child!=='allow'?{decision:child==='wait'?'ask':'deny',reason:'delegation_writer_or_permission_gate'}:responsibilityAuthorization.authorizeDispatch(authorization,input,devices.snapshot());}});
 const devices = new Devices({
   directory: dataDir,
   state: () => messages.decorate(queue.snapshot()),
@@ -136,14 +138,16 @@ diagnostics.setContext({deviceId:devices.local.id});
 const authorization=new Authorization({directory:dataDir,actorId:'human:'+devices.local.id});
 const commitments=new Commitments({directory:dataDir,humanActorId:'human:'+devices.local.id});
 const researchReader=require('./src/research-reader.cjs').reader(app.isPackaged?{helper:path.join(process.resourcesPath,'helper',process.platform==='win32'?'collector.exe':'collector'),helperScript:path.join(process.resourcesPath,'helper','collector.py')}:{});
-const research=new Research({directory:dataDir,policy:authorization,reader:researchReader,snapshot:()=>devices.snapshot(),preferences:()=>commitments.preferenceSnapshot(),maintenance:()=>quitting||maintenanceActive(dataDir),log:diagnostics});
+const research=new Research({directory:dataDir,policy:authorization,reader:researchReader,snapshot:()=>devices.snapshot(),preferences:()=>commitments.preferenceSnapshot(),maintenance:()=>quitting||maintenanceActive(dataDir),log:diagnostics,admission:scope=>workControls?.readAdmission(scope)||'allow'});
 const responsibilities=new Responsibilities({directory:dataDir,snapshot:()=>devices.snapshot(),log:diagnostics,maintenance:()=>quitting||maintenanceActive(dataDir),...responsibilityTarget,
+  admission:entry=>workControls?.responsibilityAdmission(entry)||'allow',
   authorize:entry=>delegations?.authorize(entry)||responsibilityAuthorization.prepare(authorization,entry,devices.snapshot(),entry.currentStep.schedule?schedules.entry(entry.currentStep.schedule.id):null),
   outcome:require('./src/assistant-coordination.cjs').outcome,
   dispatch:(mode,input)=>devices.command(mode==='queue'?'queueMessage':'send',input),cancel:input=>devices.command('cancelMessage',input)});
 const schedules=new Schedules({directory:dataDir,log:diagnostics,maintenance:()=>quitting||maintenanceActive(dataDir),
-  probe:entry=>scheduledResponsibility.probe(responsibilities,entry),run:entry=>scheduledResponsibility.run(responsibilities,entry),outcome:(entry,run)=>scheduledResponsibility.outcome(responsibilities,entry,run)});
-delegations=new Delegations({directory:dataDir,policy:authorization,messages,responsibilities,snapshot:()=>devices.snapshot(),log:diagnostics});
+  probe:entry=>workControls&&workControls.scheduleAdmission(entry)!=='allow'?{eligible:false,reason:'work_control_hold'}:scheduledResponsibility.probe(responsibilities,entry),run:entry=>scheduledResponsibility.run(responsibilities,entry),outcome:(entry,run)=>scheduledResponsibility.outcome(responsibilities,entry,run)});
+delegations=new Delegations({directory:dataDir,policy:authorization,messages,responsibilities,snapshot:()=>devices.snapshot(),log:diagnostics,workAdmission:entry=>workControls?.responsibilityAdmission(entry)||'allow'});
+workControls=new WorkControls({directory:dataDir,policy:authorization,messages,responsibilities,schedules,delegations,snapshot:()=>devices.snapshot(),research:()=>research,interrupt:input=>controller.stopSource(input)});
 const assistant = new Assistant({directory:dataDir,snapshot:()=>devices.snapshot(),attachments,
   responsibilities,
   schedules,
@@ -152,11 +156,12 @@ const assistant = new Assistant({directory:dataDir,snapshot:()=>devices.snapshot
   commitments,
   research,
   delegations,
+  workControls,
   binary:queue.state.settings.codexBinary,log:diagnostics,
   loadContext:targets=>require('./src/assistant-context.cjs').loadContext({
     snapshot:()=>devices.snapshot(),
     subscribe:changed=>{queue.on('change',changed);devices.on('change',changed);return()=>{queue.off('change',changed);devices.off('change',changed);};},
-    request:targets=>Promise.allSettled(targets.map(target=>devices.command('details',{id:target.id,taskKey:target.taskKey,sourceId:target.sourceId}))),
+    request:targets=>Promise.allSettled(targets.map(target=>workControls.readAdmission(target)!=='allow'?Promise.resolve({skipped:true}):devices.command('details',{id:target.id,taskKey:target.taskKey,sourceId:target.sourceId}))),
   },targets),
   dispatch:(mode,input)=>devices.command(mode==='cancel'?'cancelMessage':mode==='queue'?'queueMessage':'send',input)});
 const csp =
@@ -197,6 +202,7 @@ function publish() {
 messages.on('change', () => {try{responsibilityAuthorization.observe(authorization,messages);}catch{diagnostics.write('authorization.recovery_failed',{code:'AUTHORIZATION_STORAGE_FAILED',noResend:true});}publish();});
 authorization.on('change',()=>{publish();queueMicrotask(()=>messages.pump().catch(()=>diagnostics.write('authorization.recovery_failed',{code:'AUTHORIZATION_STORAGE_FAILED',noResend:true})));});
 assistant.on('change', () => publish());
+workControls.on('change',()=>publish());
 commitments.on('change',()=>publish());
 research.on('change',()=>publish());
 function driveResearch(){void research.tick().catch(()=>diagnostics.write('research.recovery_failed',{code:'RESEARCH_STORAGE_FAILED',noResend:true}));}
@@ -211,6 +217,7 @@ responsibilities.on('change',()=>{publish();queueMicrotask(()=>responsibilities.
 schedules.start();
 devices.on('change', () => {
   responsibilities.observe(devices.snapshot());
+  try{workControls.reconcile();}catch{diagnostics.write('work.recovery_failed',{code:'WORK_CONTROL_RECOVERY_FAILED',noResend:true});}
   driveDelegations();
   driveSchedules();
   void responsibilities.pump();
@@ -647,7 +654,7 @@ app.whenReady().then(async () => {
         const result = await perform(method, input);
         return method === 'details' ? cardView(result, true,attachments) : ['send','queueMessage','assistantAsk','assistantUse','attachImages','openAttachment'].includes(method) ? result : {};
       },
-      status: () => ({activeWriters:Math.max(client.status?.().active ?? 0, client.status?.().pending ?? 0, queue.busy?.size ?? 0,messages.active.size,desktop?.pending.size||0,assistant.active?1:0,responsibilities.pending.size,schedules.pending.size,research.pending.size),
+      status: () => ({activeWriters:Math.max(client.status?.().active ?? 0, client.status?.().pending ?? 0, queue.busy?.size ?? 0,messages.active.size,desktop?.pending.size||0,assistant.active?1:0,responsibilities.pending.size,schedules.pending.size,research.pending.size,workControls.pending.size),
         mode:'native-backend', windowCount:BrowserWindow.getAllWindows().length,
         rendererCount:app.getAppMetrics().filter(p => p.type === 'Tab').length}),
       quit: () => {quitting=true; app.quit();},
@@ -857,7 +864,7 @@ app.whenReady().then(async () => {
       status: () => ({
         cornerConfigured: !!queue.state.settings.corner,
         launcherActive: !!corner && !corner.isDestroyed(),
-        activeWriters: Math.max(client.status?.().active ?? 0,client.status?.().pending??0,queue.busy.size,messages.active.size,desktop?.pending.size||0,assistant.active?1:0,responsibilities.pending.size,schedules.pending.size,research.pending.size),
+        activeWriters: Math.max(client.status?.().active ?? 0,client.status?.().pending??0,queue.busy.size,messages.active.size,desktop?.pending.size||0,assistant.active?1:0,responsibilities.pending.size,schedules.pending.size,research.pending.size,workControls.pending.size),
         windowMode: windowController.mode,
       }),
       quit: () => {quitting = true; app.quit();},
@@ -941,6 +948,7 @@ app.on('before-quit', () => {
   commitments.close();
   research.close();clearInterval(researchTimer);
   delegations.close();clearInterval(delegationTimer);
+  workControls.close();
   hostPeer?.close();
   devices.close();
   nativeControl?.close();
