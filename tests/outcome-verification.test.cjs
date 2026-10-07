@@ -28,6 +28,11 @@ function setup() {
   };
   const artifactDirectory = path.join(f.directory, 'result');
   fs.mkdirSync(artifactDirectory);
+  const writeArtifact = (bytes) => {
+    const file = path.join(artifactDirectory, 'result.json');
+    fs.writeFileSync(file, bytes);
+    fs.utimesSync(file, clock / 1000, clock / 1000);
+  };
   const config = (overrides = {}) => ({
     kind: 'artifact',
     stage: 'saved',
@@ -74,8 +79,9 @@ function setup() {
       return modelContext;
     },
     artifact(value = { nonce: 'synthetic-result-nonce', revision: 'synthetic-revision-1' }) {
-      fs.writeFileSync(path.join(artifactDirectory, 'result.json'), JSON.stringify(value));
+      writeArtifact(JSON.stringify(value));
     },
+    writeArtifact,
     advance(ms) {
       clock += ms;
     },
@@ -152,10 +158,10 @@ test('old notes, misleading fields, wrong revisions and an oversized or malforme
       await f.check();
       assert.equal(f.outcomes.entry(f.id).result.status, 'partial');
     }
-    fs.writeFileSync(path.join(f.artifactDirectory, 'result.json'), 'not-json');
+    f.writeArtifact('not-json');
     await f.check();
     assert.equal(f.outcomes.entry(f.id).result.status, 'partial');
-    fs.writeFileSync(path.join(f.artifactDirectory, 'result.json'), 'x'.repeat(1024 * 1024 + 1));
+    f.writeArtifact('x'.repeat(1024 * 1024 + 1));
     await f.check();
     assert.equal(f.outcomes.entry(f.id).result.status, 'partial');
   } finally {
@@ -180,6 +186,22 @@ test('stale evidence, expired scopes and retained model context never claim fres
     assert.equal(f.context.outcomes.records[0].independent, false);
     f.advance(3600000);
     assert.equal(f.outcomes.inspect(f.id).result.status, 'stale');
+  } finally {
+    f.close();
+  }
+});
+test('an artifact timestamp in the future cannot provide current outcome proof', async () => {
+  const f = setup();
+  try {
+    await f.start();
+    await f.require();
+    f.artifact();
+    const file = path.join(f.artifactDirectory, 'result.json');
+    const future = fs.statSync(file).mtimeMs / 1000 + 2;
+    fs.utimesSync(file, future, future);
+    await f.check();
+    assert.equal(f.outcomes.entry(f.id).result.status, 'stale');
+    assert.equal(f.outcomes.context().records[0].independent, false);
   } finally {
     f.close();
   }
