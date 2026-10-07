@@ -38,6 +38,7 @@ jobs:
           & ./native/windows/build/candidate/native-adapter-tests.exe
           if ($LASTEXITCODE -ne 0) { throw 'Isolated adapter checks failed' }
           ./native/windows/scripts/queue-audit.ps1
+          ./native/windows/scripts/status-audit.ps1
       - name: Hidden synthetic backend with no collector or writers
         run: node scripts/baseline-runtime-audit.cjs
       - name: Packaged update and program rollback with a disposable native app
@@ -55,6 +56,8 @@ jobs:
             dist/Hyphen-*-Windows-x64-Native.zip.sha256
             native/windows/build/candidate/build-verification.json
             artifacts/update-runtime/verification.json
+            native/windows/build/candidate/artifacts/status-*.png
+            native/windows/build/candidate/artifacts/status-verification.json
           if-no-files-found: error
           retention-days: 14
       - name: Synthetic failure diagnostics

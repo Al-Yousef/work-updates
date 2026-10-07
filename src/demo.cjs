@@ -102,4 +102,11 @@ class DemoCodex extends EventEmitter {
   reject() {}
   close() {}
 }
-module.exports = { feed, DemoCodex };
+function startDemoObserver(queue,{initial=feed(),clock=now,intervalMs=5000}={}) {
+  queue.setFeed(initial,{ok:true,synthetic:true});
+  let stopped=false;
+  const pulse=()=>{if(!stopped)queue.setFeed({...queue.feed,collectedAt:clock()},{ok:true,synthetic:true});};
+  const timer=setInterval(pulse,intervalMs);timer.unref?.();
+  return {pid:null,request:pulse,close:()=>{stopped=true;clearInterval(timer);}};
+}
+module.exports = { feed, DemoCodex, startDemoObserver };

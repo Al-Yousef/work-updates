@@ -463,9 +463,21 @@ async function waitFor(page, fn) {
     check(true, 'Undo restores only the grouping');
     await page.locator('#notice').waitFor({ state: 'hidden', timeout: 6000 });
     const baseline = await page.evaluate(async () => (await window.workUpdates.state()).value);
+    // This section tests renderer projections from explicit snapshots. Keep
+    // periodic demo publications from replacing a fixture between assertions.
+    // Restore the real transport before the following interaction checks.
+    await app.evaluate(({ BrowserWindow }) => {
+      const contents = BrowserWindow.getAllWindows()[0].webContents;
+      const original = contents.send;
+      globalThis.auditFixtureStateTransport = { contents, original };
+      contents.send = function(channel, ...values) {
+        if (channel !== 'work-updates:state') return original.call(this, channel, ...values);
+      };
+    });
     const pushFixture = async (fixture) =>
-      app.evaluate(({ BrowserWindow }, value) => {
-        BrowserWindow.getAllWindows()[0].webContents.send('work-updates:state', value);
+      app.evaluate((_, value) => {
+        const { contents, original } = globalThis.auditFixtureStateTransport;
+        original.call(contents, 'work-updates:state', value);
       }, fixture);
     const metadataFixture = structuredClone(baseline);
     metadataFixture.cards = [metadataFixture.cards[0]];
@@ -684,6 +696,11 @@ async function waitFor(page, fn) {
     );
     await page.screenshot({ path: path.join(output, 'compact-hold.png') });
     await page.keyboard.press('Escape');
+    await app.evaluate(() => {
+      const { contents, original } = globalThis.auditFixtureStateTransport;
+      contents.send = original;
+      delete globalThis.auditFixtureStateTransport;
+    });
     // Exercise the real native show/focus/position controls with a deterministic cursor feed.
     await app.evaluate(({ app, screen }) => {
       screen.getCursorScreenPoint = () => ({ x: 100000, y: 100000 });
@@ -1186,6 +1203,11 @@ async function waitFor(page, fn) {
     );
   } finally {
     try {
+      if (app) await app.evaluate(() => {
+        const fixture = globalThis.auditFixtureStateTransport;
+        if (fixture) fixture.contents.send = fixture.original;
+        delete globalThis.auditFixtureStateTransport;
+      }).catch(() => {});
       await closeAuditApp(app);
     } finally {
       clearTimeout(deadline);

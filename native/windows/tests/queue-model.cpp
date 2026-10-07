@@ -1,12 +1,34 @@
 #include <algorithm>
 #include <cassert>
 #include <iostream>
+#include <fstream>
 #include "../src/queue-model.h"
 #include "../src/draft-store.h"
-int main(){
+#include "../src/status-presentation.h"
+int main(int argc,char** argv){
     auto legacyDraft=draft_store::validate({{"chat-a","Keep this private draft"}});assert(legacyDraft["version"]==3&&legacyDraft["drafts"]["chat-a"]=="Keep this private draft");
     auto stableDraft=legacyDraft;stableDraft["intentIds"]["chat-a"]="12345678-1234-1234-1234-123456789abc";assert(draft_store::validate(stableDraft)==stableDraft);
     for(auto corrupt:{Json{{"version",4},{"drafts",Json::object()}},Json{{"version",3},{"drafts",{{"chat-a",123}}}},Json{{"version",3},{"drafts",Json::object()},{"intentIds",{{"chat-a","lost"}}}}}){bool rejected=false;try{draft_store::validate(corrupt);}catch(...){rejected=true;}assert(rejected);}
+    if(argc>1){
+        std::ifstream input(argv[1]);const auto fixtures=Json::parse(input);
+        assert(fixtures.value("synthetic",false));
+        for(const auto& fixture:fixtures.at("cases")){
+            QueueModel shared;shared.update(fixture.at("frame"));shared.browseAll=true;
+            const auto& card=shared.state.at("cards").at(0);const auto& expected=fixture.at("expected");
+            if(card.value("status","")=="queued")shared.view=1;
+            assert(shared.cards().size()==1);shared.choose(card);
+            assert(shared.selected().value("status","")==expected.value("status",""));
+            assert(statuspresentation::label(card)==expected.value("label",""));
+            assert(card.at("device").value("kind","")==expected.value("deviceKind",""));
+            assert(card.value("summaryState","")==expected.value("summaryState",""));
+            assert(card.value("activity",false)==expected.value("activity",false));
+            if(fixture.value("id","")=="offline"||fixture.value("id","")=="stale") {
+                assert(!shared.canReply()&&!shared.defaultQueue());
+                shared.draft("Preserved offline draft");assert(shared.canDraft()&&shared.draft()=="Preserved offline draft");
+            }
+        }
+        std::cout<<"Shared backend/native status fixtures passed\n";
+    }
     QueueModel model;
     Json first={{"id","a"},{"taskKey","a1"},{"primarySourceId","chat-a"},{"kind","observed"},{"at",200},{"status","needs"},
         {"sources",Json::array({{{"id","chat-a"}},{{"id","chat-b"}}})}};

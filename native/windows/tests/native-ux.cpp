@@ -20,13 +20,13 @@
 #include "../src/ui-audit.h"
 using Json=nlohmann::json;
 namespace {
-DWORD childPid=0;HWND panel=nullptr,control=nullptr,editor=nullptr,search=nullptr;unsigned checks=0,requestId=0;
+DWORD childPid=0;HWND panel=nullptr,control=nullptr,editor=nullptr,search=nullptr;unsigned checks=0,requestId=0;ULONGLONG deadline=0;
 std::filesystem::path fixture,artifacts,capture;IAccessible* accessible=nullptr;
 void check(bool okay,const char* label){++checks;if(!okay)throw std::runtime_error(label);}
 Json read(const std::filesystem::path& file){std::ifstream in(file);return Json::parse(in);}
 BOOL CALLBACK find(HWND hwnd,LPARAM){DWORD pid=0;GetWindowThreadProcessId(hwnd,&pid);if(pid!=childPid)return TRUE;wchar_t name[80]{};GetClassNameW(hwnd,name,80);if(!wcscmp(name,L"NativeHoverPanel"))panel=hwnd;if(!wcscmp(name,L"NativeHoverTrigger"))control=hwnd;return TRUE;}
 Json state(){SendMessageW(panel,WM_APP+215,0,0);return read(artifacts/L"ux-state.json");}
-void wait(auto condition,const char* label){for(int n=0;n<160;++n){if(condition()){check(true,label);return;}Sleep(40);}throw std::runtime_error(label);}
+void wait(auto condition,const char* label){for(int n=0;n<160;++n){if(deadline&&GetTickCount64()>deadline)throw std::runtime_error("Isolated audit exceeded its deadline");if(condition()){check(true,label);return;}Sleep(40);}throw std::runtime_error(label);}
 HWND focus(){GUITHREADINFO i{};i.cbSize=sizeof(i);check(GetGUIThreadInfo(GetWindowThreadProcessId(panel,nullptr),&i)!=0,"Read own child's focus");return i.hwndFocus;}
 void fault(const char* op,Json value=Json::object()){std::string id=std::to_string(++requestId);{std::ofstream out(fixture/L"ux-command.json");out<<Json({{"id",id},{"op",op},{"value",value}}).dump();}wait([&]{try{return read(fixture/L"ux-result.json").value("id","")==id;}catch(...){return false;}},"Isolated fixture acknowledges fault injection");}
 void click(int x,int y){RECT b{};GetClientRect(panel,&b);const auto p=MAKELPARAM(x*b.right/880,y*b.right/880);SendMessageW(panel,WM_LBUTTONDOWN,MK_LBUTTON,p);SendMessageW(panel,WM_LBUTTONUP,0,p);}
@@ -43,7 +43,7 @@ void drop(const std::vector<std::wstring>& paths){Json value=Json::array();for(c
 }
 int wmain(int argc,wchar_t** argv){PROCESS_INFORMATION process{};CoInitializeEx(nullptr,COINIT_APARTMENTTHREADED);
 try {
-    check(argc==3,"Provide fixture descriptor and rendering DPI");fixture=std::filesystem::path(argv[1]).parent_path();const int dpi=_wtoi(argv[2]);
+    check(argc==3||argc==4,"Provide fixture descriptor, rendering DPI and optional status fixtures");fixture=std::filesystem::path(argv[1]).parent_path();const int dpi=_wtoi(argv[2]);
     wchar_t own[32768]{};GetModuleFileNameW(nullptr,own,32768);auto directory=std::filesystem::path(own).parent_path();artifacts=directory/L"artifacts";capture=artifacts/L"ux-current.png";
     std::wstring command=L"\""+(directory/L"Native Hover.exe").wstring()+L"\" --isolated-session --no-auto-attach --show --audit-reduced-motion --audit-dpi "+std::to_wstring(dpi)+L" --audit-capture \""+capture.wstring()+L"\" --bridge \""+argv[1]+L"\"";
     STARTUPINFOW start{};start.cb=sizeof(start);start.dwFlags=STARTF_USESHOWWINDOW;start.wShowWindow=SW_HIDE;
@@ -53,6 +53,29 @@ try {
     auto initial=state();check(initial.value("dpi",0)==dpi,"Renderer uses the requested isolated scale");check(initial.value("reducedMotion",false),"Reduced-motion policy is exercised without changing Windows settings");
     RECT client{};GetClientRect(panel,&client);check(client.right==dpi*880/96&&client.bottom==dpi*660/96,"Native window uses both scaled dimensions");
     check(SUCCEEDED(AccessibleObjectFromWindow(panel,OBJID_CLIENT,IID_IAccessible,reinterpret_cast<void**>(&accessible))),"Windows exposes the custom native controls through MSAA");
+    if(argc==4){
+        deadline=GetTickCount64()+55000;
+        const auto shared=read(argv[3]);check(shared.value("synthetic",false),"Only synthetic shared status fixtures are accepted");
+        for(const auto& sample:shared.at("cases")){
+            const auto& card=sample.at("frame").at("cards").at(0);fault("patch",sample.at("frame"));
+            action(AuditAction::FilterMenu);action(card.value("status","")=="queued"?AuditAction::Queued:AuditAction::Updates);
+            wait([&]{const auto actual=state();for(const auto& hit:actual["hits"])if(hit.value("action","")=="card"&&hit.value("key","").find(card.value("id",""))!=std::string::npos)return true;return false;},"Shared status reaches the painted native list");
+            const auto label=sample.at("expected").value("label","");const int length=MultiByteToWideChar(CP_UTF8,0,label.data(),static_cast<int>(label.size()),nullptr,0);std::wstring visible(length,0);MultiByteToWideChar(CP_UTF8,0,label.data(),static_cast<int>(label.size()),visible.data(),length);
+            wait([&]{try{return named(visible)>0;}catch(...){return false;}},"Status has a meaningful accessible text label");
+            click(180,static_cast<int>(chatlayout::listTop+chatlayout::rowHeight/2));
+            wait([&]{auto actual=state();return actual.value("selected","")==card.value("id","")&&!actual.value("detailPending",true);},"Actual source header receives the selected fixture");
+            if(card.value("status","")=="queued"){
+                check(!IsWindowVisible(editor),"A never-started local task has no chat composer");
+                wait([]{return state().value("notice","")=="Locally queued · This task has not started.";},"Local queued state cannot claim its absent history is loading");
+            }
+            action(AuditAction::DetailsMenu);check(named(L"Mark task done")>0,"Task completion is separate from Reviewed");
+            const auto id=sample.value("id","");const auto image=L"status-"+std::wstring(id.begin(),id.end())+L"-"+std::to_wstring(dpi)+L".png";
+            saveCapture(image.c_str());SendMessageW(panel,WM_KEYDOWN,VK_ESCAPE,0);
+        }
+        accessible->Release();accessible=nullptr;PostMessageW(control,WM_CLOSE,0,0);
+        check(WaitForSingleObject(process.hProcess,4000)==WAIT_OBJECT_0,"Status fixture child exits normally");DWORD code=1;GetExitCodeProcess(process.hProcess,&code);check(code==0,"Native status render exits successfully");CloseHandle(process.hProcess);process.hProcess=nullptr;
+        std::cout<<"PASS "<<shared.at("cases").size()<<" rendered and accessible statuses at "<<dpi<<" DPI (synthetic transport and simulated own-window input)\n";CoUninitialize();return 0;
+    }
     action(AuditAction::Assistant);wait([]{return IsWindowVisible(editor);},"Composer is immediately available with reduced motion");
     check(focus()==editor,"Opening a chat focuses Message");
     check((GetWindowLongW(editor,GWL_EXSTYLE)&WS_EX_LAYERED)&&(GetWindowLongW(search,GWL_EXSTYLE)&WS_EX_LAYERED),"Native text fields have independent redirection surfaces above the composition-only parent");

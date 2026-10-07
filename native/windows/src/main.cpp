@@ -39,6 +39,7 @@
 #include "chat-layout.h"
 #include "chat-style.h"
 #include "ui-audit.h"
+#include "status-presentation.h"
 #include "input-guard.h"
 #include "accessibility.h"
 #include "../taskbar-adapter/protocol.h"
@@ -310,10 +311,7 @@ struct Renderer {
         hits.push_back({D2D1::RectF(center.x-22,center.y-22,center.x+22,center.y+22),action,contextual?Json{{"id",model.composerKey()}}:Json::object(),enabled});
     }
     std::string statusText(const Json& card) {
-        std::string label=card.value("label","");
-        if(card.value("urgent",false))label="Urgent · "+label;
-        if(!card.value("owner",Json::object()).value("online",true))label="Last known · "+label;
-        return label;
+        return statuspresentation::label(card);
     }
     D2D1_COLOR_F statusColor(const Json& card) {
         auto status=card.value("status","");
@@ -409,6 +407,7 @@ struct Renderer {
     }
     std::string statusNotice() const {
         if(!model.connected)return "Reconnecting… Your draft is saved. Send will be available when connected.";
+        if(!model.chatting()&&!model.selectedId.empty()&&model.sourceId.empty()&&model.selected().value("status","")=="queued")return "Locally queued · This task has not started.";
         if(!model.message.empty())return model.message;
         if(model.pending&&model.pendingOwner==model.composerKey())return model.pendingCommand=="queueMessage"?"Queueing…":model.pendingCommand=="assistantAsk"?"Sending to Hyphen…":model.pendingCommand=="send"?"Sending…":model.pendingCommand=="attachImages"?"Adding images…":"Updating…";
         if(!model.detailError.empty())return model.detailError;
@@ -416,6 +415,7 @@ struct Renderer {
         if(model.pending)return "Finishing an action in "+model.pendingDestination()+". You can keep writing.";
         if(!model.selectedId.empty()&&!model.detail.empty()&&!model.currentSource().value("contextLoaded",false))return "Loading chat history… You can write your reply.";
         if(model.chatting()){const auto ai=model.state.value("assistant",Json::object());if(!ai.value("error","").empty())return ai.value("error","");return ai.value("responding",false)?"Hyphen is thinking…":"";}
+        if(!model.sourceAvailable())return "This chat's status is unavailable. Your draft is saved. Check the source before sending.";
         const auto source=model.currentSource();if(!source.value("deliveryIssue","").empty())return source.value("deliveryIssue","");
         const int count=source.value("queuedMessages",0);if(count)return std::to_string(count)+" queued in Hyphen";
         if(model.defaultQueue())return "Chat is working · Your reply will queue";
@@ -553,7 +553,8 @@ struct Renderer {
         float left=popover=="copy"?contextX:popover=="filters"?SIDEBAR_RIGHT-240:popover=="add"?CHAT_LEFT-8:chatlayout::contactCenter-160;
         float top=popover=="copy"?contextY:popover=="filters"?72:popover=="add"?composeY()-182:86;
         const float width=popover=="copy"?180:popover=="details"?320:224;
-        const float height=popover=="copy"?60:popover=="filters"?296:popover=="add"?164:assistant?164:294;
+        const auto source=model.currentSource();const bool recovery=!source.value("deliveryIssue","").empty()||source.value("queuedMessages",0)>0;
+        const float height=popover=="copy"?60:popover=="filters"?296:popover=="add"?164:assistant?164:recovery?426:382;
         const auto box=D2D1::RectF(left,top,left+width,top+height);
         for(int i=6;i>=1;--i){brush->SetColor(D2D1::ColorF(0,0,0,.013f));canvas->FillRoundedRectangle(D2D1::RoundedRect(D2D1::RectF(left-i,top+2-i,box.right+i,box.bottom+4+i),16+i,16+i),brush);}
         brush->SetColor(D2D1::ColorF(1,1,1,.995f));canvas->FillRoundedRectangle(D2D1::RoundedRect(box,16,16),brush);
@@ -578,11 +579,14 @@ struct Renderer {
             label("CURRENT TASK",10,D2D1::RectF(left+16,top+12,box.right-16,top+30),chatstyle::secondary());
             label(card.value("title",""),14,D2D1::RectF(left+16,top+34,box.right-16,top+75),chatstyle::ink(),DWRITE_FONT_WEIGHT_SEMI_BOLD);
             label(statusText(card),12,D2D1::RectF(left+16,top+78,box.right-16,top+98),statusColor(card));
-            item("Open chat","open",top+110,!model.pending&&!model.sourceId.empty());
-            const auto source=model.currentSource();const bool issue=!source.value("deliveryIssue","").empty(),queued=source.value("queuedMessages",0)>0,enabled=!model.pending&&!card.value("done",false);
-            item(issue?"Checked reply":queued?"Clear queue":"Reviewed",issue?"checked":queued?"clearQueue":"reviewed",top+154,enabled);
-            item("Snooze 1h","snooze",top+198,enabled);
-            if(card.value("sources",Json::array()).size()>1)item("Switch source","source",top+242);
+            label(card.value("summaryNotice","Recorded update"),11,D2D1::RectF(left+16,top+106,box.right-16,top+128),chatstyle::secondary());
+            item("Open chat","open",top+142,!model.pending&&!model.sourceId.empty());
+            const bool issue=!source.value("deliveryIssue","").empty(),enabled=!model.pending&&!card.value("done",false);
+            item("Reviewed","reviewed",top+186,enabled&&card.value("status","")!="queued");
+            item("Snooze 1h","snooze",top+230,enabled);
+            item(card.value("done",false)?"Reopen task":"Mark task done",card.value("done",false)?"reopen":"done",top+274,!model.pending);
+            if(recovery)item(issue?"Checked reply":"Clear queue",issue?"checked":"clearQueue",top+318,enabled);
+            if(card.value("sources",Json::array()).size()>1)item("Switch source","source",top+(recovery?362:318));
         }
     }
     void queuePaint(ID2D1SolidColorBrush* brush) {
@@ -612,7 +616,7 @@ struct Renderer {
             transcript(top-model.detailOffset*32.0f,true);
             canvas->PopAxisAlignedClip();
             if(model.detailOffset<std::max(0,static_cast<int>(std::ceil((total-bottom+top)/32))))circleButton(brush,D2D1::Point2F(WIDTH-46,composeY()-25),"sourceLatest");
-            if(!card.value("done",false))composerPaint(brush);
+            if(!card.value("done",false)&&model.canDraft())composerPaint(brush);
         } else {
             label("Choose a conversation",24,D2D1::RectF(CHAT_LEFT+24,216,WIDTH-36,264),chatstyle::ink(),DWRITE_FONT_WEIGHT_SEMI_BOLD);
             label("Select a chat on the left, or talk to Hyphen.",15,D2D1::RectF(CHAT_LEFT+24,280,WIDTH-36,330),muted);
@@ -830,7 +834,7 @@ struct App {
     }
     std::string hitName(const Hit& hit) const {
         const auto& a=hit.action;
-        if(a=="card")return hit.card.value("chatName","")+" · "+hit.card.value("title","")+" · "+hit.card.value("label","");
+        if(a=="card")return hit.card.value("chatName","")+" · "+hit.card.value("title","")+" · "+hit.card.value("label","")+" · "+hit.card.value("summaryNotice","");
         if(a=="send")return renderer.model.defaultQueue()?"Queue message after this pass":"Send message";
         if(a=="close")return "Hide Hyphen";
         if(a=="detailsMenu")return "Conversation details";
@@ -841,6 +845,8 @@ struct App {
         if(a=="openImage")return "Open image · "+hit.card.value("name",std::string("attachment"));
         if(a=="retryDetails")return "Retry loading messages";
         if(a=="assistantUse")return "Open related update or draft";
+        if(a=="done")return "Mark task done";
+        if(a=="reopen")return "Reopen task";
         const std::map<std::string,std::string> names{{"tab0","Updates"},{"tab1","Queued"},{"tab2","History"},{"tab3","Done"},{"previous","Previous chats"},{"next","Next chats"},{"clearSearch","Clear search"},{"chatLatest","Latest message"},{"sourceLatest","Latest message"},{"attach","Add image"},{"queue","Queue next reply"},{"sendNow","Send now"},{"copyMessage","Copy message"},{"open","Open chat in Codex"},{"reviewed","Reviewed"},{"snooze","Snooze one hour"},{"undo","Undo last action"},{"clearQueue","Clear queued messages"},{"checked","Checked reply"},{"memory","Memory"},{"askNeeds","What needs me?"},{"askChanges","What changed?"},{"browse","Include older chats"},{"source","Switch source"}};
         auto found=names.find(a);return found==names.end()?a:found->second;
     }
@@ -885,8 +891,7 @@ struct App {
             syncingEditor=true;editorSource=model.composerKey();SetWindowTextW(editor,draft.c_str());
             SendMessageW(editor,EM_SETSEL,draft.size(),draft.size());syncingEditor=false;
         }
-        const auto card=model.selected();
-        const bool visible=mode!=Mode::Hidden&&(model.chatting()||(!model.selectedId.empty()&&!card.empty()&&!card.value("done",false)));
+        const bool visible=mode!=Mode::Hidden&&model.canDraft();
         SendMessageW(editor,EM_SETLIMITTEXT,model.chatting()?4000:12000,0);
         SendMessageW(editor,EM_SETREADONLY,!model.canDraft(),0);
         layoutEditors();
@@ -1127,7 +1132,7 @@ struct App {
             else if(action=="sendNow"){reply();return;}
             else if(action=="queue"){reply(true);return;}
             else if(action=="clearQueue"||action=="checked"){auto input=model.input();input["checked"]=action=="checked";send("clearMessages",input);return;}
-            else if(action=="snooze"||action=="reviewed") {auto input=model.input();input["action"]=action;send("action",input);return;}
+            else if(action=="snooze"||action=="reviewed"||action=="done"||action=="reopen") {auto input=model.input();input["action"]=action;send("action",input);return;}
             else if(action=="source") {
                 auto selected=model.selected();auto sources=selected.value("sources",Json::array());
                 for(size_t i=0;i<sources.size();++i)if(sources[i].value("id","")==model.sourceId) {

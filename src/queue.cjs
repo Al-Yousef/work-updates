@@ -3,10 +3,11 @@ const fs = require('node:fs');
 const path = require('node:path');
 const crypto = require('node:crypto');
 const { EventEmitter } = require('node:events');
-const { inferAttention, statusLabel, priorityRank } = require('./attention.cjs');
+const { inferAttention, statusLabel } = require('./attention.cjs');
 const { device, executionDevice, shortSummary, taskSummary } = require('./presentation.cjs');
 const { summaryKey } = require('./summary-key.cjs');
 const {atomicJSON,readStore}=require('./private-store.cjs');
+const { compareCards, projectStatus } = require('./status-contract.cjs');
 const now = () => Math.floor(Date.now() / 1000);
 const hash = (value) => crypto.createHash('sha256').update(value).digest('hex').slice(0, 24);
 const labels = {
@@ -73,6 +74,7 @@ class Queue extends EventEmitter {
     this.approvals = new Map();
     this.ownedThreads = new Set();
     this.summaries = new Map();
+    this.summaryStates = new Map();
     this.aiSummary = { enabled: false, cached: 0, pending: 0, message: '' };
     // A crash must offer a retry, never create a second chat automatically.
     for (const task of this.state.tasks)
@@ -93,8 +95,9 @@ class Queue extends EventEmitter {
     this.health = health;
     this.emit('change', this.snapshot());
   }
-  setSummaries(values, status) {
+  setSummaries(values, status, states = new Map()) {
     this.summaries = values;
+    this.summaryStates = states;
     this.aiSummary = status;
     this.emit('change', this.snapshot());
   }
@@ -102,6 +105,11 @@ class Queue extends EventEmitter {
     return this.state.settings.aiSummaries === true
       ? this.summaries.get(summaryKey(source))
       : undefined;
+  }
+  summaryState(source) {
+    if (this.state.settings.aiSummaries !== true) return 'disabled';
+    const key = summaryKey(source);
+    return this.summaries.has(key) ? 'cached' : this.summaryStates.get(key) || 'recorded';
   }
   importLegacy(root) {
     if (this.state.importedLegacy) return;
@@ -121,12 +129,9 @@ class Queue extends EventEmitter {
     const used = new Set(this.state.tasks.map((t) => t.threadId).filter(Boolean));
     const result = [];
     const make = (id, name, sources) => {
-      const display = [...sources].sort(
-        (a, b) =>
-          priorityRank({ ...a, ...inferAttention(a.body, a.status) }) -
-            priorityRank({ ...b, ...inferAttention(b.body, b.status) }) ||
-          b.updatedAt - a.updatedAt,
-      )[0];
+      const display = [...sources].sort((a, b) => compareCards(
+        { ...a, ...inferAttention(a.body, a.status) }, { ...b, ...inferAttention(b.body, b.status) },
+      ))[0];
       const state = this.cardState(id);
       const taskTitle = display.taskTitle || 'Current task unavailable';
       const presentation = this.presentation(display);
@@ -156,6 +161,7 @@ class Queue extends EventEmitter {
           shortSummary(display.summary || display.body) ||
           'No recorded update yet.',
         summaryOrigin: presentation ? 'ai' : 'recorded',
+        summaryState: this.summaryState(display),
         device: device(display.device || this.feed.device),
         primarySourceId: display.id,
         kind: 'observed',
@@ -240,6 +246,8 @@ class Queue extends EventEmitter {
         chatName: observed?.title || (task.threadId ? task.title : 'New chat'),
         summary: presentation?.summary || summary,
         summaryOrigin: presentation ? 'ai' : 'recorded',
+        summaryState: task.turnId === observed?.turnId ? this.summaryState(observed) :
+          this.state.settings.aiSummaries === true ? 'recorded' : 'disabled',
         device: sourceDevice,
         primarySourceId: task.threadId,
         kind: 'local',
@@ -289,7 +297,10 @@ class Queue extends EventEmitter {
         done: task.status === 'done',
       });
     }
-    return result.sort((a, b) => priorityRank(a) - priorityRank(b) || b.at - a.at);
+    return result.map(card => projectStatus(card, {
+      health: this.health, collectedAt: this.feed.collectedAt,
+      live: card.kind === 'local' && this.ownedThreads.has(card.threadId),
+    })).sort(compareCards);
   }
   snapshot() {
     const cards = this.cards();

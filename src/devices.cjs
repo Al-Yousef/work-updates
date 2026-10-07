@@ -4,7 +4,7 @@ const fs = require('node:fs'),
   crypto = require('node:crypto');
 const { EventEmitter } = require('node:events');
 const { RemotePeer, parseCode } = require('./peer.cjs');
-const { priorityRank } = require('./attention.cjs');
+const { compareCards, projectStatus } = require('./status-contract.cjs');
 const { executionDevice } = require('./presentation.cjs');
 const { StatePublisher, StateOrder } = require('./state-order.cjs');
 const {readStore,atomicJSON}=require('./private-store.cjs');
@@ -90,14 +90,14 @@ class Devices extends EventEmitter {
     if (!entry)
       return { ...card, owner: { ...this.local, local: true, online: true, lastSeen: now() } };
     const p = prefix(entry.id);
-    return {
+    return projectStatus({
       ...card,
       id: p + card.id,
       taskKey: p + card.taskKey,
       primarySourceId: card.primarySourceId ? p + card.primarySourceId : undefined,
       sources: card.sources.map((s) => ({ ...s, id: p + s.id })),
       owner: this.owner(entry),
-    };
+    }, { health: entry.state?.health, collectedAt: entry.state?.collectedAt });
   }
   snapshot() {
     const local = this.options.state(),
@@ -122,7 +122,7 @@ class Devices extends EventEmitter {
           })),
         );
       }
-    cards.sort((a, b) => priorityRank(a) - priorityRank(b) || b.at - a.at);
+    cards.sort(compareCards);
     const online = entries.filter((e) => e.peer.connected).length;
     const devices = [
       {
