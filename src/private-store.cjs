@@ -24,7 +24,9 @@ function validate(name,value){
   }
   const supported=name==='assistant.json'?[1,2]:name==='drafts.json'?[1,2,3]:[versions[name]];
   if(!supported.includes(result.version))throw new Error('unsupported version');
-  if(name==='privacy.json'){
+  if(name==='voice.json'){
+    require('./voice-session.cjs').validate(result);
+  }else if(name==='privacy.json'){
     require('./privacy.cjs').validate(result);
   }else if(name==='executors.json'){
     require('./executor-bindings.cjs').validate(result);
