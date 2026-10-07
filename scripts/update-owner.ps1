@@ -1,7 +1,8 @@
 param([Parameter(Mandatory)][string]$InstallRoot,[Parameter(Mandatory)][string]$DataDirectory,[int]$ExpectedPid=0)
 $ErrorActionPreference='Stop'
-$taskExe=[IO.Path]::GetFullPath((Join-Path $InstallRoot 'desktop/Work Updates.exe'))
-$taskNative=[IO.Path]::GetFullPath((Join-Path $InstallRoot 'native/Native Hover.exe'))
+. (Join-Path $PSScriptRoot 'update-paths.ps1')
+$taskExe=Get-UpdateCanonicalPath (Join-Path $InstallRoot 'desktop/Work Updates.exe')
+$taskNative=Get-UpdateCanonicalPath (Join-Path $InstallRoot 'native/Native Hover.exe')
 $taskProcesses=@(Get-CimInstance Win32_Process | Where-Object {$_.ExecutablePath -ieq $taskExe -or $_.ExecutablePath -ieq $taskNative})
 $taskPrimaries=@($taskProcesses | Where-Object {$_.ExecutablePath -ieq $taskExe -and $_.CommandLine -notmatch '--type='})
 foreach($taskProcess in $taskProcesses){
@@ -10,7 +11,7 @@ foreach($taskProcess in $taskProcesses){
   if($taskMatch.Success){
     $taskArgument=if($taskMatch.Groups[1].Success){$taskMatch.Groups[1].Value}else{$taskMatch.Groups[2].Value}
     $taskExpected=if($taskFlag -eq '--data-dir'){$DataDirectory}else{Join-Path $DataDirectory 'native-control.info'}
-    if([IO.Path]::GetFullPath($taskArgument) -ine [IO.Path]::GetFullPath($taskExpected)){throw 'An installed process owns another data folder; maintenance was refused'}
+    if((Get-UpdateCanonicalPath $taskArgument) -ine (Get-UpdateCanonicalPath $taskExpected)){throw 'An installed process owns another data folder; maintenance was refused'}
   }
 }
 if($taskPrimaries.Count -gt 1){throw 'More than one backend owns the installation'}

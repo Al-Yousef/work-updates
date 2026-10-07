@@ -46,6 +46,7 @@ jobs:
           CSC_IDENTITY_AUTO_DISCOVERY: 'false'
         shell: pwsh
         run: |
+          ./scripts/update-paths.test.ps1
           $taskReport='artifacts/update-runtime/verification.json'
           Remove-Item -LiteralPath $taskReport -Force -ErrorAction SilentlyContinue
           node scripts/update-runtime-audit.cjs
