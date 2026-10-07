@@ -153,6 +153,18 @@ class Assistant extends EventEmitter {
     try {
       const documentControl=require('./document-command.cjs'),document=documentControl.command(message.text);
       if(document){documentControl.manage(this.options.documents,message,document);this.save();return;}
+      const voiceControl=message.text.match(/^\/voice (inspect|open|end)$/i);
+      if(voiceControl){
+        if(!this.options.voice)throw new Error('Voice is unavailable on this client.');
+        if(voiceControl[1].toLowerCase()==='open'){
+          this.options.openVoice();
+          message.answer='Opened the private voice window. Configure its separate provider and accept microphone/API billing for each finite session before starting.';
+        }else if(voiceControl[1].toLowerCase()==='end'){
+          this.options.voice.close();
+          message.answer='Closed this local voice connection. Existing tasks continue. Remote termination is not verified.';
+        }else message.answer=JSON.stringify(this.options.voice.inspect(),null,2).slice(0,6000);
+        message.status='completed';this.save();return;
+      }
       const privacyControl=require('./privacy-command.cjs'),privacy=privacyControl.command(message.text);
       if(privacy){await privacyControl.manage(this.options.privacy,message,privacy);this.save();return;}
       const executorControl=message.text.match(/^\/executor (inspect|revoke)(?: ([a-f0-9-]{36}))?$/i);

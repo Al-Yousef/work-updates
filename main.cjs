@@ -52,6 +52,9 @@ const {OutcomeVerification}=require('./src/outcome-verification.cjs');
 const {Triage}=require('./src/triage.cjs');
 const {Delegations}=require('./src/delegations.cjs');
 const {WorkControls}=require('./src/work-controls.cjs');
+const {VoiceSession}=require('./src/voice-session.cjs');
+const {VoiceProvider}=require('./src/voice-provider.cjs');
+const {VoiceWindow}=require('./src/voice-window.cjs');
 let nativeControl,delegations,workControls;
 let privacy;
 const args = process.argv;
@@ -157,12 +160,20 @@ const schedules=new Schedules({directory:dataDir,log:diagnostics,maintenance:()=
   probe:entry=>workControls&&workControls.scheduleAdmission(entry)!=='allow'?{eligible:false,reason:'work_control_hold'}:scheduledResponsibility.probe(responsibilities,entry),run:entry=>scheduledResponsibility.run(responsibilities,entry),outcome:(entry,run)=>scheduledResponsibility.outcome(responsibilities,entry,run)});
 delegations=new Delegations({directory:dataDir,policy:authorization,messages,responsibilities,snapshot:()=>devices.snapshot(),log:diagnostics,workAdmission:entry=>workControls?.responsibilityAdmission(entry)||'allow'});
 workControls=new WorkControls({directory:dataDir,policy:authorization,messages,responsibilities,schedules,delegations,snapshot:()=>devices.snapshot(),research:()=>research,interrupt:input=>controller.stopSource(input)});
+const voiceProvider=new VoiceProvider({directory:dataDir,actorId:'human:'+devices.local.id,
+  encrypt:v=>safeStorage.encryptString(v),decrypt:v=>safeStorage.decryptString(v),
+  available:()=>safeStorage.isEncryptionAvailable()&&safeStorage.getSelectedStorageBackend?.()!=='basic_text'});
+const voice=new VoiceSession({directory:dataDir,actorId:'human:'+devices.local.id,provider:voiceProvider,
+  admission:()=>quitting||maintenanceActive(dataDir)||workControls.closed||workControls.storageFailed||workControls.active('all','all')?'wait':'allow'});
+let voiceWindow;
+function openVoice(){voiceWindow??=new VoiceWindow({BrowserWindow,session:require('electron').session,ipcMain,ledger:voice,provider:voiceProvider,actorId:voice.actorId});return voiceWindow.open();}
 const outcomes=new OutcomeVerification({directory:dataDir,actorId:'human:'+devices.local.id,responsibilities,snapshot:()=>devices.snapshot(),maintenance:()=>quitting||maintenanceActive(dataDir),admission:entry=>workControls.responsibilityAdmission(entry)});
 const documents=new (require('./src/documents.cjs').Documents)({directory:dataDir,actorId:authorization.actorId,
   admission:()=>quitting||maintenanceActive(dataDir)||privacy?.activeRemoval||workControls.closed||workControls.storageFailed||workControls.active('all','all')?'deny':'allow'});
 responsibilities.options.outcomeRequired=entry=>outcomes.required(entry);
 responsibilities.options.outcomeAdmission=(entry,human)=>outcomes.admission(entry,human);
 const assistant = new Assistant({directory:dataDir,snapshot:()=>devices.snapshot(),attachments,
+  voice,openVoice,
   privacy:null,
   executors,
   outcomes,
@@ -997,6 +1008,7 @@ app.on('before-quit', () => {
   desktop?.close();
   messages.close();
   assistant.close();
+  voiceWindow?.close();voice.close();
   responsibilities.close();
   schedules.close();
   authorization.close();
