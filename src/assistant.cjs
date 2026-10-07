@@ -151,6 +151,8 @@ class Assistant extends EventEmitter {
   async generate(message) {
     const started=Date.now();
     try {
+      const documentControl=require('./document-command.cjs'),document=documentControl.command(message.text);
+      if(document){documentControl.manage(this.options.documents,message,document);this.save();return;}
       const privacyControl=require('./privacy-command.cjs'),privacy=privacyControl.command(message.text);
       if(privacy){await privacyControl.manage(this.options.privacy,message,privacy);this.save();return;}
       const executorControl=message.text.match(/^\/executor (inspect|revoke)(?: ([a-f0-9-]{36}))?$/i);
