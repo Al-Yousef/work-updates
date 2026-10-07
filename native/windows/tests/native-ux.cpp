@@ -43,17 +43,20 @@ void drop(const std::vector<std::wstring>& paths){Json value=Json::array();for(c
 }
 int wmain(int argc,wchar_t** argv){PROCESS_INFORMATION process{};CoInitializeEx(nullptr,COINIT_APARTMENTTHREADED);
 try {
-    check(argc==3||argc==4,"Provide fixture descriptor, rendering DPI and optional status fixtures");fixture=std::filesystem::path(argv[1]).parent_path();const int dpi=_wtoi(argv[2]);
+    check(argc==3||argc==4,"Provide fixture descriptor, rendering DPI and optional status fixtures or high-contrast palette");fixture=std::filesystem::path(argv[1]).parent_path();const int dpi=_wtoi(argv[2]);
+    const bool highContrast=argc==4&&!wcscmp(argv[3],L"--high-contrast");
     wchar_t own[32768]{};GetModuleFileNameW(nullptr,own,32768);auto directory=std::filesystem::path(own).parent_path();artifacts=directory/L"artifacts";capture=artifacts/L"ux-current.png";
     std::wstring command=L"\""+(directory/L"Native Hover.exe").wstring()+L"\" --isolated-session --no-auto-attach --show --audit-reduced-motion --audit-dpi "+std::to_wstring(dpi)+L" --audit-capture \""+capture.wstring()+L"\" --bridge \""+argv[1]+L"\"";
+    if(highContrast)command+=L" --audit-high-contrast";
     STARTUPINFOW start{};start.cb=sizeof(start);start.dwFlags=STARTF_USESHOWWINDOW;start.wShowWindow=SW_HIDE;
     const bool started=CreateProcessW(nullptr,command.data(),nullptr,nullptr,FALSE,CREATE_NO_WINDOW,nullptr,nullptr,&start,&process);if(!started)std::cerr<<"CreateProcess error "<<GetLastError()<<"\n";check(started,"Start own isolated native window");CloseHandle(process.hThread);childPid=process.dwProcessId;
     wait([]{EnumWindows(find,0);return panel&&control;},"Locate only this test child's windows");editor=GetDlgItem(panel,201);search=GetDlgItem(panel,202);
     wait([]{return state().value("connected",false);},"Initial subscription connects");
     auto initial=state();check(initial.value("dpi",0)==dpi,"Renderer uses the requested isolated scale");check(initial.value("reducedMotion",false),"Reduced-motion policy is exercised without changing Windows settings");
+    if(highContrast){check(initial.value("highContrast",false),"Actual native child uses the isolated high-contrast palette");check(initial.value("editorForeground",0UL)==RGB(255,255,255)&&initial.value("editorBackground",0UL)==RGB(0,0,0),"Real EDIT foreground and background use the matched contrast pair");}
     RECT client{};GetClientRect(panel,&client);check(client.right==dpi*880/96&&client.bottom==dpi*660/96,"Native window uses both scaled dimensions");
     check(SUCCEEDED(AccessibleObjectFromWindow(panel,OBJID_CLIENT,IID_IAccessible,reinterpret_cast<void**>(&accessible))),"Windows exposes the custom native controls through MSAA");
-    if(argc==4){
+    if(argc==4&&!highContrast){
         deadline=GetTickCount64()+55000;
         const auto shared=read(argv[3]);check(shared.value("synthetic",false),"Only synthetic shared status fixtures are accepted");
         for(const auto& sample:shared.at("cases")){
@@ -117,6 +120,9 @@ try {
     check(std::abs(geometry.value("composerHeight",0.0f)-singleLine)<.1f,"Deleting multiline input immediately shrinks to one complete native line");
     SendMessageW(editor,EM_SETSEL,1,4);SendMessageW(panel,WM_DISPLAYCHANGE,0,0);DWORD selectionStart=0,selectionEnd=0;SendMessageW(editor,EM_GETSEL,reinterpret_cast<WPARAM>(&selectionStart),reinterpret_cast<LPARAM>(&selectionEnd));
     check(selectionStart==1&&selectionEnd==4&&draft()==L"Short","Display refresh preserves the native caret selection and draft");
+    SendMessageW(panel,WM_SYSCOLORCHANGE,0,0);SendMessageW(panel,WM_THEMECHANGED,0,0);SendMessageW(editor,EM_GETSEL,reinterpret_cast<WPARAM>(&selectionStart),reinterpret_cast<LPARAM>(&selectionEnd));
+    check(selectionStart==1&&selectionEnd==4&&draft()==L"Short","Color and theme changes preserve draft text and selection");
+    if(highContrast){check(state().value("highContrast",false),"Theme refresh preserves the isolated palette");saveCapture(L"ux-high-contrast.png");}
     setDraft(L"");
     IAccessible* field=nullptr;check(SUCCEEDED(AccessibleObjectFromWindow(editor,OBJID_CLIENT,IID_IAccessible,reinterpret_cast<void**>(&field))),"Standard native Message field remains accessible");BSTR text=nullptr;field->get_accName(child(CHILDID_SELF),&text);check(text&&std::wstring(text)==L"Message","Native Message field has a meaningful accessible name");SysFreeString(text);field->Release();
     long send=named(L"Send message");VARIANT role{},disabled{};accessible->get_accRole(child(send),&role);accessible->get_accState(child(send),&disabled);

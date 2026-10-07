@@ -1,0 +1,11 @@
+# Native interaction completion
+
+Issue #7 uses the existing [Messages reference](MESSAGES_REFERENCE_REBUILD.md), source-bound draft model and real native EDIT controls. The accepted 880 by 660 logical canvas fits the work area; arbitrary window resizing is not currently supported. The earlier [interaction evidence](UX_RELIABILITY_AUDIT.md) remains historical, not verification of a newly built executable.
+
+The native palette now reads Windows' high-contrast setting and the user's paired `COLOR_WINDOWTEXT` / `COLOR_WINDOW` colors at initialization and on settings, theme and system-color changes. Custom controls, disabled labels, status text, native fields and placeholders use that pair. Filled actions and outgoing bubbles invert it; selected conversations also have a visible outline. Refreshing brushes preserves native focus, selection and draft text. This follows Microsoft's [high-contrast parameter guidance](https://learn.microsoft.com/en-us/windows/win32/winauto/high-contrast-parameter).
+
+`ux-audit.ps1` exercises the actual child at 96, 120, 144 and 192 DPI, including native wrap growth, Send clearance, Unicode draft restart, IME Enter protection, Shift+Enter, keyboard navigation, accessibility identity, draft ownership and delayed details. Its `-HighContrast` lane uses an isolated black/white palette without modifying Windows settings, and checks color-change draft/selection preservation before capturing the real render. Production ignores the palette override unless both isolation and an explicit audit capture are present.
+
+## Remaining acceptance evidence
+
+Keep #7 open until the source-matched integrated candidate passes physical input, clipboard/drop, real screen-reader, mixed-monitor DPI and Windows text-scale checks. The CI palette is a rendering fixture, not proof that the operating-system theme was toggled. Arbitrary narrow/expanded resizing and large system text remain explicit gaps; fixed-canvas DPI fitting does not establish either capability. No installed application or account data is changed by the CI lanes.
