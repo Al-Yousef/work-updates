@@ -15,8 +15,8 @@
       <h1>Voice</h1>
       <p id="status" role="status" aria-live="polite">Voice is off</p>
       <p>
-        This conversation has no access to your task history or task execution tools. Ending voice
-        stops this microphone session; your other work continues.
+        Choose whether to share one task snapshot below. This conversation has no task execution
+        tools. Ending voice stops this microphone session; your other work continues.
       </p>
       <details>
         <summary>Separate voice provider</summary>
@@ -29,6 +29,23 @@
         <button id="configure">Save provider</button>
         <p id="provider"></p>
       </details>
+      <fieldset>
+        <legend>Task context</legend>
+        <label
+          >Discuss a task
+          <select id="context">
+            <option value="">Voice conversation only</option>
+          </select></label
+        >
+        <button id="refreshContext">Refresh task choices</button>
+        <p id="contextWarning">No task context selected.</p>
+        <pre id="contextPreview" tabindex="0" aria-label="Exact task context preview"></pre>
+        <label
+          ><input id="contextConsent" type="checkbox" /> Share this displayed task snapshot with the
+          voice provider for this session</label
+        >
+        <p id="progress" aria-live="polite"></p>
+      </fieldset>
       <fieldset>
         <legend>Start a finite session</legend>
         <label><input id="microphone" type="checkbox" /> Use my microphone for this session</label>

@@ -75,6 +75,9 @@ function validate(s) {
       e.provider !== 'openai-realtime'
     )
       throw held('Invalid voice checkpoint.');
+  for (const e of s.sessions)
+    if (e.selectedContext !== undefined)
+      require('./voice-context.cjs').validateMetadata(e.selectedContext);
 }
 class VoiceSession {
   constructor(options) {
@@ -134,7 +137,10 @@ class VoiceSession {
     if (!s) throw held('Select the exact current voice session.');
     return s;
   }
-  async begin(i, { maxSeconds, billingConfirmed, microphoneConfirmed, tokenReservation }) {
+  async begin(
+    i,
+    { maxSeconds, billingConfirmed, microphoneConfirmed, tokenReservation, selectedContext },
+  ) {
     this.human(i);
     if (
       this.live ||
@@ -153,6 +159,8 @@ class VoiceSession {
       throw held(
         'Configure a supported voice provider separately. Codex plan inference is not an audio provider.',
       );
+    const context = selectedContext ? this.options.context?.capture(selectedContext) : null;
+    if (selectedContext && !context) throw held('Selected task context is unavailable.');
     const e = {
       id: crypto.randomUUID(),
       actorId: this.actorId,
@@ -164,11 +172,18 @@ class VoiceSession {
       responses: [],
       usageActual: null,
       costActualUSD: null,
-      context: 'Voice conversation only; no task history shared',
+      context: context?.label || 'Voice conversation only; no task history shared',
       microphonePermission: 'explicit_current_session',
       billing: 'separate provider API',
       originMessageId: i.messageId,
     };
+    if (context)
+      e.selectedContext = {
+        selection: context.selection,
+        digest: context.digest,
+        capturedAt: context.capturedAt,
+        coverage: context.data.coverage,
+      };
     if (this.options.budgets) {
       if (
         !Number.isSafeInteger(tokenReservation) ||
@@ -178,11 +193,19 @@ class VoiceSession {
         throw held(
           'Choose a finite voice token reservation before microphone access. It is an estimate, not a provider price or token ceiling.',
         );
+      if (
+        context &&
+        tokenReservation < Math.ceil(Buffer.byteLength(JSON.stringify(context.data)) / 3) + 1
+      )
+        throw held('The token reservation must include the selected task snapshot.');
       this.options.budgets.reserve({
         id: e.id,
         kind: 'model',
         provider: e.provider,
         model: e.model,
+        ...(context
+          ? { sourceId: context.selection.sourceId, taskKey: context.selection.taskKey }
+          : {}),
         estimate: { tokens: tokenReservation, costMicros: null },
       });
       e.tokenReservation = tokenReservation;
@@ -198,6 +221,7 @@ class VoiceSession {
       epoch: crypto.randomUUID(),
       abort: new AbortController(),
       connected: false,
+      context,
     };
     return {
       sessionId: e.id,
@@ -227,12 +251,17 @@ class VoiceSession {
       throw held('The current voice connection request is unavailable or changed.');
     live.connecting = true;
     try {
+      if (live.context) this.options.context.assertCurrent(live.context);
       this.options.budgets?.started(id, id);
       const answer = await this.options.provider.connect({
         sdp,
         signal: live.abort.signal,
         model: e.model,
+        ...(live.context
+          ? { context: { capturedAt: live.context.capturedAt, data: live.context.data } }
+          : {}),
       });
+      if (live.context) this.options.context.assertCurrent(live.context);
       if (this.live !== live || this.now() >= e.until || this.options.admission?.() !== 'allow')
         throw held('Voice ended or was paused during connection; its answer is discarded.');
       if (typeof answer !== 'string' || !answer.startsWith('v=0') || answer.length > 128000)
@@ -243,7 +272,12 @@ class VoiceSession {
       live.connected = true;
       return { sdp: answer, sessionId: id };
     } catch (error) {
-      if (this.options.budgets) this.options.budgets.finish(id, { status: 'unknown' });
+      if (this.options.budgets) {
+        const reservation = this.options.budgets.state.entries.find((r) => r.id === id);
+        this.options.budgets.finish(id, {
+          status: reservation?.status === 'reserved' ? 'not_started' : 'unknown',
+        });
+      }
       if (this.live === live) {
         this.change((v) => {
           v.sessions.find((x) => x.id === id).status = 'unconfirmed';
@@ -263,7 +297,8 @@ class VoiceSession {
       this.live.id !== id ||
       !['connected', 'muted'].includes(e.status) ||
       this.now() >= e.until ||
-      this.options.admission?.() !== 'allow'
+      this.options.admission?.() !== 'allow' ||
+      (this.live.context && !this.options.context.available(this.live.context))
     )
       throw held('Voice is disconnected, ended, expired or held.');
     return e;
@@ -415,7 +450,9 @@ class VoiceSession {
   expire() {
     if (
       this.live &&
-      (this.now() >= this.entry(this.live.id).until || this.options.admission?.() !== 'allow')
+      (this.now() >= this.entry(this.live.id).until ||
+        this.options.admission?.() !== 'allow' ||
+        (this.live.context && !this.options.context.available(this.live.context)))
     ) {
       const id = this.live.id;
       this.end(
