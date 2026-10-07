@@ -69,6 +69,8 @@ struct AssistantView:View {
     @State private var code=""
     @State private var text=""
     @State private var session=UUID()
+    private enum Field:Hashable {case question,code}
+    @FocusState private var focusedField:Field?
     init() {
         #if DEBUG
         if ProcessInfo.processInfo.arguments.contains("--integration-test"),
@@ -98,21 +100,24 @@ struct AssistantView:View {
                             }.padding().frame(maxWidth:.infinity,alignment:.leading).background(.thinMaterial,in:RoundedRectangle(cornerRadius:18))
                         }
                         if let pending=assistant.pending {Text("Saved message awaiting acceptance check: "+pending.text).font(.footnote).textSelection(.enabled)}
-                        TextField("Ask your assistant",text:$text,axis:.vertical).lineLimit(3...8).textFieldStyle(.roundedBorder).accessibilityIdentifier("assistant-channel-input")
-                        Button("Send question") {Task{if await assistant.send(text) {text=""}}}.buttonStyle(.borderedProminent)
+                        TextField("Ask your assistant",text:$text,axis:.vertical).lineLimit(3...8).textFieldStyle(.roundedBorder).focused($focusedField,equals:.question).accessibilityIdentifier("assistant-channel-input")
+                        Button("Send question") {let submitted=text;Task{if await assistant.send(submitted),text==submitted {text="";focusedField=nil}}}.buttonStyle(.borderedProminent)
                             .disabled(assistant.busy || assistant.pending != nil || state.responding || text.trimmingCharacters(in:.whitespacesAndNewlines).isEmpty)
                             .accessibilityIdentifier("assistant-channel-send")
                     }
                     DisclosureGroup("Private device connection") {
                         Text("On your computer, use /channels open in the assistant. Create a grant for your own device, then paste its private code here.").font(.caption)
-                        SecureField("Private assistant code",text:$code).textInputAutocapitalization(.never).autocorrectionDisabled()
-                        Button("Connect private assistant") {let value=code;code="";Task{await assistant.connect(value)}}.disabled(code.isEmpty)
+                        SecureField("Private assistant code",text:$code).textInputAutocapitalization(.never).autocorrectionDisabled().focused($focusedField,equals:.code)
+                        Button("Connect private assistant") {let value=code;code="";focusedField=nil;Task{await assistant.connect(value)}}.disabled(code.isEmpty)
                         Button("Reconnect saved channel") {session=UUID()}
                         Button("Forget phone credential",role:.destructive){assistant.forget()}
                     }
                 }.padding()
-            }.navigationTitle("Assistant").navigationBarTitleDisplayMode(.inline)
-                .toolbar{ToolbarItem(placement:.topBarTrailing){Button("Done"){dismiss()}}}
+            }.scrollDismissesKeyboard(.interactively).navigationTitle("Assistant").navigationBarTitleDisplayMode(.inline)
+                .toolbar{
+                    ToolbarItem(placement:.topBarTrailing){Button("Done"){dismiss()}}
+                    ToolbarItemGroup(placement:.keyboard){Spacer();Button("Done typing"){focusedField=nil}}
+                }
                 .task(id:session){
                     let fixture=ProcessInfo.processInfo.arguments.contains("--integration-test") ? ProcessInfo.processInfo.environment["WU_ASSISTANT_CODE"] : nil
                     await assistant.connect(fixture)
