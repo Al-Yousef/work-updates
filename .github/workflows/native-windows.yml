@@ -40,6 +40,11 @@ jobs:
       - name: Isolated high-contrast composer and theme refresh
         shell: pwsh
         run: ./native/windows/scripts/ux-audit.ps1 -Scales @(96,192) -HighContrast
+      - name: Whole-process synthetic performance pilot
+        shell: pwsh
+        run: |
+          ./scripts/owned-process-metrics.test.ps1
+          ./scripts/native-performance-audit.ps1 -SecondsPerPhase 6 -SampleIntervalMs 1000
       - name: Packaged update and program rollback with a disposable native app
         env:
           CSC_IDENTITY_AUTO_DISCOVERY: 'false'
@@ -69,6 +74,11 @@ jobs:
             native/windows/build/candidate/artifacts/ux-high-contrast.png
             native/windows/build/artifacts/ux-audit-*.json
             artifacts/native-qa/*/verification.json
+            artifacts/performance/**/verification.json
+            artifacts/performance/**/metadata.json
+            artifacts/performance/**/*.samples.json
+            artifacts/performance/**/*.workload.json
+            artifacts/performance/**/cleanup.json
             native/windows/build/candidate/artifacts/picker-observations.jsonl
           if-no-files-found: error
           retention-days: 14
@@ -78,6 +88,12 @@ jobs:
         with:
           name: native-windows-failure-diagnostics
           path: |
+            artifacts/native-qa/**/*.txt
+            artifacts/performance/**/metadata.json
+            artifacts/performance/**/*.samples.json
+            artifacts/performance/**/*.workload.json
+            artifacts/performance/**/cleanup.json
+            artifacts/performance/**/*.stderr.txt
             artifacts/baseline-runtime/verification.json
             artifacts/update-runtime/verification.json
             artifacts/update-faults/verification.json
