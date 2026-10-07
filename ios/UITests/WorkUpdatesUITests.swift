@@ -72,8 +72,9 @@ final class WorkUpdatesUITests:XCTestCase {
         let app=XCUIApplication();app.launchArguments=["--integration-test","--demo"]
         app.launchEnvironment["WU_ASSISTANT_CODE"]=code;app.launch()
         XCTAssertTrue(app.buttons["private-assistant"].waitForExistence(timeout:10));app.buttons["private-assistant"].tap()
-        let input=app.textViews["assistant-channel-input"]
-        XCTAssertTrue(input.waitForExistence(timeout:20));input.tap();input.typeText("Native phone private question")
+        let input=app.descendants(matching:.any).matching(identifier:"assistant-channel-input").firstMatch
+        XCTAssertTrue(input.waitForExistence(timeout:20),"Assistant status: "+app.staticTexts["assistant-channel-status"].label)
+        input.tap();input.typeText("Native phone private question")
         app.buttons["assistant-channel-send"].tap()
         XCTAssertTrue(app.staticTexts["Synthetic private answer: Native phone private question"].waitForExistence(timeout:20))
         capture("Private assistant accepted answer")

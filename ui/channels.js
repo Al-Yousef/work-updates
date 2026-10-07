@@ -6,8 +6,10 @@ async function call(value) {
   return r.value;
 }
 async function refresh() {
+  const selectedHost = $('host').value;
   const state = await call({ method: 'state' });
   $('host').replaceChildren(...state.addresses.map((host) => new Option(host, host)));
+  if (state.addresses.includes(selectedHost)) $('host').value = selectedHost;
   $('grants').replaceChildren();
   for (const grant of state.channels) {
     const row = document.createElement('fieldset'),
