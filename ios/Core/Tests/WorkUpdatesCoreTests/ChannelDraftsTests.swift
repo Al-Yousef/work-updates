@@ -15,6 +15,46 @@ final class ChannelDraftsTests: XCTestCase {
         if let turnID {result["turnId"] = .string(turnID)}
         return .object(result)
     }
+    func testScopedRemovalKeepsReceiptsOtherComputersAndAcceptedDeliveryAfterRestart() throws {
+        let drafts=try ChannelDrafts(file:file),other=DraftBinding(computerID:"another-computer",hostID:"other-host",sourceID:"other-source",taskKey:"other-task",contextRevision:nil)
+        try drafts.save(binding,text:"Private submitted text");let id=try XCTUnwrap(drafts.prepare(binding).messageID)
+        try drafts.sending(binding,messageID:id);try drafts.accepted(binding,messageID:id,result:receipt(id))
+        try drafts.save(other,text:"Keep the other computer draft")
+        let preview=try drafts.previewRemoval(computerID:binding.computerID)
+        XCTAssertEqual(preview.draftCount,1);XCTAssertEqual(preview.uncertainCount,0);XCTAssertEqual(preview.retainedReceipts,1)
+        XCTAssertEqual(preview.retainedTextBytes,"Private submitted text".utf8.count)
+        XCTAssertEqual(try drafts.removePreview(preview.id),1)
+        XCTAssertThrowsError(try drafts.removePreview(preview.id))
+        let restarted=try ChannelDrafts(file:file)
+        XCTAssertNil(restarted.draft(binding));XCTAssertEqual(restarted.draft(other)?.text,"Keep the other computer draft")
+        XCTAssertEqual(restarted.receipts(computerID:binding.computerID).first?.messageID,id)
+        XCTAssertThrowsError(try restarted.accepted(binding,messageID:id,result:receipt(id)))
+        XCTAssertFalse(String(decoding:try Data(contentsOf:file),as:UTF8.self).contains("Private submitted text"))
+    }
+    func testRemovalHoldsChangedExpiredAndUncertainDraftsAndRestartDropsPreview() throws {
+        var clock=1000.0;let drafts=try ChannelDrafts(file:file,now:{clock})
+        try drafts.save(binding,text:"Unsent original")
+        let stale=try drafts.previewRemoval(computerID:binding.computerID);try drafts.save(binding,text:"Changed draft")
+        XCTAssertThrowsError(try drafts.removePreview(stale.id));XCTAssertEqual(drafts.draft(binding)?.text,"Changed draft")
+        let expired=try drafts.previewRemoval(computerID:binding.computerID);clock+=601
+        XCTAssertThrowsError(try drafts.removePreview(expired.id))
+        let prepared=try drafts.prepare(binding),id=try XCTUnwrap(prepared.messageID)
+        let uncertain=try drafts.previewRemoval(computerID:binding.computerID);XCTAssertEqual(uncertain.uncertainCount,1)
+        XCTAssertThrowsError(try drafts.removePreview(uncertain.id));try drafts.failed(binding,messageID:id,notSent:false)
+        let restarted=try ChannelDrafts(file:file,now:{clock});XCTAssertThrowsError(try restarted.removePreview(uncertain.id))
+        XCTAssertEqual(restarted.draft(binding)?.text,"Changed draft");XCTAssertEqual(restarted.draft(binding)?.status,"unconfirmed")
+    }
+    func testRemovalRefusesExternalChangesAndRedirectedFilesWithoutErasingThem() throws {
+        let drafts=try ChannelDrafts(file:file);try drafts.save(binding,text:"Preserve this draft")
+        let preview=try drafts.previewRemoval(computerID:binding.computerID),original=try Data(contentsOf:file)
+        let target=directory.appendingPathComponent("other.json");try original.write(to:target)
+        try FileManager.default.removeItem(at:file);try FileManager.default.createSymbolicLink(at:file,withDestinationURL:target)
+        XCTAssertThrowsError(try drafts.removePreview(preview.id));XCTAssertEqual(try Data(contentsOf:target),original)
+        try FileManager.default.removeItem(at:file);try original.write(to:file)
+        let newDrafts=try ChannelDrafts(file:file),changed=try newDrafts.previewRemoval(computerID:binding.computerID)
+        let replacement=Data("{\"version\":999,\"drafts\":[],\"receipts\":[]}".utf8);try replacement.write(to:file)
+        XCTAssertThrowsError(try newDrafts.removePreview(changed.id));XCTAssertEqual(try Data(contentsOf:file),replacement)
+    }
     func testDraftSurvivesRestartAndOtherOwnersCannotLoadIt() throws {
         let drafts=try ChannelDrafts(file:file)
         try drafts.save(binding,text:"Keep this unsent draft")

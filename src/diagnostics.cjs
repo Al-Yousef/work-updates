@@ -276,7 +276,14 @@ class DiagnosticLog {
   scope(value, run) {
     return this.scopes.run({ ...this.capture(), ...fields(value) }, run);
   }
+  withRetentionPaused(operation) {
+    if (this.retentionPaused) throw new Error('Diagnostic retention cleanup is already active.');
+    this.retentionPaused = true;
+    this.prepared = null;
+    try { return operation(); } finally { this.retentionPaused = false; }
+  }
   write(event, details = {}, { context = this.capture() } = {}) {
+    if (this.retentionPaused) return;
     const safeEvent = EVENTS.has(event) ? event : 'diagnostic.invalid-event';
     const diagnosis = recovery(details);
     let record = {

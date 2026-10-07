@@ -173,6 +173,16 @@ struct LinkState {
         if lastUndoComputer==id {lastUndoComputer=nil}
     }
     func reconnect() {if !demo && active {for computer in computers {start(computer)}}}
+    var retainedDraftComputers:[String] {channelDrafts?.retainedComputerIDs ?? []}
+    func previewDraftRemoval(_ computerID:String) throws -> PhoneDraftRemovalPreview {
+        guard !demo,let channelDrafts else {throw PeerError.server("Phone draft retention controls are unavailable.")}
+        return try channelDrafts.previewRemoval(computerID:computerID)
+    }
+    func removeDrafts(_ preview:PhoneDraftRemovalPreview) throws {
+        guard !demo,let channelDrafts,!busy.contains(where:{$0.hasPrefix(preview.computerID+":")}) else {throw PeerError.server("A request for this computer is still running. Its drafts are preserved.")}
+        _ = try channelDrafts.removePreview(preview.id)
+        objectWillChange.send()
+    }
     func channelBinding(_ card:DisplayCard,sourceID:String) throws -> DraftBinding {
         guard computers.contains(where:{$0.id==card.computerID}),let current=current(card),
               current.task.sources.contains(where:{$0.id==sourceID}),let host=states[card.computerID]?.host?.id,!host.isEmpty else {throw PeerError.server("The saved draft requires its original paired owner and source.")}

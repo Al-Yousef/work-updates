@@ -10,6 +10,7 @@ function adapters({
   sourcePaused,
   sourceDependencies = () => [],
   forgetFeed = () => {},
+  retained = {},
 }) {
   const ownedJSON = (relative) => {
     const root = fs.realpathSync.native(directory),
@@ -60,6 +61,7 @@ function adapters({
       ? ['An assistant answer is still using retained context']
       : [];
   return {
+    ...retained,
     notes: {
       read: () => structuredClone(assistant().state.notes),
       dependencies: otherAnswer,
