@@ -89,4 +89,9 @@ try{
  SendMessageW(panel,WM_APP+210,0,0);PostMessageW(control,WM_CLOSE,0,0);check(WaitForSingleObject(child.hProcess,4000)==WAIT_OBJECT_0,"Own child did not cancel background reads on close");CloseHandle(child.hProcess);child.hProcess=nullptr;
  result["mode"]=baseline?"baseline":"final";result["details_fixture_delay_ms"]=1500;result["send_fixture_delay_ms"]=2000;result["scope"]="Own Win32 handlers and painted state; synthetic backend, no Explorer injection or signed-in messages";
  {std::ofstream f(artifacts/(baseline?L"responsiveness-baseline.json":L"responsiveness-final.json"));f<<result.dump(2);}std::cout<<result.dump(2)<<"\n";return 0;
-}catch(const std::exception& e){std::cerr<<"FAIL "<<e.what()<<"\n";if(control)PostMessageW(control,WM_CLOSE,0,0);if(child.hProcess){if(WaitForSingleObject(child.hProcess,4000)!=WAIT_OBJECT_0)TerminateProcess(child.hProcess,2);CloseHandle(child.hProcess);}return 1;}}
+}catch(const std::exception& e){
+ std::cerr<<"FAIL "<<e.what()<<"\n";
+ // Preserve the exact failed assertion and partial measurements before closing
+ // the disposable child. This contains only the synthetic fixture's state.
+ try{result["passed"]=false;result["error"]=e.what();result["mode"]=baseline?"baseline":"final";std::ofstream f(artifacts/L"responsiveness-failure.json");f<<result.dump(2);}catch(...){}
+ if(control)PostMessageW(control,WM_CLOSE,0,0);if(child.hProcess){if(WaitForSingleObject(child.hProcess,4000)!=WAIT_OBJECT_0)TerminateProcess(child.hProcess,2);CloseHandle(child.hProcess);}return 1;}}
