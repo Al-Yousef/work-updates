@@ -32,13 +32,9 @@ jobs:
       - name: Build all native components and run model checks
         shell: pwsh
         run: ./native/windows/build.ps1 -OutputDirectory build/candidate
-      - name: Isolated adapter and queue transport checks
-        shell: pwsh
-        run: |
-          & ./native/windows/build/candidate/native-adapter-tests.exe
-          if ($LASTEXITCODE -ne 0) { throw 'Isolated adapter checks failed' }
-          ./native/windows/scripts/queue-audit.ps1
-          ./native/windows/scripts/status-audit.ps1
+      - run: python -m pip install -r requirements-qa.txt
+      - name: Unified simulated native regression matrix
+        run: node scripts/native-qa.cjs --lane=simulated
       - name: Hidden synthetic backend with no collector or writers
         run: node scripts/baseline-runtime-audit.cjs
       - name: Packaged update and program rollback with a disposable native app
@@ -67,6 +63,8 @@ jobs:
             artifacts/update-runtime/verification.json
             native/windows/build/candidate/artifacts/status-*.png
             native/windows/build/candidate/artifacts/status-verification.json
+            artifacts/native-qa/*/verification.json
+            native/windows/build/candidate/artifacts/picker-observations.jsonl
           if-no-files-found: error
           retention-days: 14
       - name: Synthetic failure diagnostics
@@ -78,5 +76,7 @@ jobs:
             artifacts/baseline-runtime/verification.json
             artifacts/update-runtime/verification.json
             artifacts/update-faults/verification.json
+            artifacts/native-qa/*/verification.json
+            native/windows/build/candidate/artifacts/picker-observations.jsonl
           if-no-files-found: ignore
           retention-days: 7

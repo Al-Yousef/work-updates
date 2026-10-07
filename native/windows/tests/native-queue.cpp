@@ -17,6 +17,7 @@
 #include "../vendor/nlohmann/json.hpp"
 #include "../src/chat-layout.h"
 #include "../src/ui-audit.h"
+#include "bounded-picker-wait.h"
 using Json=nlohmann::json;
 namespace {
 DWORD ownPid=0;HWND panel=nullptr,control=nullptr,editor=nullptr,fileDialog=nullptr;unsigned checks=0;
@@ -26,8 +27,32 @@ BOOL CALLBACK find(HWND window,LPARAM){
     wchar_t name[100]{};GetClassNameW(window,name,100);
     if(!wcscmp(name,L"NativeHoverPanel"))panel=window;
     if(!wcscmp(name,L"NativeHoverTrigger"))control=window;
-    if(!wcscmp(name,L"#32770")&&IsWindowVisible(window))fileDialog=window;
+    if(!wcscmp(name,L"#32770")&&IsWindowVisible(window)&&GetWindow(window,GW_OWNER)==panel){
+        wchar_t title[128]{};GetWindowTextW(window,title,128);
+        if(!wcscmp(title,L"Attach images"))fileDialog=window;
+    }
     return TRUE;
+}
+void waitForPicker(const PROCESS_INFORMATION& child,const std::filesystem::path& trace,const char* label){
+    const auto started=GetTickCount64();fileDialog=nullptr;
+    const bool ready=qa::waitForPicker(10000,[]{return GetTickCount64();},[]{fileDialog=nullptr;EnumWindows(find,0);return fileDialog!=nullptr;},
+        [](std::uint64_t ms){Sleep(static_cast<DWORD>(ms));},[&]{return WaitForSingleObject(child.hProcess,0)!=WAIT_TIMEOUT;});
+    std::ofstream out(trace.parent_path()/L"picker-observations.jsonl",std::ios::app);
+    out<<Json({{"schema",1},{"input","simulated"},{"pid",ownPid},{"label",label},{"elapsedMs",GetTickCount64()-started},
+        {"openingActions",1},{"retries",0},{"ready",ready},{"childExited",WaitForSingleObject(child.hProcess,0)!=WAIT_TIMEOUT},
+        {"panelExists",IsWindow(panel)!=FALSE},{"dialogOwned",ready&&GetWindow(fileDialog,GW_OWNER)==panel}}).dump()<<'\n';
+    check(static_cast<bool>(out),"Retain bounded owned-picker observation evidence");check(ready,label);
+}
+void pickerWaitContract(){
+    std::uint64_t clock=0;unsigned polls=0;
+    check(qa::waitForPicker(10000,[&]{return clock;},[&]{++polls;return clock>=4500;},[&](auto ms){clock+=ms;},[]{return false;}),"Cold picker readiness after three seconds stays within the finite observation budget");
+    check(clock>=4500&&clock<10000&&polls<300,"Cold wait remains bounded without replaying an opening action");
+    clock=0;polls=0;
+    check(!qa::waitForPicker(10000,[&]{return clock;},[&]{++polls;return false;},[&](auto ms){clock+=ms;},[]{return false;}),"Missing owned picker fails at the finite deadline");
+    check(clock==10000&&polls==250,"Timeout never starts another opening action");
+    clock=0;polls=0;
+    check(!qa::waitForPicker(10000,[&]{return clock;},[&]{++polls;return false;},[&](auto ms){clock+=ms;},[&]{return clock>=120;}),"Exited child cancels observation");
+    check(polls==3&&clock==120,"Child exit prevents further polling");
 }
 Json last(const std::filesystem::path& path){
     std::ifstream input(path);std::string line;Json latest;
@@ -116,6 +141,7 @@ void selectSource(const std::filesystem::path& trace,const std::filesystem::path
 int wmain(int argc,wchar_t** argv){
     PROCESS_INFORMATION child{};
     try {
+        pickerWaitContract();
         check(argc==2,"Provide isolated demo backend descriptor");
         wchar_t own[32768]{};GetModuleFileNameW(nullptr,own,32768);
         auto directory=std::filesystem::path(own).parent_path();
@@ -281,12 +307,12 @@ int wmain(int argc,wchar_t** argv){
             check(draft()==L"Unsent assistant note","Updates and Chat switches preserve the assistant draft");
             setDraft(L"Describe this image");const auto imagePath=std::filesystem::weakly_canonical(fixture/L"fixture-image.png").make_preferred().wstring();
             clickAction(AuditAction::AddMenu);postAction(AuditAction::Attach);
-            for(int i=0;i<100&&!fileDialog;i++){EnumWindows(find,0);Sleep(30);}check(fileDialog!=nullptr,"Native attach button opens its own file picker");
+            waitForPicker(child,trace,"Native attach button opens its own file picker");
             FileField field;for(int i=0;i<100&&!field.window;i++){EnumChildWindows(fileDialog,fileField,reinterpret_cast<LPARAM>(&field));if(!field.window)Sleep(30);}auto fileName=field.window;
             SendMessageW(GetDlgItem(fileDialog,IDCANCEL),BM_CLICK,0,0);Sleep(120);
             check(draft()==L"Describe this image"&&last(trace).value("draftImages",-1)==0,"Cancelling the owned image picker preserves the draft and adds no image");
             fileDialog=nullptr;clickAction(AuditAction::AddMenu);postAction(AuditAction::Attach);
-            for(int i=0;i<100&&!fileDialog;i++){EnumWindows(find,0);Sleep(30);}check(fileDialog!=nullptr,"Image picker reopens after cancellation");
+            waitForPicker(child,trace,"Image picker reopens after cancellation");
             field={};for(int i=0;i<100&&!field.window;i++){EnumChildWindows(fileDialog,fileField,reinterpret_cast<LPARAM>(&field));if(!field.window)Sleep(30);}fileName=field.window;
             if(!fileName)EnumChildWindows(fileDialog,describeField,0);
             check(fileName!=nullptr,"Find the file-name field in this audit child's picker");
