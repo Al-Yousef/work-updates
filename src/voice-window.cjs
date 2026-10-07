@@ -8,6 +8,7 @@ class VoiceWindow {
     this.file = path.join(__dirname, '../ui/voice.html');
     this.names = [
       'state',
+      'context',
       'configure',
       'begin',
       'connect',
@@ -54,7 +55,15 @@ class VoiceWindow {
     };
   }
   async action(name, v = {}) {
-    if (name === 'state') return this.ledger.inspect();
+    if (name === 'state')
+      return {
+        ...this.ledger.inspect(),
+        contextChoices: this.ledger.options.context?.choices() || {
+          choices: [],
+          reason: 'Task context unavailable.',
+        },
+      };
+    if (name === 'context') return this.ledger.options.context.preview(v.selection);
     if (name === 'configure') {
       if (this.ledger.live) throw new Error('End voice before changing the provider.');
       return this.provider.configure(v.key);
