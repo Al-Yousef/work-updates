@@ -18,15 +18,31 @@ function retainedAdapters({
   attachments,
   voice,
   diagnostics,
+  documents,
+  browsers,
+  browserVault,
 }) {
   const root = fs.realpathSync.native(directory);
   function owned(relative) {
     const file = path.join(root, relative);
     let parent = path.dirname(file);
-    while (!fs.existsSync(parent)) parent = path.dirname(parent);
+    for (;;) {
+      try {
+        const stat = fs.lstatSync(parent);
+        if (!stat.isDirectory() || stat.isSymbolicLink())
+          throw new Error('Redirected retained directory requires recovery.');
+        break;
+      } catch (error) {
+        if (error.code !== 'ENOENT' || path.dirname(parent) === parent) throw error;
+        parent = path.dirname(parent);
+      }
+    }
     const relation = path.relative(root, fs.realpathSync.native(parent));
     if (relation.startsWith('..') || path.isAbsolute(relation))
       throw new Error('Retained files escaped this profile.');
+    const canonical = (value) => (process.platform === 'win32' ? value.toLowerCase() : value);
+    if (canonical(fs.realpathSync.native(parent)) !== canonical(parent))
+      throw new Error('Redirected retained directory requires recovery.');
     return file;
   }
   function metadata(relative, maximum) {
@@ -46,11 +62,14 @@ function retainedAdapters({
     return { name: relative, bytes: bytes.length, sha256: digest(bytes) };
   }
   function removeFiles(selected, maximum) {
+    const expected = (file) => ({ name: file.name, bytes: file.bytes, sha256: file.sha256 });
     // Validate the entire set before the first deletion, then each exact file.
     for (const file of selected)
-      if (!equal(metadata(file.name, maximum), file)) throw new Error('Selected file changed.');
+      if (!equal(metadata(file.name, maximum), expected(file)))
+        throw new Error('Selected file changed.');
     for (const file of selected) {
-      if (!equal(metadata(file.name, maximum), file)) throw new Error('Selected file changed.');
+      if (!equal(metadata(file.name, maximum), expected(file)))
+        throw new Error('Selected file changed.');
       fs.unlinkSync(owned(file.name));
     }
   }
@@ -133,6 +152,44 @@ function retainedAdapters({
   }
   const backups = () =>
     ['logs/app.log.1', 'logs/app.log.2'].map((name) => metadata(name, 512 * 1024)).filter(Boolean);
+  const fileBytes = (files) => files.reduce((total, file) => total + file.bytes, 0);
+  const fileSummary = (files) => ({
+    files: files.slice(0, 16).map(({ name, bytes, origin, title }) => ({
+      name,
+      bytes,
+      ...(origin ? { origin } : {}),
+      ...(title ? { title } : {}),
+    })),
+    omittedFiles: Math.max(0, files.length - 16),
+  });
+  function documentCopies() {
+    const live = documents();
+    const saved = store.readStore(owned('documents.json'), {
+      missing: () => ({ version: 1, documents: [], drafts: [], receipts: [], schedules: [] }),
+    }).value;
+    if (!equal(saved, live.state)) throw new Error('Document journal changed independently.');
+    return live.state.documents.flatMap((d) => {
+      const file = metadata('document-library/' + d.id + '.' + d.extension, 512 * 1024);
+      return file ? [{ ...file, title: d.title }] : [];
+    });
+  }
+  const documentDependencies = () => [
+    ...otherAnswer(),
+    ...(documents().busy ||
+    documents().state.receipts.some((r) => ['applying', 'unconfirmed'].includes(r.status))
+      ? ['A document write is running or unconfirmed']
+      : []),
+    ...(documents().state.schedules.some((r) => r.status === 'active')
+      ? ['Cancel active document schedules before removing their output copies']
+      : []),
+  ];
+  function savedLogins() {
+    // Decryption stays inside the vault. Only current-owner file metadata is
+    // projected; no cookie values are returned to previews or exports.
+    return browserVault.inspectOwned(browsers().actorId);
+  }
+  const loginDependencies = () =>
+    browsers().live.size ? ['Close private browser sessions before removing saved login keys'] : [];
   return {
     'source-extracts': {
       requiresDisconnectedSource: true,
@@ -154,6 +211,11 @@ function retainedAdapters({
     'orphan-attachments': {
       exportable: false,
       read: orphanImages,
+      bytes: (value) => fileBytes(value.files),
+      summary: (value) => ({
+        ...fileSummary(value.files),
+        referencedFilesKept: value.referencedFiles,
+      }),
       dependencies: () => [
         ...otherAnswer(),
         ...(messages?.().active.size ? ['An image dispatch is still running'] : []),
@@ -168,6 +230,8 @@ function retainedAdapters({
     'diagnostic-backups': {
       exportable: false,
       read: backups,
+      bytes: fileBytes,
+      summary: fileSummary,
       dependencies: () => [],
       remove: (_, selected) =>
         diagnostics().withRetentionPaused(() => removeFiles(selected, 512 * 1024)),
@@ -177,6 +241,8 @@ function retainedAdapters({
     'voice-configuration': {
       exportable: false,
       read: () => metadata('voice-provider.enc', 4096),
+      bytes: (value) => value?.bytes || 0,
+      summary: (value) => ({ files: value ? [{ name: value.name, bytes: value.bytes }] : [] }),
       dependencies: () =>
         voice().live ? ['End the current voice session before removing its key'] : [],
       remove: (_, selected) => {
@@ -185,6 +251,34 @@ function retainedAdapters({
       },
       removed: (value) => value === null,
       kept: 'Voice session/usage checkpoints and provider-side account data remain. This removes the local encrypted key only.',
+    },
+    'document-copies': {
+      exportable: false,
+      read: documentCopies,
+      bytes: fileBytes,
+      summary: fileSummary,
+      dependencies: documentDependencies,
+      remove: (_, selected) => {
+        if (documentDependencies().length || !equal(documentCopies(), selected))
+          throw new Error('Document dependencies changed.');
+        removeFiles(selected, 512 * 1024);
+      },
+      removed: (value) => value.length === 0,
+      kept: 'Original import files, document identities, draft/replacement text, schedules, action/replay receipts and exported copies remain. Future requests must import a new copy explicitly.',
+    },
+    'browser-logins': {
+      exportable: false,
+      read: savedLogins,
+      bytes: fileBytes,
+      summary: fileSummary,
+      dependencies: loginDependencies,
+      remove: (_, selected) => {
+        if (loginDependencies().length || !equal(savedLogins(), selected))
+          throw new Error('Browser/login dependencies changed.');
+        removeFiles(selected, 1024 * 1024);
+      },
+      removed: (value) => value.length === 0,
+      kept: 'Other owners encrypted logins, browser/action metadata and provider-side login sessions remain. Cookie values are never exported.',
     },
   };
 }

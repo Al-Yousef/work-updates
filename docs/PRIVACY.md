@@ -17,6 +17,8 @@ Hyphen uses local app data on each desktop. Its paired phone has separate protec
 | Diagnostics | Local desktop; each logger capped at 512 KiB with up to two backups; event fields allowlisted and sensitive text omitted | Existing previewed redacted diagnostic export. `diagnostic-backups` removes exact `app.log.1`/`.2` after hash preview; current/future diagnostics and other loggers remain |
 | Attachments | Local desktop; content-addressed images, at most 20 MiB each; no automatic expiry | `orphan-attachments` removes only unused files. Every supported private journal, live assistant/message state and this session's imported/read images are checked for references. Referenced images and external copies remain |
 | Voice provider key | OS-encrypted local file; until explicitly removed | `voice-configuration` preview exposes file metadata only. Current voice must end before removal; the secret cannot be exported. Voice session/usage and remote account data remain |
+| Private document copies | Local `document-library/`; explicitly imported text copies | `document-copies` previews exact names/titles and retained file bytes. Active schedules/writes or unconfirmed writes hold removal. Original imports, retained draft/replacement text, identities and receipts remain |
+| Saved browser logins | OS-encrypted origin-bound cookies in local `browser-vault/` | `browser-logins` previews current-owner file metadata and exact origins; cookie values are omitted. Live private browsers hold removal. Other owners and provider-side sessions remain |
 | Export copies | Private `exports/` on this desktop; no automatic expiry or upload | Owner reviews free text before sharing. Deleting original records does not erase previous export copies |
 | Pairing credentials | OS-encrypted desktop files; until pairing forgotten/revoked | Existing pairing controls. Credential files cannot be exported through privacy text controls; forgetting a peer does not erase that peer's copies |
 | Phone draft journal and Keychain | Protected phone storage; 128 drafts, 512 receipts; credentials until forgotten | Phone-owned controls and exact authenticated host/source binding. Desktop deletion does not erase phone storage |
@@ -37,6 +39,8 @@ These controls run without model inference. Only the exact accepted human comman
 /privacy preview orphan-attachments
 /privacy preview diagnostic-backups
 /privacy preview voice-configuration
+/privacy preview document-copies
+/privacy preview browser-logins
 /privacy delete PREVIEW_UUID
 /privacy export notes
 /privacy export conversation
@@ -59,4 +63,4 @@ Synthetic production-path tests cover literal Assistant controls, distinct notes
 
 Retained-data production-path tests remove actual owned temporary files and exact Research statement records; restart retains disconnects and replay receipts. They cover active reads/reflection derivatives/voice, new live image references, preserved draft/history references, redirected attachment folders, changed backup files, ongoing redacted diagnostics, secret export refusal and foreign actors. Newly imported/read images stay protected for the whole app session because a renderer can still hold an unsaved reference. A fresh session may preview truly unused files.
 
-No existing account/chat, phone, installed Hyphen data or model is used. Remaining #31 scope includes reflection derivative cleanup, document-copy/browser-login classes as those providers integrate, phone-owned removal and broader cross-channel inspection. The pending reader account audit stays separate and is not retried by this feature.
+No existing account/chat, phone, installed Hyphen data or model is used. Remaining #31 scope includes reflection derivative cleanup, phone-owned removal and broader cross-channel inspection. Removing a document copy does not erase retained edit drafts or original import files; deleting saved login keys does not log out provider-side sessions or another owner. The pending reader account audit stays separate and is not retried by this feature.

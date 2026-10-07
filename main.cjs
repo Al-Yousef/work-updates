@@ -212,7 +212,8 @@ privacy=new (require('./src/privacy.cjs').Privacy)({directory:dataDir,actorId:au
     sourcePaused:async operation=>{const previous=observer;await previous?.closeAndWait?.();if(previous&&!previous.closeAndWait)throw new Error('Collector shutdown cannot be verified. Removal is held.');try{return await operation();}finally{if(previous&&!quitting)startCollection();}},
     forgetFeed:sourceId=>queue.setFeed({...queue.feed,threads:queue.feed.threads.filter(t=>t.id!==sourceId)},queue.health),
     retained:require('./src/privacy-retained-adapters.cjs').retainedAdapters({directory:dataDir,assistant:()=>assistant,
-      research:()=>research,reflections:()=>reflections,messages:()=>messages,attachments,voice:()=>voice,diagnostics:()=>diagnostics})})});
+      research:()=>research,reflections:()=>reflections,messages:()=>messages,attachments,voice:()=>voice,diagnostics:()=>diagnostics,
+      documents:()=>documents,browsers:()=>browsers,browserVault})})});
 assistant.options.privacy=privacy;
 const triage=new Triage({directory:dataDir,policy:authorization,responsibilities,research,snapshot:()=>devices.snapshot(),deviceId:devices.local.id,
   preferences:()=>commitments.preferenceSnapshot(),maintenance:()=>quitting||maintenanceActive(dataDir),

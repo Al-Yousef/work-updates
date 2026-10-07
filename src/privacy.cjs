@@ -23,7 +23,7 @@ function validate(v) {
   for (const p of v.previews)
     if (
       !uuid(p.id) ||
-      !['notes', 'conversation', 'source-cache', 'source-extracts', 'orphan-attachments', 'diagnostic-backups', 'voice-configuration'].includes(p.kind) ||
+      !['notes', 'conversation', 'source-cache', 'source-extracts', 'orphan-attachments', 'diagnostic-backups', 'voice-configuration', 'document-copies', 'browser-logins'].includes(p.kind) ||
       !/^[a-f0-9]{64}$/.test(p.hash) ||
       !Number.isFinite(p.expiresAt) ||
       typeof p.actorId !== 'string' ||
@@ -152,7 +152,7 @@ class Privacy {
         hash: hash(data),
         actorId: this.actorId,
         expiresAt: this.now() + 30 * 60000,
-        bytes: Buffer.byteLength(JSON.stringify(data)),
+        bytes: this.options.adapters[kind].bytes?.(data) ?? Buffer.byteLength(JSON.stringify(data)),
         dependencies,
       };
     this.change((next) => {
@@ -164,6 +164,7 @@ class Privacy {
       kind,
       sourceId: p.sourceId,
       retainedBytes: p.bytes,
+      affected: this.options.adapters[kind].summary?.(data) || null,
       dependencies,
       expiresAt: new Date(p.expiresAt).toISOString(),
       confirmation: '/privacy delete ' + p.id,

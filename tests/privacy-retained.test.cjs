@@ -9,6 +9,9 @@ const { Privacy } = require('../src/privacy.cjs');
 const { retainedAdapters } = require('../src/privacy-retained-adapters.cjs');
 const { DiagnosticLog } = require('../src/diagnostics.cjs');
 const { Attachments } = require('../src/attachments.cjs');
+const { Documents } = require('../src/documents.cjs');
+const { BrowserVault } = require('../src/browser-vault.cjs');
+const { BrowserSessions } = require('../src/browser-sessions.cjs');
 test('legacy privacy journals preserve original bytes until a human change and newer retention schema refuses unsafe rollback', (t) => {
   const directory = fs.mkdtempSync(path.join(os.tmpdir(), 'hyphen-privacy-migration-'));
   t.after(() => fs.rmSync(directory, { recursive: true, force: true }));
@@ -53,6 +56,25 @@ function fixture(t) {
   const voice = { live: null },
     attachments = new Attachments(f.directory);
   const diagnostics = new DiagnosticLog(path.join(f.directory, 'logs'));
+  const documents = new Documents({
+    directory: f.directory,
+    actorId: f.policy.actorId,
+    admission: () => 'allow',
+  });
+  const browserVault = new BrowserVault({
+    directory: f.directory,
+    available: () => true,
+    encrypt: (value) => Buffer.from('synthetic-cipher:' + value),
+    decrypt: (bytes) => bytes.toString().slice('synthetic-cipher:'.length),
+  });
+  const browsers = new BrowserSessions({
+    directory: f.directory,
+    actorId: f.policy.actorId,
+    vault: browserVault,
+    admission: () => 'allow',
+    verifyBinding: async () => assert.fail('Retention must not open an executor'),
+    create: () => assert.fail('Retention must not open a browser'),
+  });
   const derived = { state: { checkpoints: [] } };
   const options = {
     directory: f.directory,
@@ -67,6 +89,9 @@ function fixture(t) {
       attachments,
       voice: () => voice,
       diagnostics: () => diagnostics,
+      documents: () => documents,
+      browsers: () => browsers,
+      browserVault,
     }),
   };
   let privacy = new Privacy(options);
@@ -83,6 +108,9 @@ function fixture(t) {
   return {
     ...f,
     voice,
+    documents,
+    browsers,
+    browserVault,
     attachments,
     diagnostics,
     derived,
@@ -281,4 +309,88 @@ test('voice key preview exposes only file metadata, requires end before removal 
   assert.ok(f.privacy.inspect().removals.some((o) => o.status === 'completed'));
   f.restartPrivacy();
   assert.equal(f.privacy.options.adapters['voice-configuration'].read(), null);
+});
+
+test('document copy preview gives exact file bytes and names, holds active schedules, then removes copies while preserving imports and receipts', async (t) => {
+  const f = fixture(t),
+    original = f.seed('input.md', 'Synthetic private output\n');
+  const spec = { file: original, title: 'Chosen synthetic copy' };
+  const imported = f.documents.import(f.input('/document import ' + JSON.stringify(spec)), spec);
+  const id = imported.id,
+    document = f.documents.read(id);
+  const schedule = {
+    revision: document.revision,
+    everySeconds: 60,
+    until: Date.now() + 360000,
+    maxRuns: 2,
+    append: '\nBounded output',
+  };
+  const rule = f.documents.schedule(
+    f.input('/document schedule ' + id + ': ' + JSON.stringify(schedule)),
+    id,
+    schedule,
+  );
+  const p = f.preview('document-copies');
+  assert.equal(p.retainedBytes, fs.statSync(document.file).size);
+  assert.equal(p.affected.files[0].title, spec.title);
+  await assert.rejects(f.remove(p), /dependencies changed/);
+  f.documents.cancel(f.input('/document cancel ' + rule.scheduleId), rule.scheduleId);
+  assert.equal((await f.remove(f.preview('document-copies'))).status, 'completed');
+  assert.ok(!fs.existsSync(document.file));
+  assert.equal(fs.readFileSync(original, 'utf8'), 'Synthetic private output\n');
+  assert.equal(f.documents.state.documents[0].id, id);
+  const restarted = new Documents(f.documents.options);
+  assert.throws(() => restarted.read(id));
+  restarted.tick();
+  assert.ok(!fs.existsSync(document.file));
+  assert.throws(
+    () => f.privacy.export(f.input('/privacy export document-copies'), 'document-copies'),
+    /excluded/,
+  );
+  const alternate = path.join(f.directory, 'unselected-document-copies');
+  fs.renameSync(f.documents.library, alternate);
+  fs.symlinkSync(alternate, f.documents.library, process.platform === 'win32' ? 'junction' : 'dir');
+  assert.throws(() => f.preview('document-copies'), /recovery/);
+});
+test('saved login preview selects the exact human owner without cookie values and holds live browsers, changed keys and redirected vaults', async (t) => {
+  const f = fixture(t),
+    origin = 'https://example.test';
+  const own = f.browserVault.save(f.policy.actorId, origin, [
+    { name: 'session', value: 'synthetic-cookie-value' },
+  ]);
+  const other = f.browserVault.save('human:unselected', origin, [
+    { name: 'session', value: 'unselected-cookie-value' },
+  ]);
+  const unselected = path.join(f.browserVault.directory, other + '.enc'),
+    before = fs.readFileSync(unselected);
+  const p = f.preview('browser-logins');
+  assert.equal(p.affected.files.length, 1);
+  assert.equal(p.affected.files[0].origin, origin);
+  assert.ok(!JSON.stringify(p).includes('cookie-value'));
+  f.browsers.live.set('fixture', { pending: false });
+  await assert.rejects(f.remove(p), /dependencies changed/);
+  f.browsers.live.clear();
+  const ownFile = path.join(f.browserVault.directory, own + '.enc'),
+    bytes = fs.readFileSync(ownFile);
+  fs.appendFileSync(ownFile, ' ');
+  await assert.rejects(f.remove(p), /dependencies changed/);
+  fs.writeFileSync(ownFile, bytes);
+  assert.equal((await f.remove(f.preview('browser-logins'))).status, 'completed');
+  assert.ok(!fs.existsSync(ownFile));
+  assert.deepEqual(fs.readFileSync(unselected), before);
+  assert.throws(
+    () => f.privacy.export(f.input('/privacy export browser-logins'), 'browser-logins'),
+    /excluded/,
+  );
+  fs.unlinkSync(unselected);
+  fs.rmdirSync(f.browserVault.directory);
+  const outside = fs.mkdtempSync(path.join(os.tmpdir(), 'hyphen-unselected-vault-'));
+  t.after(() => fs.rmSync(outside, { recursive: true, force: true }));
+  fs.symlinkSync(
+    outside,
+    f.browserVault.directory,
+    process.platform === 'win32' ? 'junction' : 'dir',
+  );
+  assert.throws(() => f.preview('browser-logins'), /recovery/);
+  assert.deepEqual(fs.readdirSync(outside), []);
 });
