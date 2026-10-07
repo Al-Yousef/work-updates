@@ -95,8 +95,8 @@ async function waitState(page, predicate) {
     });
     assert.equal(receipt.messageId, messageId);
     assert.equal(receipt.sourceId, sourceCard.sources[0].id);
-    assert.equal(receipt.status, 'sent');
-    assert.ok(receipt.acceptedTurnId);
+    assert.equal(receipt.delivery, 'sent');
+    assert.ok(receipt.turnId);
     await waitState(c, (state) => {
       const card = state.cards.find((t) => t.id === task.id);
       return (
