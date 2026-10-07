@@ -109,10 +109,10 @@ class BrowserSessions {
     return job.promise;
   }
   async bound(e) {
-    if (this.options.admission?.() !== 'allow')
+    if (this.options.admission?.(e) !== 'allow')
       throw held('Browser work is paused by its local work control.');
     await this.options.verifyBinding(e.taskId, e.grantId);
-    if (this.options.admission?.() !== 'allow')
+    if (this.options.admission?.(e) !== 'allow')
       throw held('Browser work was paused during its executor handshake.');
   }
   async open(i, spec) {
@@ -255,9 +255,14 @@ class BrowserSessions {
   lease(id) {
     return structuredClone(this.live.get(id)?.lease || null);
   }
+  assertStorage() {
+    const actual=fs.existsSync(this.file)?hash(fs.readFileSync(this.file)):null;
+    if(this.failed || actual!==this.diskHash) {this.failed=true;throw held('Browser ownership journal changed. Automation is held.');}
+  }
   async check(lease) {
     const e = this.entry(lease?.id),
       live = this.live.get(e.id);
+    this.assertStorage();
     if (
       this.failed ||
       !live ||
@@ -268,6 +273,7 @@ class BrowserSessions {
       throw held('Browser lease changed; human ownership or another session blocks automation.');
     await this.bound(e);
     const current = this.entry(e.id);
+    this.assertStorage();
     if (
       current.owner !== 'agent' ||
       current.epoch !== lease.epoch ||
@@ -278,13 +284,13 @@ class BrowserSessions {
       throw held('Current page left the authorized site scope. No browser fallback is allowed.');
     return { e, live };
   }
-  async read(lease) {
+  async read(lease, options={}) {
     const { e, live } = await this.check(lease);
     const value = await this.resource(e, async () => {
       const result = await this.run(live, () => live.adapter.read());
       await this.check(lease);
       return result;
-    });
+    },options);
     return {
       sessionId: e.id,
       origin: origin(live.adapter.url()),
@@ -294,23 +300,24 @@ class BrowserSessions {
       instructionsAuthorized: false,
     };
   }
-  async navigate(lease, url) {
+  async navigate(lease, url, options={}) {
     const { e, live } = await this.check(lease);
     if (!e.origins.includes(origin(url)))
       throw held('Destination is outside the authorized origins.');
     await this.resource(e, async () => {
       await this.run(live, () => live.adapter.navigate(url));
       await this.check(lease);
-    });
+    },options);
     this.change((s) => {
       s.entries.find((x) => x.id === e.id).origin = origin(live.adapter.url());
     });
     return { sessionId: e.id, origin: origin(live.adapter.url()), navigationCompleted: true };
   }
-  async resource(entry, operation) {
-    if (!this.options.budgets) return operation();
+  async resource(entry, operation, {operationId,beforeRead}={}) {
+    beforeRead?.();
+    if (!this.options.budgets) {const result=await operation();beforeRead?.();return result;}
     const budgets = this.options.budgets,
-      id = crypto.randomUUID();
+      id = operationId||crypto.randomUUID();
     budgets.reserve({
       id,
       kind: 'read',
@@ -323,6 +330,7 @@ class BrowserSessions {
     budgets.started(id);
     try {
       const result = await operation();
+      beforeRead?.();
       budgets.finish(id);
       return result;
     } catch (error) {
