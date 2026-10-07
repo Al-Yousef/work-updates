@@ -15,6 +15,7 @@ const allowed = new Set([
   'undo',
   'send',
   'queueMessage',
+  'cancelMessage',
   'clearMessages',
   'stop',
   'respond',

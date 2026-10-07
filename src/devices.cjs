@@ -96,7 +96,7 @@ class Devices extends EventEmitter {
       id: p + card.id,
       taskKey: p + card.taskKey,
       primarySourceId: card.primarySourceId ? p + card.primarySourceId : undefined,
-      sources: card.sources.map((s) => ({ ...s, id: p + s.id })),
+      sources: card.sources.map((s) => ({ ...s, id: p + s.id,deliveryOutcomes:s.deliveryOutcomes?.map(d=>({...d,sourceId:p+d.sourceId})) })),
       owner: this.owner(entry),
     }, { health: entry.state?.health, collectedAt: entry.state?.collectedAt });
   }
@@ -333,6 +333,10 @@ class Devices extends EventEmitter {
       return this.snapshot();
     }
     recordUndo();
+    if(['send','queueMessage','cancelMessage'].includes(method)&&result&&typeof result==='object'){
+      if(!current()||!result.messageId||(input.messageId&&result.messageId!==input.messageId)||result.sourceId!==next.sourceId)throw Object.assign(new Error('The source did not return a matching delivery identity. Check it before retrying.'),{delivery:'uncertain',code:'DELIVERY_RECEIPT'});
+      return {...result,ownerId:entry?entry.id:this.local.id,sourceId:input.sourceId,...(entry&&result.taskId?{taskId:prefix(entry.id)+result.taskId}:{})};
+    }
     if (method === 'details' && entry) return this.card(result, entry);
     if (entry && result && typeof result === 'object') {
       const p = prefix(entry.id),

@@ -54,6 +54,7 @@ function setup(t) {
     state: () => local,
     command: async (method, input) => {
       calls.push({ method, input });
+      if(['send','queueMessage','cancelMessage'].includes(method))return {messageId:input.messageId||'generated-local',sourceId:input.sourceId,delivery:'sent',turnId:'local-turn'};
       return { id: 'new-local' };
     },
     encrypt: (s) => Buffer.from(s),
@@ -70,6 +71,7 @@ function setup(t) {
       };
       peer.command = async (method, input) => {
         peer.calls.push({ method, input });
+        if(['send','queueMessage','cancelMessage'].includes(method))return {messageId:input.messageId||'generated-remote',sourceId:input.sourceId,delivery:'sent',turnId:'remote-turn'};
         return { id: 'new-remote' };
       };
       peer.close = () => {

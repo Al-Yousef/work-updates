@@ -2,7 +2,7 @@
 const crypto=require('node:crypto');
 const clip=(value,n)=>{const text=String(value??'').toWellFormed();let end=Math.min(n,text.length);if(end&&/[\uD800-\uDBFF]/.test(text[end-1]))end--;return text.slice(0,end);};
 const budgets=Object.freeze({recent:12000,recalled:8000,userEvidence:4000,cards:18000,source:4200});
-const revision=card=>crypto.createHash('sha256').update(JSON.stringify([card.id,card.taskKey,card.primarySourceId,card.fingerprint,card.status,card.summary,card.sources?.map(s=>[s.id,s.lifecycle])])).digest('hex');
+const revision=card=>crypto.createHash('sha256').update(JSON.stringify([card.id,card.taskKey,card.primarySourceId,card.fingerprint,card.status,card.summary,card.owner?.id,card.owner?.name,card.owner?.kind,card.device,card.sources?.map(s=>[s.id,s.lifecycle,s.kind,s.device])])).digest('hex');
 const conversation=m=>m.kind!=='update'&&!!(m.text||(m.images||[]).length);
 const stop=new Set('what which when where please needs need right now chat chats thread threads this that with from about draft reply message recently changed happening have does make tell know remember earlier discussed said should could would again there them then want like just can you the and for how why did are was'.split(' '));
 const words=text=>[...new Set((String(text).toLowerCase().match(/[\p{L}\p{N}]{3,}/gu)||[]).filter(w=>!stop.has(w)))];
@@ -49,6 +49,9 @@ function confirmedLinks(messages,cards) {
 }
 function context(snapshot,question,options={}) {
   const all=[...new Map([...(snapshot.cards||[]),...(snapshot.done||[])].map(c=>[owner(c)+'\n'+c.id+'\n'+c.taskKey,c])).values()];
+  // A new human follow-up may refer to the same opened source after adoption
+  // changes its card ID. Bind its current revision below; never move owners.
+  if(options.focus){const focused=all.filter(c=>owner(c)===options.focus.ownerId&&c.sources?.some(s=>s.id===options.focus.sourceId));if(focused.length===1)options={...options,focus:{...options.focus,id:focused[0].id,taskKey:focused[0].taskKey}};}
   const tokens=words(question),followUp=/\b(that|this|it|them|him|her|same|continue|again)\b/i.test(question);
   const recentLinks=confirmedLinks((options.history||[]).slice(-3),all);
   const collectedAt=snapshot.collectedAt||snapshot.feedCollectedAt||0,age=Math.floor(Date.now()/1000)-collectedAt;
@@ -75,7 +78,7 @@ function context(snapshot,question,options={}) {
       summaryProvenance:card.summaryOrigin==='ai'?'generated_summary':'recorded_queue_summary',
       sourceCoverage:{state:card.owner?.online===false?'offline':!source?.contextLoaded?'unavailable':!fresh?'cached':'available',historical:!inQueue(card),
         collectedAt,sourceEventAt:card.at||0,truncated:false,excerptIncluded:false,conversationIncluded:false}};
-    const route={id:card.id,taskKey:card.taskKey,sourceId:source?.id||'',ownerId:owner(card),revision:revision(card),chatName:clip(card.chatName||card.title,180)};
+    const route={id:card.id,taskKey:card.taskKey,sourceId:source?.id||'',ownerId:owner(card),revision:revision(card),chatName:clip(card.chatName||card.title,180),executionDevice:{ownerId:owner(card),kind:source?.device?.kind||card.device?.kind||card.owner?.kind||'unknown',name:source?.device?.label||card.device?.label||card.owner?.name||'Unknown device'}};
     const selected=source&&targets.length<3&&(item.lexical>0||item.focused||item.linked||cards.length<3);
     let size=JSON.stringify(data).length;if(size>budget)continue;
     if(selected&&source?.contextLoaded) {
@@ -104,7 +107,7 @@ function messageTarget(current,question,options={}) {
   if(named.length)return null;
   if(!/\b(that|this|same|him|them|her|it)\b/i.test(question))return null;
   if(options.focus) {
-    const focused=[...current.refs].filter(([,r])=>r.id===options.focus.id&&r.sourceId===options.focus.sourceId&&r.ownerId===options.focus.ownerId);
+    const focused=[...current.refs].filter(([,r])=>r.sourceId===options.focus.sourceId&&r.ownerId===options.focus.ownerId);
     if(focused.length===1)return focused[0][0];
   }
   for(const message of (options.history||[]).slice(-3).reverse()) {

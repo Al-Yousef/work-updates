@@ -187,6 +187,8 @@ class Queue extends EventEmitter {
           contextLoaded: !!s.contextLoaded,
           cwd: s.cwd || '',
           lifecycle: s.lifecycle,
+          turnId:s.turnId||null,
+          turnOutcome:s.turnOutcome||null,
         })),
         reviewed: state.dismissed === fp,
         snoozed: state.snoozedUntil > now(),
@@ -216,7 +218,8 @@ class Queue extends EventEmitter {
         const card = make(task.id, observed.title, [observed]);
         card.sources = card.sources.map(source=>({...source,
           conversation:conversation(source.conversation,task.messages),
-          conversationLoaded:source.conversationLoaded||!!task.messages?.length}));
+          conversationLoaded:source.conversationLoaded||!!task.messages?.length,
+          turnOutcome:source.turnId===task.turnId&&task.notificationVersion===task.turnId?task.turnOutcome:source.turnOutcome}));
         result.push({
           ...card,
           taskKey: task.id,
@@ -287,6 +290,7 @@ class Queue extends EventEmitter {
                 contextLoaded: true,
                 cwd: task.cwd,
                 lifecycle: task.status,
+                turnId:task.turnId,turnOutcome:task.notificationVersion===task.turnId?task.turnOutcome:null,
               },
             ]
           : [],
