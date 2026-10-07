@@ -13,6 +13,7 @@ const {command:responsibilityCommand}=require('./responsibility-command.cjs');
 const {currentScope}=require('./responsibility-target.cjs');
 const {command:authorizationCommand}=require('./authorization-command.cjs');
 const {command:scheduleCommand}=require('./schedule-command.cjs');
+const {command:commitmentCommand}=require('./commitment-command.cjs');
 class Assistant extends EventEmitter {
   constructor(options) {
     super();this.options=options;this.file=path.join(options.directory,'assistant.json');this.active=false;this.closed=false;this.error='';
@@ -144,6 +145,7 @@ class Assistant extends EventEmitter {
     try {
       const authorization=authorizationCommand(message.text);
       if(authorization){await this.manageAuthorization(message,authorization);this.save();return;}
+      const recorded=commitmentCommand(message.text);if(recorded){require('./commitment-control.cjs').manage(this.options.commitments,message,recorded,this.options.snapshot());this.save();return;}
       const planned=scheduleCommand(message.text);if(planned){await this.manageSchedule(message,planned);this.save();return;}
       const ongoing=responsibilityCommand(message.text);
       if(ongoing){await this.manageResponsibility(message,ongoing);this.save();return;}
@@ -162,7 +164,7 @@ class Assistant extends EventEmitter {
       const recalled=history(this.state.messages,message),recent=recalled.recent;
       const selection={focus:message.focus,history:recalled.messages};
       let current=context(this.options.snapshot(),message.text,selection);
-      if(this.options.loadContext&&current.data.fresh) {const refreshed=await this.options.loadContext(current.targets);if(this.closed)return;current=context(refreshed||this.options.snapshot(),message.text,selection);}
+      if(this.options.loadContext&&current.data.fresh&&this.options.commitments?.preferenceSnapshot().research?.value!=='off') {const refreshed=await this.options.loadContext(current.targets);if(this.closed)return;current=context(refreshed||this.options.snapshot(),message.text,selection);}
       const requested=coordination.request(this.state.messages,message,current,selection),requestedRef=requested?.ref||null;
       if(requested&&!requestedRef){message.proposal=requested.proposal;message.pendingDestination=true;message.status='completed';message.answer='Which chat should receive this message? I’ve kept the text:\n'+message.proposal.text;
         message.links=current.data.cards.filter(c=>c.hasChat&&!c.done).slice(0,3).map(c=>({...current.refs.get(c.ref),draft:message.proposal.text}));this.save();return;}
@@ -172,6 +174,7 @@ class Assistant extends EventEmitter {
         savedNotesProvenance:'explicit_pinned_notes',memoryCoverage:{retentionExchanges:500,retentionAlerts:40,pinnedNoteLimit:32,pinnedNoteCharacters:this.state.notes.join('').length},queue:current.data,
         responsibilities:this.options.responsibilities?.snapshot().slice(-8).map(r=>({id:r.id,origin:{text:clip(r.origin.text,600),provenance:'accepted_human_instruction'},instruction:clip(r.instruction,800),revision:r.revision,state:r.state,chatName:r.scope.chatName,ownerId:r.ownerId,stepStatus:r.currentStep.status,wakeReason:r.wakeReason.kind,completionCriteria:r.completionCriteria})),
         schedules:this.options.schedules?.snapshot().slice(-8).map(s=>({id:s.id,responsibilityId:s.responsibilityId,state:s.state,reason:s.reason,timeZone:s.schedule.timeZone,endAt:s.schedule.endAt,nextWake:s.nextWake,lastActualRun:s.lastActualRun,lastRun:s.runs.at(-1)?.status})),
+        commitments:this.options.commitments?.context(),
         canRequestChatMessage:!!this.options.dispatch&&!!requestedRef,requestedChatRef:requestedRef,requestedMessage:requested?.proposal||null});
       if(this.closed)return;
       if(typeof value.answer!=='string'||!value.answer.trim()||value.answer.length>6000||!Array.isArray(value.links)||value.links.length>3)

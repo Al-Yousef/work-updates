@@ -45,6 +45,7 @@ const {Schedules}=require('./src/schedules.cjs');
 const scheduledResponsibility=require('./src/scheduled-responsibility.cjs');
 const {Authorization}=require('./src/authorization.cjs');
 const responsibilityAuthorization=require('./src/responsibility-authorization.cjs');
+const {Commitments}=require('./src/commitments.cjs');
 let nativeControl;
 const args = process.argv;
 function argument(name) {
@@ -130,6 +131,7 @@ const devices = new Devices({
 });
 diagnostics.setContext({deviceId:devices.local.id});
 const authorization=new Authorization({directory:dataDir,actorId:'human:'+devices.local.id});
+const commitments=new Commitments({directory:dataDir,humanActorId:'human:'+devices.local.id});
 const responsibilities=new Responsibilities({directory:dataDir,snapshot:()=>devices.snapshot(),log:diagnostics,maintenance:()=>quitting||maintenanceActive(dataDir),...responsibilityTarget,
   authorize:entry=>responsibilityAuthorization.prepare(authorization,entry,devices.snapshot(),entry.currentStep.schedule?schedules.entry(entry.currentStep.schedule.id):null),
   outcome:require('./src/assistant-coordination.cjs').outcome,
@@ -141,6 +143,7 @@ const assistant = new Assistant({directory:dataDir,snapshot:()=>devices.snapshot
   schedules,
   authorization,
   authorizationRequest:id=>{const entry=messages.state.entries.find(e=>e.id===id&&e.status==='queued');return entry?responsibilityAuthorization.dispatchRequest({...entry,messageId:id},devices.snapshot()):null;},
+  commitments,
   binary:queue.state.settings.codexBinary,log:diagnostics,
   loadContext:targets=>require('./src/assistant-context.cjs').loadContext({
     snapshot:()=>devices.snapshot(),
@@ -186,6 +189,7 @@ function publish() {
 messages.on('change', () => {try{responsibilityAuthorization.observe(authorization,messages);}catch{diagnostics.write('authorization.recovery_failed',{code:'AUTHORIZATION_STORAGE_FAILED',noResend:true});}publish();});
 authorization.on('change',()=>{publish();queueMicrotask(()=>messages.pump().catch(()=>diagnostics.write('authorization.recovery_failed',{code:'AUTHORIZATION_STORAGE_FAILED',noResend:true})));});
 assistant.on('change', () => publish());
+commitments.on('change',()=>publish());
 function driveSchedules(){try{schedules.observe();}catch{diagnostics.write('schedule.recovery_failed',{code:'SCHEDULE_RECOVERY_FAILED',noResend:true});}void schedules.tick().catch(()=>diagnostics.write('schedule.recovery_failed',{code:'SCHEDULE_RECOVERY_FAILED',noResend:true}));}
 schedules.on('change',()=>publish());
 responsibilities.on('change',()=>{publish();queueMicrotask(()=>responsibilities.pump());queueMicrotask(driveSchedules);});
@@ -219,12 +223,7 @@ function attention(event) {
     !queue.state.settings.attention ||
     (windowController && windowController.mode !== 'hidden') ||
     !['needs', 'blocked', 'waiting', 'ready'].includes(event.status) ||
-    !(
-      event.status === 'needs' ||
-      event.urgent ||
-      (event.status === 'blocked' && event.waitingOn?.kind !== 'other') ||
-      event.waitingOn?.kind === 'you'
-    ) ||
+    !commitments.attention(event) ||
     notified.has(event.key)
   )
     return;
@@ -237,7 +236,7 @@ function attention(event) {
           ? 'Waiting on you'
           : event.urgent
             ? 'Urgent task'
-            : 'A task is blocked',
+            : event.status === 'ready' ? 'Ready for review' : event.status === 'blocked' ? 'A task is blocked' : 'Task update',
       body: event.title,
     });
     notification.on('click', () => show());
@@ -922,6 +921,7 @@ app.on('before-quit', () => {
   responsibilities.close();
   schedules.close();
   authorization.close();
+  commitments.close();
   hostPeer?.close();
   devices.close();
   nativeControl?.close();
