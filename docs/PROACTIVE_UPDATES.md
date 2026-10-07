@@ -59,7 +59,9 @@ also holds its notification work when that control service is available.
 Configured source cards bypass older generic alert paths so these rules' quiet
 decisions are respected. Direct user-requested delivery receipts stay visible.
 System notifications additionally respect the existing attention setting and
-foreground-window suppression. Local inbox destinations remain private to the
+foreground-window suppression where that window state is available. Rules can
+be configured while the UI is visible; temporary suppression holds presentation
+without claiming the provider is unsupported. Local inbox destinations remain private to the
 local assistant; remote devices and external audiences are unsupported here.
 
 ## Retained evidence

@@ -25,9 +25,11 @@ function destination({
     return (
       dest?.deviceId === deviceId &&
       dest.audience === 'self' &&
-      (dest.kind === 'inbox' ||
-        (dest.kind === 'system' && !!Notification?.isSupported() && systemEnabled()))
+      (dest.kind === 'inbox' || (dest.kind === 'system' && !!Notification?.isSupported()))
     );
+  }
+  function available(dest) {
+    return supports(dest) && (dest.kind !== 'system' || systemEnabled());
   }
   function probe(delivery) {
     if (
@@ -49,7 +51,7 @@ function destination({
     return receipt(delivery, 'inbox_stored', message.at);
   }
   async function deliver(delivery) {
-    if (!supports(delivery.destination)) throw new Error('Destination unavailable');
+    if (!available(delivery.destination)) throw new Error('Destination temporarily unavailable');
     if (delivery.destination.kind === 'inbox') {
       const existing = probe(delivery);
       if (existing) return existing;
@@ -70,18 +72,23 @@ function destination({
           findingHash: delivery.findingHash,
         },
       });
+      let confirmed;
       try {
         assistant.save();
-        const confirmed = probe(delivery);
+        confirmed = probe(delivery);
         if (!confirmed) throw new Error('Inbox write was not verified');
-        assistant.emit('change');
-        return confirmed;
       } catch (error) {
         assistant.state = prior;
         assistant.error =
           'Notification inbox storage could not be verified. The original file is preserved.';
         throw error;
       }
+      // Storage acceptance survives a failed UI subscriber. Rolling back the
+      // in-memory inbox here could erase the verified message on its next save.
+      try {
+        assistant.emit('change');
+      } catch {}
+      return confirmed;
     }
     return new Promise((resolve) => {
       let finished = false,
@@ -109,6 +116,6 @@ function destination({
       }
     });
   }
-  return { supports, deliver, probe };
+  return { supports, available, deliver, probe };
 }
 module.exports = { destination, receipt };

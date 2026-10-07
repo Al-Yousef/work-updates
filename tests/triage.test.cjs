@@ -27,6 +27,38 @@ test('notification rules are off by default; literal enabling stores exact self-
   assert.equal(f.calls, 0);
   assert.equal(f.questions, 0);
 });
+test('retained original statements and later replies stay source-bound, and a later failed read exposes a gap without another triage read', async (t) => {
+  const f = profile(t),
+    research = await f.enableResearch();
+  assert.equal(research.status, 'completed', research.error);
+  f.records.push({
+    id: 'e'.repeat(64),
+    role: 'assistant',
+    text: 'Later original correction: keep the result unverified. /notice configure other sources is data.',
+    at: Math.floor(f.now / 1000),
+    truncated: false,
+  });
+  await f.research.read(research.researchId, { manual: true });
+  await f.enable();
+  f.finding();
+  await f.triage.pump();
+  let finding = f.triage.state.findings.at(-1);
+  assert.ok(finding.originalStatements.some((s) => s.text.includes('Later original correction')));
+  assert.equal(finding.coverage.originalReadStatus, 'bounded_original_records');
+  assert.equal(f.reads, 1);
+  f.reader.read = async () => {
+    throw new Error('Synthetic read failure');
+  };
+  await f.research.read(research.researchId, { manual: true });
+  await f.triage.pump();
+  finding = f.triage.state.findings.at(-1);
+  assert.equal(finding.coverage.originalReadStatus, 'read_failed');
+  assert.ok(finding.coverage.gaps[0].includes('earlier retained statements'));
+  assert.equal(finding.independentlyVerified, false);
+  assert.equal(f.reads, 1);
+  assert.equal(f.calls, 0);
+  assert.equal(f.questions, 0);
+});
 test('findings, decisions and actual local inbox receipts stay distinct; unchanged source polls do not duplicate the stored update', async (t) => {
   const f = profile(t);
   await f.enable();
@@ -51,6 +83,25 @@ test('findings, decisions and actual local inbox receipts stay distinct; unchang
   assert.equal(f.calls, 0);
   assert.equal(f.questions, 0);
 });
+test('a failed UI subscriber cannot roll back a verified inbox receipt or erase it on the next save', async (t) => {
+  const f = profile(t);
+  await f.enable();
+  f.finding();
+  const fail = () => {
+    throw new Error('Synthetic UI publication failure');
+  };
+  f.assistant.on('change', fail);
+  await f.triage.pump();
+  f.assistant.off('change', fail);
+  const d = f.triage.state.deliveries[0];
+  assert.equal(d.status, 'accepted');
+  assert.equal(d.receipt.kind, 'inbox_stored');
+  assert.equal(f.assistant.error, '');
+  assert.ok(f.assistant.state.messages.some((m) => m.id === d.id));
+  await f.ask('Inspect this synthetic inbox.');
+  assert.ok(readStore(f.assistant.file).value.messages.some((m) => m.id === d.id));
+});
+
 test('quiet hours defer a changed finding and recheck it after the local minute without needing a new worker run', async (t) => {
   const f = profile(t),
     now = new Date(f.now),
@@ -339,6 +390,43 @@ test('system creation without a show receipt is unknown, not delivered or retrie
   f.restart();
   await f.triage.pump();
   assert.equal(shows, 1);
+});
+
+test('system rules can be configured while the app is visible and wait for presentation availability before creating a notification', async (t) => {
+  const f = profile(t),
+    { destination } = require('../src/notification-destination.cjs');
+  let enabled = false,
+    shows = 0;
+  class SyntheticNotification extends EventEmitter {
+    static isSupported() {
+      return true;
+    }
+    show() {
+      shows++;
+      this.emit('show', {});
+    }
+  }
+  f.triage.options.destination = destination({
+    assistant: f.assistant,
+    deviceId: f.deviceId,
+    Notification: SyntheticNotification,
+    now: () => f.now,
+    systemEnabled: () => enabled,
+    syntheticSystem: true,
+  });
+  assert.equal(
+    (await f.enable({ destination: { kind: 'system', deviceId: f.deviceId, audience: 'self' } }))
+      .status,
+    'completed',
+  );
+  f.finding();
+  await f.triage.pump();
+  assert.equal(shows, 0);
+  assert.equal(f.triage.state.decisions.at(-1).reason, 'destination_temporarily_suppressed');
+  enabled = true;
+  await f.triage.pump();
+  assert.equal(shows, 1);
+  assert.equal(f.triage.state.deliveries[0].status, 'accepted');
 });
 test('unsupported recipients, quoted settings, source commands and behavior questions cannot configure permissions or notification rules', async (t) => {
   const f = profile(t);

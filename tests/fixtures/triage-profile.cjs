@@ -18,6 +18,7 @@ function fixture() {
   const dest = destination({ assistant: f.assistant, deviceId, now: () => f.now }),
     options = {
       directory: f.directory,
+      synthetic: true,
       policy: f.policy,
       responsibilities: f.responsibilities,
       research: f.research,
@@ -67,6 +68,7 @@ function fixture() {
     deviceId,
     responsibilityId,
     config,
+    enableResearch: f.enable,
     enable: (overrides) =>
       f.ask('/notice configure ' + responsibilityId + ': ' + JSON.stringify(config(overrides))),
     finding({ state = 'waiting_user', status = 'completed', urgency = false } = {}) {

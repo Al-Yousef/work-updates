@@ -210,7 +210,7 @@ function validate(v) {
       hash(d.payload) !== d.payloadHash ||
       hash(d.destination) !== hash(r.config.destination) ||
       !text(d.reason, 200) ||
-      d.synthetic !== false ||
+      typeof d.synthetic !== 'boolean' ||
       (d.receipt !== null && !receiptValid(d.receipt, d))
     )
       throw new Error('Invalid notification delivery');
@@ -447,6 +447,12 @@ class Triage extends EventEmitter {
       truncated: s.truncated || s.text.length > 300,
       provenance: 'retained_original_record',
     }));
+    const originalReadStatus = retained?.coverage?.status || 'not_read',
+      gaps = retained?.coverage?.coverage?.gaps?.slice(0, 3) || [
+        retained?.cursor
+          ? 'Latest original read lacks fresh coverage; earlier retained statements are reused.'
+          : 'No original-reader coverage is established for this finding.',
+      ];
     const identity = hash([
       r.revision,
       r.state,
@@ -458,6 +464,8 @@ class Triage extends EventEmitter {
       manualUrgency,
       waitingOn,
       statements.map((s) => s.id),
+      originalReadStatus,
+      retained?.recordCoverage.state || 'unavailable',
     ]);
     const old = this.state.findings.findLast((f) => f.ruleId === rule.id);
     if (old?.hash === identity) return old;
@@ -493,7 +501,11 @@ class Triage extends EventEmitter {
               ? 'This responsibility is waiting for your review. '
               : 'The source reports waiting on you; ownership remains unverified. ') +
         'Source-pass status and requested goal verification remain separate. ' +
-        String(card.summary || '').slice(0, 400)
+        String(card.summary || '').slice(0, 400) +
+        ' ' +
+        (originalReadStatus === 'bounded_original_records'
+          ? 'Retained original-reader context is partial and reused.'
+          : 'Current original-reader coverage is unavailable; any earlier statements remain retained context.')
       ).slice(0, 1600),
       source: { binding: structuredClone(rule.binding), revision: gate.current.taskRevision },
       responsibilityRevision: r.revision,
@@ -506,9 +518,8 @@ class Triage extends EventEmitter {
         snapshotCollectedAt: snapshot.collectedAt,
         originalReadAt: retained?.cursor?.at || null,
         originalContextReused: !!retained?.cursor,
-        gaps: retained?.coverage?.coverage?.gaps?.slice(0, 3) || [
-          'No original-reader coverage is established for this finding.',
-        ],
+        originalReadStatus,
+        gaps,
       },
     };
   }
@@ -559,6 +570,10 @@ class Triage extends EventEmitter {
     }
     if (quiet(at, rule.config.quietHours)) {
       this.decision(rule, finding, 'quiet_hours');
+      return;
+    }
+    if (this.options.destination.available?.(rule.config.destination) === false) {
+      this.decision(rule, finding, 'destination_temporarily_suppressed');
       return;
     }
     const attempts = this.state.deliveries.filter((d) => {
@@ -648,7 +663,7 @@ class Triage extends EventEmitter {
         status: 'prepared',
         reason: 'prepared_before_delivery',
         receipt: null,
-        synthetic: false,
+        synthetic: this.options.synthetic === true,
       };
     this.change((next) => next.deliveries.push(delivery));
   }
@@ -710,6 +725,7 @@ class Triage extends EventEmitter {
         }
         if (
           !gate.allowed ||
+          this.options.destination.available?.(r.config.destination) === false ||
           quiet(this.now(), r.config.quietHours) ||
           preference === 'off' ||
           (preference === 'important_only' && latest?.kind === 'routine')
