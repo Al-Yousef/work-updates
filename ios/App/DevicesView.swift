@@ -16,6 +16,10 @@ struct DevicesView:View {
                             Label(computer.name,systemImage:store.states[computer.id]?.host?.kind=="mac" ? "laptopcomputer" : "desktopcomputer").font(.headline)
                             Text(store.links[computer.id]?.message ?? "Connecting…").font(.subheadline).foregroundStyle(.secondary)
                             if let date=store.links[computer.id]?.lastSeen {Text("Last sync "+date.formatted(date:.omitted,time:.shortened)).font(.caption).foregroundStyle(.secondary)}
+                            if let profile=store.states[computer.id]?.profile {
+                                Text("Desktop assistant: "+profile.displayName).font(.subheadline)
+                                Text("Presentation only. Assistant and voice controls are unavailable on this phone.").font(.caption).foregroundStyle(.secondary)
+                            }
                             Button("Forget this connection",role:.destructive){forget=computer}.frame(minHeight:44)
                         }.padding(.vertical,6)
                     }

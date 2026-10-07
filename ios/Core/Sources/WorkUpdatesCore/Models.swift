@@ -171,6 +171,7 @@ public struct Approval: Codable, Identifiable, Sendable {
 public struct QueueSettings: Codable, Sendable { public var projects: [String]? }
 public struct QueueHealth: Codable, Sendable { public var ok: Bool?; public var message: String? }
 public struct QueueState: Codable, Sendable {
+    public var profile: AssistantDisplayProfile?
     public var peerContract: PeerContract?
     public var protocolVersion: Int?
     public var host: HostIdentity?
@@ -185,7 +186,12 @@ public struct QueueState: Codable, Sendable {
     public var monitoredCount: Int?
     public static func decode(_ data: Data) throws -> QueueState {
         guard data.count <= 16_000_000 else { throw PeerError.responseTooLarge }
-        let state = try JSONDecoder().decode(QueueState.self, from: data)
+        var state = try JSONDecoder().decode(QueueState.self, from: data)
+        if let profile=state.profile, profile.schema != 1 || UUID(uuidString:profile.id) == nil ||
+            profile.displayName.isEmpty || profile.displayName.utf16.count > 48 ||
+            !["hyphen","initials"].contains(profile.avatarStyle) || profile.initials.isEmpty || profile.initials.utf16.count > 4 {
+            state.profile=nil
+        }
         if let protocolVersion=state.protocolVersion, ![2,3].contains(protocolVersion) {throw PeerError.unsupportedState}
         try state.peerContract?.validate()
         if state.peerContract != nil && state.stateVersion == nil {throw PeerError.unsupportedState}
@@ -196,6 +202,14 @@ public struct QueueState: Codable, Sendable {
     public func supports(_ command:String) -> Bool {
         peerContract.map{$0.commands.contains(command)} ?? PeerContract.legacy.contains(command)
     }
+}
+public struct AssistantDisplayProfile: Codable, Sendable {
+    public var schema: Int
+    public var id: String
+    public var displayName: String
+    public var avatarStyle: String
+    public var initials: String
+    public var reducedMotion: Bool
 }
 public struct PairedComputer: Codable, Identifiable, Sendable {
     public var id: String
