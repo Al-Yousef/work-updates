@@ -94,10 +94,13 @@ jobs:
             artifacts/performance/**/*.workload.json
             artifacts/performance/**/cleanup.json
             artifacts/performance/**/*.stderr.txt
+            artifacts/performance/**/selection-failure.json
             artifacts/baseline-runtime/verification.json
             artifacts/update-runtime/verification.json
             artifacts/update-faults/verification.json
             artifacts/native-qa/*/verification.json
             native/windows/build/candidate/artifacts/picker-observations.jsonl
+            native/windows/build/candidate/artifacts/responsiveness-failure.json
+            native/windows/build/candidate/artifacts/ux-state.json
           if-no-files-found: ignore
           retention-days: 7
