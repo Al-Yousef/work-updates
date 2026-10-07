@@ -53,6 +53,7 @@ const {Triage}=require('./src/triage.cjs');
 const {Delegations}=require('./src/delegations.cjs');
 const {WorkControls}=require('./src/work-controls.cjs');
 let nativeControl,delegations,workControls;
+let privacy;
 const args = process.argv;
 function argument(name) {
   const index = args.indexOf(name);
@@ -122,8 +123,10 @@ const client = demo
   ? new (require('./src/demo.cjs').DemoCodex)()
   : new Codex({ binary: queue.state.settings.codexBinary, log: diagnostics });
 const desktop = demo ? null : new CodexDesktop({log:diagnostics});
-const controller = new Controller(queue, client, {desktop,log:diagnostics});
+const controller = new Controller(queue, client, {desktop,log:diagnostics,sourceAccess:sourceId=>!privacy?.disconnected(sourceId)&&!privacy?.activeRemoval});
 function authorizationAdmission(entry){
+  if(privacy?.disconnected(entry.sourceId))return 'deny';
+  if(privacy?.activeRemoval)return 'wait';
   const work=workControls?.messageAdmission(entry);if(work&&work!=='allow')return work;
   const childAdmission=delegations?.admission(entry);if(childAdmission&&childAdmission!=='allow')return childAdmission;
   const scheduled=scheduledResponsibility.admission(responsibilities,schedules,entry);if(scheduled!=='allow')return scheduled;
@@ -132,7 +135,7 @@ function authorizationAdmission(entry){
 const messages = new Messages(queue,controller,{log:diagnostics,attachments,admission:authorizationAdmission,authorize:input=>{const work=workControls?.messageAdmission(input);if(work&&work!=='allow')return {decision:work==='wait'?'ask':'deny',reason:'work_control_hold'};const child=delegations?.admission(input,{creating:true});return child&&child!=='allow'?{decision:child==='wait'?'ask':'deny',reason:'delegation_writer_or_permission_gate'}:responsibilityAuthorization.authorizeDispatch(authorization,input,devices.snapshot());}});
 const devices = new Devices({
   directory: dataDir,
-  state: () => messages.decorate(queue.snapshot()),
+  state: () => privacy?privacy.filterSnapshot(messages.decorate(queue.snapshot())):messages.decorate(queue.snapshot()),
   command: performLocal,
   encrypt: (value) => safeStorage.encryptString(value),
   decrypt: (value) => safeStorage.decryptString(value),
@@ -143,7 +146,7 @@ const executors=new (require('./src/executor-bindings.cjs').ExecutorBindings)({d
 if(!demo)client.options.executors=executors;
 const commitments=new Commitments({directory:dataDir,humanActorId:'human:'+devices.local.id});
 const researchReader=require('./src/research-reader.cjs').reader(app.isPackaged?{helper:path.join(process.resourcesPath,'helper',process.platform==='win32'?'collector.exe':'collector'),helperScript:path.join(process.resourcesPath,'helper','collector.py')}:{});
-const research=new Research({directory:dataDir,policy:authorization,reader:researchReader,snapshot:()=>devices.snapshot(),preferences:()=>commitments.preferenceSnapshot(),maintenance:()=>quitting||maintenanceActive(dataDir),log:diagnostics,admission:scope=>workControls?.readAdmission(scope)||'allow'});
+const research=new Research({directory:dataDir,policy:authorization,reader:researchReader,snapshot:()=>devices.snapshot(),preferences:()=>commitments.preferenceSnapshot(),maintenance:()=>quitting||maintenanceActive(dataDir),log:diagnostics,admission:scope=>privacy?.disconnected(scope.sourceId)||privacy?.activeRemoval?'deny':workControls?.readAdmission(scope)||'allow'});
 const reflections=new Reflections({directory:dataDir,policy:authorization,research,commitments,maintenance:()=>quitting||maintenanceActive(dataDir)});
 const responsibilities=new Responsibilities({directory:dataDir,snapshot:()=>devices.snapshot(),log:diagnostics,maintenance:()=>quitting||maintenanceActive(dataDir),...responsibilityTarget,
   admission:entry=>workControls?.responsibilityAdmission(entry)||'allow',
@@ -158,6 +161,7 @@ const outcomes=new OutcomeVerification({directory:dataDir,actorId:'human:'+devic
 responsibilities.options.outcomeRequired=entry=>outcomes.required(entry);
 responsibilities.options.outcomeAdmission=(entry,human)=>outcomes.admission(entry,human);
 const assistant = new Assistant({directory:dataDir,snapshot:()=>devices.snapshot(),attachments,
+  privacy:null,
   executors,
   outcomes,
   responsibilities,
@@ -176,6 +180,17 @@ const assistant = new Assistant({directory:dataDir,snapshot:()=>devices.snapshot
     request:targets=>Promise.allSettled(targets.map(target=>workControls.readAdmission(target)!=='allow'?Promise.resolve({skipped:true}):devices.command('details',{id:target.id,taskKey:target.taskKey,sourceId:target.sourceId}))),
   },targets),
   dispatch:(mode,input)=>devices.command(mode==='cancel'?'cancelMessage':mode==='queue'?'queueMessage':'send',input)});
+privacy=new (require('./src/privacy.cjs').Privacy)({directory:dataDir,actorId:authorization.actorId,
+  localSource:sourceId=>queue.cards().some(c=>c.sources?.some(s=>s.id===sourceId)),
+  disconnect:async sourceId=>{observer?.ignore?.(privacy.state.disconnected);publish();},
+  adapters:require('./src/privacy-adapters.cjs').adapters({directory:dataDir,assistant:()=>assistant,
+    sourceDependencies:sourceId=>[
+      ...(research.snapshot().some(e=>e.scope.sourceId===sourceId&&research.pending.has(e.id))?['A selected source read is still running']:[]),
+      ...(assistant.state.messages.some(m=>m.status==='thinking'&&!/^\/privacy(?:\s|$)/.test(m.text))?['An assistant answer is still using retained source context']:[]),
+    ],
+    sourcePaused:async operation=>{const previous=observer;await previous?.closeAndWait?.();if(previous&&!previous.closeAndWait)throw new Error('Collector shutdown cannot be verified. Removal is held.');try{return await operation();}finally{if(previous&&!quitting)startCollection();}},
+    forgetFeed:sourceId=>queue.setFeed({...queue.feed,threads:queue.feed.threads.filter(t=>t.id!==sourceId)},queue.health)})});
+assistant.options.privacy=privacy;
 const triage=new Triage({directory:dataDir,policy:authorization,responsibilities,research,snapshot:()=>devices.snapshot(),deviceId:devices.local.id,
   preferences:()=>commitments.preferenceSnapshot(),maintenance:()=>quitting||maintenanceActive(dataDir),
   admission:entry=>assistant.options.workControls?.responsibilityAdmission(entry)||'allow',
@@ -617,7 +632,7 @@ function startCollection() {
   if (argument('--legacy-root')) queue.importLegacy(path.resolve(argument('--legacy-root')));
   if (demo) observer = require('./src/demo.cjs').startDemoObserver(queue);
   else {
-    summaries = new Summaries(queue, { log: diagnostics });
+    summaries ||= new Summaries(queue, { log: diagnostics });
     const helper = app.isPackaged
       ? path.join(
           process.resourcesPath,
@@ -630,7 +645,7 @@ function startCollection() {
       : undefined;
     observer = startObserver(
       path.join(dataDir, 'observer'),
-      { helper, helperScript, log: diagnostics },
+      { helper, helperScript, log: diagnostics,ignoredThreadIds:privacy.state.disconnected },
       (feed, health) => {
         queue.setFeed(feed || queue.feed, health);
         if(health.ok)activity.collector(feed?.activityAccess);else if(health.status==='error')activity.collector(health.activityAccess);
