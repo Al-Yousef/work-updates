@@ -1,5 +1,6 @@
 'use strict';
 const policy = {
+  'summary-cache.json':['Bounded AI presentation text, attempted-key receipts and resource holds','2000 summaries, 10000 source keys, 2000 retained rate timestamps; no automatic replay','Private redacted export; disable future inference; explicit retry is separately reviewed; original source-cache removal leaves these derivatives and receipts'],
   'profile.json':['Assistant presentation identity, name, initials and motion preferences','Until explicitly changed; identities distinct from accounts/tasks','Private export; preference changes do not change access'],
   'browsers.json':['Private browser ownership, origins and save-consent metadata','128 finite journal entries; restart holds ownership','Private export; close browser separately; encrypted logins are separate'],
   'documents.json':['Imported local copies, edit drafts and explicit output schedules','128 copies/drafts, 32 finite schedules and 1000 receipts','Private export; cancel schedule separately; output files and receipts retained'],
@@ -30,6 +31,7 @@ function inventory(versions) {
     return {name,location:'local app data',data:p[0],retention:p[1],access:'local authenticated app',exportDeletion:p[2],removal:p[2],credentialExport:false};
   });
   return local.concat([
+    {name:'summary-workspace/',location:'local desktop app data',retention:'Summary working directory; no saved source conversation in this directory',access:'Opt-in ephemeral read-only model receives only bounded redacted excerpts; source transcripts stay with their original provider',removal:'Disable summaries or disconnect source to stop local future inference; provider-side retention and past charges remain separate'},
     {name:'observer/data/source-cache.json + feed.json + details-request.json',location:'local app data',retention:'Collector cache; disconnect retains prior records',access:'local collector; connected snapshots',removal:'Exact disconnected source preview; derivatives remain'},
     {name:'voice-provider.enc',location:'OS-encrypted local app data',retention:'Until owner removes voice configuration',access:'Configured local voice provider; secret never exported',removal:'Exact voice-configuration preview and confirmation; live voice blocks removal'},
     {name:'attachments/',location:'local app data',retention:'No automatic expiry; referenced by drafts/history/receipts',access:'local app; explicitly selected dispatch',removal:'Exact orphan-attachments preview; referenced or used/imported this session images remain'},
