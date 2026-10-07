@@ -12,6 +12,7 @@
 #include "protocol.h"
 #include "profile.h"
 #include "routing.h"
+#include "health.h"
 #include "vendor/minhook/include/MinHook.h"
 
 namespace {
@@ -21,6 +22,7 @@ std::atomic<bool> connected{false}, weatherInside{false};
 std::atomic<unsigned> hoverSeen{0},clickSeen{0},weatherClicks{0},leaveSeen{0};
 HANDLE stopEvent=nullptr, panelProcess=nullptr;
 taskbar::Endpoint endpoint{};
+taskbar::HealthLease health;
 bool hooksCreated=false;
 using Hover=void(WINAPI*)(void*);
 using Click=void(WINAPI*)(void*,IInspectable* const&,IInspectable* const&);
@@ -32,8 +34,9 @@ struct Flight {Flight(){++flights;} ~Flight(){--flights;}};
 
 bool post(taskbar::Command command) noexcept {
     // No IPC wait, disk work, rendering, or mouse interception on Explorer's UI thread.
-    if(!connected.load(std::memory_order_acquire) || !panelProcess || WaitForSingleObject(panelProcess,0)!=WAIT_TIMEOUT)return false;
+    if(!connected.load(std::memory_order_acquire) || !health.fresh(GetTickCount64()) || !panelProcess || WaitForSingleObject(panelProcess,0)!=WAIT_TIMEOUT)return false;
     const auto window=reinterpret_cast<HWND>(static_cast<std::uintptr_t>(endpoint.window));
+    DWORD pid=0;GetWindowThreadProcessId(window,&pid);if(pid!=endpoint.pid)return false;
     return PostMessageW(window,taskbar::message,endpoint.cookie,static_cast<LPARAM>(command))!=0;
 }
 void WINAPI hoverHook(void* object) {
@@ -76,10 +79,21 @@ bool connectPanel() {
     if(!panelProcess)return false;
     wchar_t path[32768]{}; DWORD size=32768;
     const auto expected=(ownPath().parent_path()/L"Native Hover.exe").wstring();
-    if(!QueryFullProcessImageNameW(panelProcess,0,path,&size) || _wcsicmp(path,expected.c_str()))return false;
+    std::error_code error;
+    if(!QueryFullProcessImageNameW(panelProcess,0,path,&size) || !std::filesystem::equivalent(path,expected,error) || error)return false;
     DWORD_PTR acknowledgement=0;
-    return SendMessageTimeoutW(window,taskbar::message,endpoint.cookie,static_cast<LPARAM>(taskbar::Command::Hello),
-        SMTO_ABORTIFHUNG|SMTO_BLOCK,2000,&acknowledgement) && acknowledgement==1;
+    const bool accepted=SendMessageTimeoutW(window,taskbar::message,endpoint.cookie,static_cast<LPARAM>(taskbar::Command::Hello),
+        SMTO_ABORTIFHUNG|SMTO_BLOCK,taskbar::healthTimeoutMs,&acknowledgement) && acknowledgement==1;
+    if(accepted)health.acknowledge(GetTickCount64());return accepted;
+}
+bool panelHealthy() {
+    const HWND window=reinterpret_cast<HWND>(static_cast<std::uintptr_t>(endpoint.window));
+    DWORD pid=0;GetWindowThreadProcessId(window,&pid);
+    if(pid!=endpoint.pid||WaitForSingleObject(panelProcess,0)!=WAIT_TIMEOUT)return false;
+    DWORD_PTR acknowledgement=0;
+    if(!SendMessageTimeoutW(window,taskbar::message,endpoint.cookie,static_cast<LPARAM>(taskbar::Command::Hello),
+        SMTO_ABORTIFHUNG|SMTO_BLOCK,taskbar::healthTimeoutMs,&acknowledgement)||acknowledgement!=1)return false;
+    health.acknowledge(GetTickCount64());return true;
 }
 DWORD WINAPI worker(void*) {
     HMODULE pinned=nullptr;
@@ -114,10 +128,14 @@ DWORD WINAPI worker(void*) {
     state=2; report("attached");
     {
         const HANDLE waiters[]={stopEvent,panelProcess};
-        WaitForMultipleObjects(2,waiters,FALSE,INFINITE); // No idle polling or heartbeat.
+        for(;;){
+            const DWORD reason=WaitForMultipleObjects(2,waiters,FALSE,static_cast<DWORD>(taskbar::healthIntervalMs));
+            if(reason!=WAIT_TIMEOUT)break;
+            if(!panelHealthy()){connected.store(false,std::memory_order_release);health.clear();report("panel-health-expired");break;}
+        }
     }
 finish:
-    connected.store(false,std::memory_order_release); weatherInside=false;
+    connected.store(false,std::memory_order_release);health.clear();weatherInside=false;
     if(installed) {
         const auto result=MH_DisableHook(MH_ALL_HOOKS);
         // Never free executable trampolines. A disable failure still passes every
@@ -145,6 +163,7 @@ extern "C" __declspec(dllexport) DWORD WINAPI AdapterStart(void*) {
 }
 extern "C" __declspec(dllexport) DWORD WINAPI AdapterStop(void*) {
     connected.store(false,std::memory_order_release);
+    health.clear();
     if(stopEvent)SetEvent(stopEvent);
     DWORD failed=4; state.compare_exchange_strong(failed,0);
     return state.load();

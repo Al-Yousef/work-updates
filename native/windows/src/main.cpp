@@ -1280,7 +1280,11 @@ struct App {
         tray.hIcon=LoadIconW(GetModuleHandleW(nullptr),MAKEINTRESOURCEW(1));
         if(!tray.hIcon) tray.hIcon=LoadIconW(nullptr,IDI_APPLICATION);
         wcscpy_s(tray.szTip,L"Hyphen");
-        if(!Shell_NotifyIconW(NIM_ADD,&tray)) throw std::runtime_error("Could not create the native tray icon");
+        // A repeated TaskbarCreated notification can arrive while our icon is
+        // still present. Refresh that same HWND/ID instead of treating it as
+        // a fatal duplicate and opening a modal error on the control thread.
+        if(!Shell_NotifyIconW(NIM_ADD,&tray)&&!Shell_NotifyIconW(NIM_MODIFY,&tray))
+            throw std::runtime_error("Could not create the native tray icon");
         tray.uVersion=NOTIFYICON_VERSION_4; Shell_NotifyIconW(NIM_SETVERSION,&tray);
     }
 };
@@ -1503,14 +1507,13 @@ LRESULT CALLBACK triggerProc(HWND window, UINT message, WPARAM wp, LPARAM lp) {
             case taskbar::Command::Click: app.weatherInside=true; app.weatherClick(); return 1;
             case taskbar::Command::Stopped: case taskbar::Command::Failed:
                 app.adapterReady=false; app.log(lp==static_cast<LPARAM>(taskbar::Command::Failed)?"adapter-failed":"adapter-stopped");
-                if(lp==static_cast<LPARAM>(taskbar::Command::Stopped)||!app.bridge.connected)PostQuitMessage(0);
-                else app.renderer.model.message="Weather shortcut unavailable. Open the queue from its tray icon.";
+                app.renderer.model.message="Weather shortcut unavailable. Open the queue from its tray icon.";
+                if(app.mode!=Mode::Hidden)app.renderer.paint();
                 return 1;
             }
             return 0;
         }
         if(message==app.taskbarCreated && app.taskbarCreated) {
-            if(!app.allowAdapterAttach)return 0;
             app.addTray(); app.moveHome();
             if(app.taskbarAdapter&&app.allowAdapterAttach) {app.adapterReady=false; app.attachAdapter(); app.log("explorer-restarted");}
             return 0;
