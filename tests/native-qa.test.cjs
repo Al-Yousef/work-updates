@@ -132,7 +132,16 @@ test('actual owned child timeout performs cleanup and always fails the lane', as
   );
   assert.equal(result.status, 'timed_out');
   assert.equal(result.exitObserved, true);
-  assert.ok(result.durationMs < 3000, 'Owned child must exit before its self-cleanup guard');
+  assert.notEqual(
+    result.exitCode,
+    29,
+    'The observed exit must precede the child self-cleanup guard',
+  );
+  assert.ok(Number.isFinite(result.stopDurationMs));
+  assert.ok(
+    result.stopDurationMs < 10000,
+    'Owned termination must finish within its enforced cleanup deadline',
+  );
   assert.notEqual(result.cleanup, 'normal_exit');
   assert.ok(result.durationMs < 11000);
 });
@@ -149,7 +158,16 @@ test('actual owned child interruption cannot be accepted as successful shutdown'
     );
     assert.equal(result.status, 'interrupted');
     assert.equal(result.exitObserved, true);
-    assert.ok(result.durationMs < 3000, 'Owned child must exit before its self-cleanup guard');
+    assert.notEqual(
+      result.exitCode,
+      29,
+      'The observed exit must precede the child self-cleanup guard',
+    );
+    assert.ok(Number.isFinite(result.stopDurationMs));
+    assert.ok(
+      result.stopDurationMs < 10000,
+      'Owned termination must finish within its enforced cleanup deadline',
+    );
     assert.notEqual(result.cleanup, 'normal_exit');
   } finally {
     clearTimeout(timer);
@@ -169,7 +187,16 @@ test('stdout overflow remains a failure with bounded retained output', async (t)
     );
   assert.equal(result.status, 'output_limit');
   assert.equal(result.exitObserved, true);
-  assert.ok(result.durationMs < 3000, 'Owned child must exit before its self-cleanup guard');
+  assert.notEqual(
+    result.exitCode,
+    29,
+    'The observed exit must precede the child self-cleanup guard',
+  );
+  assert.ok(Number.isFinite(result.stopDurationMs));
+  assert.ok(
+    result.stopDurationMs < 10000,
+    'Owned termination must finish within its enforced cleanup deadline',
+  );
   assert.ok(fs.statSync(path.join(directory, 'stdout.txt')).size <= 256);
 });
 test('a missing executable fails with original evidence instead of falling back to another installation', async (t) => {
@@ -237,7 +264,13 @@ test('a controlled filesystem failure retains its bounded code, stops its actual
   assert.equal(result.status, 'storage_failed');
   assert.equal(result.storageFailureCode, 'EPERM');
   assert.equal(result.exitObserved, true);
-  assert.ok(result.durationMs < 3000);
+  assert.notEqual(
+    result.exitCode,
+    29,
+    'The controlled failure must terminate the child before its own guard',
+  );
+  assert.ok(Number.isFinite(result.stopDurationMs));
+  assert.ok(result.stopDurationMs < 10000);
   assert.ok(!JSON.stringify(result).includes('private path'));
 });
 
