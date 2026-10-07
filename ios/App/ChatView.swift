@@ -10,9 +10,8 @@ struct ChatView:View {
     @State private var pendingTaskID:String?
     @State private var ownerName=""
     @State private var submitting=false
-    @State private var pendingMessageID:String?
-    @State private var pendingSourceID:String?
-    @State private var pendingText:String?
+    @State private var loadedBinding:DraftBinding?
+    @State private var draftSaveFailed=false
     init(selection:DisplayCard) {_selection=State(initialValue:selection)}
     private var card:DisplayCard? {store.current(selection)}
     private func source(_ task:TaskCard) -> ChatSource? {
@@ -37,9 +36,9 @@ struct ChatView:View {
                                 .font(.subheadline).foregroundStyle(.secondary)
                         }
                         if task.sources.count>1 {
-                            Picker("Source chat",selection:Binding(get:{sourceID ?? task.primarySourceId ?? task.sources[0].id},set:{sourceID=$0;draft=""})) {
+                            Picker("Source chat",selection:Binding(get:{sourceID ?? task.primarySourceId ?? task.sources[0].id},set:{restoreDraft(card,sourceID:$0)})) {
                                 ForEach(task.sources){s in Text(s.title ?? "Chat").tag(s.id)}
-                            }.pickerStyle(.menu)
+                            }.pickerStyle(.menu).disabled(sending)
                         }
                         Text("Chat · "+(source(task)?.title ?? task.chatName ?? "New chat")).font(.subheadline.weight(.semibold))
                         ForEach(waiting){request in ApprovalView(request:request,computerID:card.computerID,available:available)}
@@ -61,11 +60,19 @@ struct ChatView:View {
                             let replyAllowed=available && !task.sources.isEmpty && waiting.isEmpty &&
                                 !(task.kind=="observed" && source(task)?.lifecycle=="working") && !sending
                             HStack(alignment:.bottom,spacing:10) {
-                                ReplyInput(text:$draft,enabled:replyAllowed,onSubmit:{send(card)})
+                                ReplyInput(text:$draft,enabled:!sending && loadedBinding != nil,onSubmit:{send(card)})
                                     .accessibilityIdentifier("chat-input")
                                 Button{send(card)}label:{Image(systemName:"arrow.up").font(.headline).frame(width:44,height:44).background(.blue,in:Circle())}
                                     .accessibilityLabel("Send message").accessibilityIdentifier("send-message")
-                                    .disabled(!replyAllowed || draft.trimmingCharacters(in:.whitespacesAndNewlines).isEmpty)
+                                    .disabled(!replyAllowed || draftSaveFailed || draft.trimmingCharacters(in:.whitespacesAndNewlines).isEmpty)
+                            }
+                            if let binding=loadedBinding {
+                                if store.channelDrafts?.hasUnconfirmed(computerID:binding.computerID,hostID:binding.hostID,sourceID:binding.sourceID)==true {
+                                    Text("Delivery is unconfirmed. Your saved draft is retained.").font(.footnote).foregroundStyle(.orange)
+                                    Button("Check delivery"){store.reconnect()}.disabled(!available || sending)
+                                } else if !draft.isEmpty && !draftSaveFailed {
+                                    Text("Draft saved on this iPhone").font(.footnote).foregroundStyle(.secondary)
+                                }
                             }
                             if task.status=="queued" || (task.kind=="local" && task.status=="blocked") {
                                 Button(task.threadId == nil ? "Start chat" : "Retry in this chat") {
@@ -109,7 +116,8 @@ struct ChatView:View {
                         }
                     }.padding(18)
                 }.navigationTitle("Task & chat").navigationBarTitleDisplayMode(.inline)
-                    .task(id:task.taskKey) {
+                    .task(id:task.taskKey+":"+(task.contextRevision ?? "")) {
+                        restoreDraft(card,sourceID:sourceID ?? task.primarySourceId ?? task.sources.first?.id)
                         if available && task.kind=="observed" {
                             try? await store.command("details",computerID:card.computerID,input:["id":.string(task.id),"taskKey":.string(task.taskKey)],lock:"details:"+task.id)
                         }
@@ -122,6 +130,17 @@ struct ChatView:View {
         }
             .onReceive(store.$states) {_ in
                 if let target=pendingTaskID,let next=store.cards.first(where:{$0.computerID==selection.computerID && $0.task.id==target}) {selection=next;pendingTaskID=nil}
+                Task { @MainActor in
+                    guard !submitting,let card=self.card,let binding=loadedBinding,
+                          (try? store.channelBinding(card,sourceID:binding.sourceID))==binding,
+                          store.channelDrafts?.draft(binding)?.status=="accepted" else {return}
+                    do {draft=try store.draftText(binding)} catch {store.error=error.localizedDescription}
+                }
+            }
+            .onChange(of:draft) {_,text in
+                guard let binding=loadedBinding else {return}
+                do {try store.saveDraft(binding,text:text);draftSaveFailed=false}
+                catch {draftSaveFailed=true;store.error="Keep this draft open. "+error.localizedDescription}
             }
     }
     @ViewBuilder private func actionButton(_ title:String,symbol:String,action:@escaping()->Void) -> some View {
@@ -129,28 +148,31 @@ struct ChatView:View {
     }
     private func send(_ card:DisplayCard) {
         let text=draft.trimmingCharacters(in:.whitespacesAndNewlines)
-        guard !submitting,!text.isEmpty,store.online(card.computerID),let source=source(card.task) else{return}
+        guard !submitting,!draftSaveFailed,!text.isEmpty,store.online(card.computerID),let source=source(card.task),let binding=loadedBinding else{return}
         submitting=true
         run {
             defer{submitting=false}
-            guard store.states[card.computerID]?.peerContract?.receiptVersion == 1 else {throw PeerError.server("Update the desktop app before sending receipt-backed messages from iPhone.")}
-            let messageID=(pendingSourceID==source.id && pendingText==text ? pendingMessageID : nil) ?? UUID().uuidString.lowercased()
-            pendingMessageID=messageID;pendingSourceID=source.id;pendingText=text
-            var input:[String:JSONValue]=["id":.string(card.task.id),"taskKey":.string(card.task.taskKey),"sourceId":.string(source.id),"messageId":.string(messageID),"text":.string(text)]
-            if let revision=card.task.contextRevision {input["contextRevision"] = .string(revision)}
-            let result=try await store.command("send",computerID:card.computerID,input:input,lock:card.task.id)
-            let receipt=try DeliveryReceipt.decode(result,messageID:messageID,sourceID:source.id)
-            guard receipt.delivery == "sent" else {throw PeerError.uncertainDelivery}
+            guard try store.channelBinding(card,sourceID:source.id)==binding else {throw PeerError.server("Open the original saved source before sending.")}
+            try store.saveDraft(binding,text:draft)
+            let result=try await store.sendDraft(card,sourceID:source.id)
             guard let currentCard=self.card,selection.computerID==card.computerID,
                   currentCard.task.taskKey==card.task.taskKey,self.source(currentCard.task)?.id == source.id
             else {throw PeerError.server("The message was accepted in its original chat. Reopen that chat to inspect it.")}
-            draft=""
-            pendingMessageID=nil;pendingSourceID=nil;pendingText=nil
+            draft=try store.draftText(binding)
             if let id=result.object?["taskId"]?.string,id != card.task.id {
                 if let next=store.cards.first(where:{$0.computerID==card.computerID && $0.task.id==id}) {selection=next}
                 else {pendingTaskID=id}
             }
         }
+    }
+    private func restoreDraft(_ card:DisplayCard,sourceID requested:String?) {
+        guard let requested else {return}
+        do {
+            if let loadedBinding {try store.saveDraft(loadedBinding,text:draft)}
+            let binding=try store.channelBinding(card,sourceID:requested)
+            let saved=try store.draftText(binding)
+            loadedBinding=binding;sourceID=requested;draft=saved;draftSaveFailed=false
+        } catch {draftSaveFailed=true;store.error="The original draft is retained. "+error.localizedDescription}
     }
 }
 struct ReplyInput:UIViewRepresentable {
