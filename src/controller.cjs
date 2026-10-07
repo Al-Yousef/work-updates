@@ -34,7 +34,7 @@ class Controller extends EventEmitter {
     });
     client.on('loaded', ({ threadId }) => queue.ownedThreads.add(threadId));
     client.on('notification', (m) => this.event(m));
-    client.on('request', (m) => this.request(m));
+    client.on('request', (m, connection) => this.request(m, connection));
     client.on('disconnected', (details) => {
       for (const threadId of details?.threadIds || queue.ownedThreads)
         queue.ownedThreads.delete(threadId);
@@ -309,10 +309,14 @@ class Controller extends EventEmitter {
       q.save();
     }
   }
-  request(message) {
+  request(message, connection) {
     const q = this.queue,
       p = message.params || {},
       task = this.taskFor(p.threadId);
+    if(message.method==='item/tool/call' && this.browserTools) {
+      this.browserTools.handle(message,{connection,task,sourceAccess:this.sourceAccess}).catch(()=>{});
+      return;
+    }
     if (!task || !this.sourceAccess(p.threadId)) {
       this.client.reject(message.id);
       return;
