@@ -17,7 +17,11 @@ only on Windows CI, not through a renamed or moved local binary.
 Each workload measures warm idle, hidden idle, synthetic active stream,
 identity-checked chat switching, actual 4,096-pixel image decode and synthetic
 source messaging. Native Win32 handlers are timed separately from detail,
-network or model completion. The report gives sample counts, p50/p95/p99 handler
+network or model completion. The messaging phase also clicks the actual owned
+composer, verifies its focus and unchanged source/selection, and records focus
+handler timing separately. A snapshot whose row moved before mouse-down is
+cancelled before release and cannot count as an accepted selection. The report
+gives sample counts, p50/p95/p99 handler
 latency and measured exceptions to the 100 ms local-response goal. These are
 simulated owned-window inputs; physical input remains a separate gate.
 

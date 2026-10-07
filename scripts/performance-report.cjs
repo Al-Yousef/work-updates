@@ -74,7 +74,10 @@ function report(directory) {
           'Local handler latency was not measured',
         );
       if (phase === 'messaging')
-        assert.ok(latencies.send_handler?.count > 0, 'Messaging path was not exercised');
+        assert.ok(
+          latencies.send_handler?.count > 0 && latencies.composer_focus_handler?.count > 0,
+          'Messaging and selected-source composer focus were not exercised',
+        );
       if (phase === 'image_decode')
         assert.ok(workload.native.imageBitmaps > 0, 'Native image decode was not exercised');
       const ownedRoots = [cleanup.backendPid, cleanup.nativePid, cleanup.collectorPid].map(
@@ -113,6 +116,7 @@ function report(directory) {
         );
       }
       const measured = summary(samples, Number(metadata.hardware.logicalCores));
+      assert.equal(measured.partial, false, 'Incomplete whole-process measurement');
       const components = Object.fromEntries(
         ['backend', 'native', 'collector', 'helpers'].map((name, index) => {
           const rootPids = [cleanup.backendPid, cleanup.nativePid, cleanup.collectorPid];

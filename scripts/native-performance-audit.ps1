@@ -131,6 +131,16 @@ foreach($taskCount in $ChatCounts){
                         }
                     }else{$taskSelectedSources[[string]$taskLive.source]=$true;$taskLatencies+=@{operation='chat_selection_handler';ms=$taskLatency;detailPending=$taskLive.detailPending;selectionAccepted=$true}}
                     if($taskSelectionAccepted -and $taskPhase -eq 'messaging' -and -not $taskLive.pending){
+                        if($taskLive.canDraft){
+                            $taskScale=$script:taskDpi/96.0
+                            $taskComposerHit=@{box=@($taskLive.composerBoundsPx|ForEach-Object {$_/$taskScale})}
+                            $taskFocusLatency=Click-PerfHit $taskPanel $taskComposerHit
+                            $taskFocusState=Get-PerfState $taskPanel $taskRun
+                            if(-not $taskFocusState.composerFocused -or $taskFocusState.source -ne $taskLive.source -or $taskFocusState.selected -ne $taskLive.selected){
+                                throw 'Owned composer focus was not confirmed on the selected source'
+                            }
+                            $taskLatencies+=@{operation='composer_focus_handler';ms=$taskFocusLatency;sourceSelectionVerified=$true;provider='local owned-window focus; network/model latency excluded'}
+                        }
                         $taskEditor=[HyphenPerfWindows]::GetDlgItem($taskPanel,201);$taskTextResult=[UIntPtr]::Zero
                         if([HyphenPerfWindows]::SendText($taskEditor,0xC,[IntPtr]::Zero,'Synthetic benchmark follow-up',2,2000,[ref]$taskTextResult) -eq [IntPtr]::Zero){throw 'Owned composer did not accept the fixture text'}
                         $taskLive=Get-PerfState $taskPanel $taskRun;$taskSend=$taskLive.hits|Where-Object {$_.action -eq 'send' -and $_.enabled}|Select-Object -First 1
