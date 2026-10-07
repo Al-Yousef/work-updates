@@ -9,6 +9,44 @@ const { Privacy } = require('../src/privacy.cjs');
 const { retainedAdapters } = require('../src/privacy-retained-adapters.cjs');
 const { DiagnosticLog } = require('../src/diagnostics.cjs');
 const { Attachments } = require('../src/attachments.cjs');
+test('legacy privacy journals preserve original bytes until a human change and newer retention schema refuses unsafe rollback', (t) => {
+  const directory = fs.mkdtempSync(path.join(os.tmpdir(), 'hyphen-privacy-migration-'));
+  t.after(() => fs.rmSync(directory, { recursive: true, force: true }));
+  const file = path.join(directory, 'privacy.json'),
+    sourceId = crypto.randomUUID();
+  const bytes = JSON.stringify({
+    version: 1,
+    disconnected: [sourceId],
+    previews: [],
+    operations: [],
+  });
+  fs.writeFileSync(file, bytes);
+  const privacy = new Privacy({
+    directory,
+    actorId: 'human:local',
+    adapters: { notes: { read: () => [] } },
+  });
+  assert.equal(privacy.state.version, 2);
+  assert.equal(privacy.disconnected(sourceId), true);
+  assert.equal(fs.readFileSync(file, 'utf8'), bytes);
+  privacy.preview(
+    {
+      role: 'human',
+      authority: 'accepted_human',
+      actorId: 'human:local',
+      messageId: crypto.randomUUID(),
+      text: '/privacy preview notes',
+    },
+    'notes',
+  );
+  assert.equal(JSON.parse(fs.readFileSync(file, 'utf8')).version, 2);
+  const { inspectStores } = require('../src/private-store.cjs');
+  const old = { ...require('../src/update-compatibility.json').stores, 'privacy.json': [1] };
+  assert.throws(() => inspectStores(directory, old), {
+    code: 'PRIVATE_STORE_RECOVERY',
+    store: 'privacy.json',
+  });
+});
 function fixture(t) {
   const f = require('./fixtures/research-profile.cjs').fixture();
   t.after(() => f.close());

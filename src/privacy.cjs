@@ -9,7 +9,7 @@ const hash = (v) => crypto.createHash('sha256').update(JSON.stringify(v)).digest
 const hold = (message) => Object.assign(new Error(message), { code: 'PRIVACY_OPERATION_HELD' });
 function validate(v) {
   if (
-    v?.version !== 1 ||
+    v?.version !== 2 ||
     !Array.isArray(v.disconnected) ||
     v.disconnected.length > 2048 ||
     v.disconnected.some((x) => !uuid(x)) ||
@@ -68,7 +68,7 @@ class Privacy {
     this.failed = false;
     const saved = readStore(this.file);
     this.state = saved.missing
-      ? { version: 1, disconnected: [], previews: [], operations: [] }
+      ? { version: 2, disconnected: [], previews: [], operations: [] }
       : saved.value;
     validate(this.state);
     this.diskHash = saved.missing ? null : hash(fs.readFileSync(this.file).toString());

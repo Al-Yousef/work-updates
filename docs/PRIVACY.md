@@ -49,6 +49,8 @@ A source-cache operation requires the exact source to be owned by this computer 
 
 Preview records the selected class/source, content hash, byte count, dependencies and a 30-minute expiry. Confirmation recomputes the selection and holds if it changed or an answer/read still depends on it. Source removal stops the owned collector and awaits its actual exit before editing its cache; no stopped/unknown writer is assumed safe. Readback must show the exact selected records gone. Multiple files are separately atomic; a partial failure is reported as unconfirmed and never retried automatically. The original deletion identity stays inspectable after restart. Fresh incompatible, externally replaced or failed journals hold further removals and preserve original bytes.
 
+The new retained-data operations use privacy journal version 2. Existing version 1 disconnects, previews and replay receipts migrate in memory without writing on inspection; the next explicit control saves version 2. Transactional rollback refuses a prior program that only accepts version 1 once version 2 data is present.
+
 Export copies omit recognized credential fields and text patterns, reject encrypted pairing/external-provider classes, and refuse a redirected exports directory. They remain private and contain personal free text; pattern redaction cannot guarantee that arbitrary prose contains no sensitive information. Export is not sharing authorization.
 
 ## Verification and remaining acceptance
