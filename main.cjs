@@ -52,6 +52,9 @@ const {OutcomeVerification}=require('./src/outcome-verification.cjs');
 const {Triage}=require('./src/triage.cjs');
 const {Delegations}=require('./src/delegations.cjs');
 const {WorkControls}=require('./src/work-controls.cjs');
+const {VoiceSession}=require('./src/voice-session.cjs');
+const {VoiceProvider}=require('./src/voice-provider.cjs');
+const {VoiceWindow}=require('./src/voice-window.cjs');
 let nativeControl,delegations,workControls;
 let privacy;
 const args = process.argv;
@@ -161,10 +164,17 @@ const budgets=new (require('./src/resource-budgets.cjs').ResourceBudgets)({direc
   scopes:(id,input)=>{const matches=input.kind==='read'?responsibilities.state.entries.filter(r=>r.scope.sourceId===input.sourceId):responsibilities.state.entries.filter(r=>r.currentStep.messageId===id);return matches.flatMap(r=>{const d=delegations.state.entries.find(d=>d.childId===r.id);return [r.id,...(d?[d.parentId]:[])];});}});
 messages.budgets=budgets;
 research.options.reader=budgets.reader(researchReader);
+const voiceProvider=new VoiceProvider({directory:dataDir,actorId:'human:'+devices.local.id,
+  encrypt:v=>safeStorage.encryptString(v),decrypt:v=>safeStorage.decryptString(v),
+  available:()=>safeStorage.isEncryptionAvailable()&&safeStorage.getSelectedStorageBackend?.()!=='basic_text'});
+const voice=new VoiceSession({directory:dataDir,actorId:'human:'+devices.local.id,provider:voiceProvider,
+  admission:()=>quitting||maintenanceActive(dataDir)||workControls.closed||workControls.storageFailed||workControls.active('all','all')?'wait':'allow'});
+let voiceWindow;
+function openVoice(){voiceWindow??=new VoiceWindow({BrowserWindow,session:require('electron').session,ipcMain,ledger:voice,provider:voiceProvider,actorId:voice.actorId});return voiceWindow.open();}
 const outcomes=new OutcomeVerification({directory:dataDir,actorId:'human:'+devices.local.id,responsibilities,snapshot:()=>devices.snapshot(),maintenance:()=>quitting||maintenanceActive(dataDir),admission:entry=>workControls.responsibilityAdmission(entry)});
 responsibilities.options.outcomeRequired=entry=>outcomes.required(entry);
 responsibilities.options.outcomeAdmission=(entry,human)=>outcomes.admission(entry,human);
-const assistant = new Assistant({directory:dataDir,snapshot:()=>devices.snapshot(),attachments,budgets,outcomes,executors,privacy:null,
+const assistant = new Assistant({directory:dataDir,snapshot:()=>devices.snapshot(),attachments,budgets,outcomes,executors,privacy:null,voice,openVoice,
   responsibilities,
   schedules,
   authorization,
@@ -993,6 +1003,7 @@ app.on('before-quit', () => {
   desktop?.close();
   messages.close();
   assistant.close();
+  voiceWindow?.close();voice.close();
   responsibilities.close();
   schedules.close();
   authorization.close();

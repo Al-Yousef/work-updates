@@ -1,5 +1,6 @@
 'use strict';
 const policy = {
+  'voice.json':['Voice session and accepted response metadata; no recordings/transcripts','64 sessions and 128 responses/session; usage separate from unknown bill','Private export; ending voice does not erase metadata'],
   'state.json':['Task metadata, status, preferences and groups','Component bounds; no automatic age expiry','Private export; original task controls; no blanket deletion'],
   'messages.json':['Message intents and exact delivery receipts','Up to 10000 intents; replay guards retained','Private redacted export; cancel unsent intents separately'],
   'assistant.json':['Conversation, pinned notes and assistant replay guards','500 exchanges, 40 alerts, 32 notes; guards retained','Scoped note/conversation previews; guards and unselected notes remain'],
@@ -27,6 +28,7 @@ function inventory(versions) {
   });
   return local.concat([
     {name:'observer/data/source-cache.json + feed.json + details-request.json',location:'local app data',retention:'Collector cache; disconnect retains prior records',access:'local collector; connected snapshots',removal:'Exact disconnected source preview; derivatives remain'},
+    {name:'voice-provider.enc',location:'OS-encrypted local app data',retention:'Until owner removes voice configuration',access:'Configured local voice provider; secret never exported',removal:'Explicit provider key removal pending'},
     {name:'attachments/',location:'local app data',retention:'No automatic expiry; referenced by drafts/history/receipts',access:'local app; explicitly selected dispatch',removal:'Dependency-aware removal adapter pending'},
     {name:'logs/',location:'local app data',retention:'Each logger: 512 KiB plus two backups maximum',access:'local app; explicit redacted diagnostic export',removal:'Explicit diagnostic file cleanup pending'},
     {name:'exports/',location:'local app data',retention:'Until explicitly removed by owner; no automatic sharing',access:'local owner; exported files remain private',removal:'Original files; export copies do not track later deletion'},
