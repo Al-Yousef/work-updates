@@ -180,7 +180,7 @@ function capabilities({
           },
         ]
       : [],
-    helperConnected: helper?.connected === true,
+    helperConnected: typeof helper?.connected === 'boolean' ? helper.connected : null,
     accountPlan: 'unknown',
     actualUsage: 'Inspect original provider usage; unknown costs are not zero',
     accountVerified: false,
