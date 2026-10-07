@@ -151,6 +151,8 @@ class Assistant extends EventEmitter {
   async generate(message) {
     const started=Date.now();
     try {
+      const browserControl=require('./browser-command.cjs'),browser=browserControl.command(message.text);
+      if(browser){await browserControl.manage(this.options.browsers,message,browser);this.save();return;}
       const executorControl=message.text.match(/^\/executor (inspect|revoke)(?: ([a-f0-9-]{36}))?$/i);
       if(executorControl){
         if(!this.options.executors)throw new Error('Executor binding controls are unavailable.');
