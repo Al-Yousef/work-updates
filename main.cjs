@@ -47,6 +47,7 @@ const {Authorization}=require('./src/authorization.cjs');
 const responsibilityAuthorization=require('./src/responsibility-authorization.cjs');
 const {Commitments}=require('./src/commitments.cjs');
 const {Research}=require('./src/research.cjs');
+const {Reflections}=require('./src/reflections.cjs');
 const {Delegations}=require('./src/delegations.cjs');
 const {WorkControls}=require('./src/work-controls.cjs');
 let nativeControl,delegations,workControls;
@@ -139,6 +140,7 @@ const authorization=new Authorization({directory:dataDir,actorId:'human:'+device
 const commitments=new Commitments({directory:dataDir,humanActorId:'human:'+devices.local.id});
 const researchReader=require('./src/research-reader.cjs').reader(app.isPackaged?{helper:path.join(process.resourcesPath,'helper',process.platform==='win32'?'collector.exe':'collector'),helperScript:path.join(process.resourcesPath,'helper','collector.py')}:{});
 const research=new Research({directory:dataDir,policy:authorization,reader:researchReader,snapshot:()=>devices.snapshot(),preferences:()=>commitments.preferenceSnapshot(),maintenance:()=>quitting||maintenanceActive(dataDir),log:diagnostics,admission:scope=>workControls?.readAdmission(scope)||'allow'});
+const reflections=new Reflections({directory:dataDir,policy:authorization,research,commitments,maintenance:()=>quitting||maintenanceActive(dataDir)});
 const responsibilities=new Responsibilities({directory:dataDir,snapshot:()=>devices.snapshot(),log:diagnostics,maintenance:()=>quitting||maintenanceActive(dataDir),...responsibilityTarget,
   admission:entry=>workControls?.responsibilityAdmission(entry)||'allow',
   authorize:entry=>delegations?.authorize(entry)||responsibilityAuthorization.prepare(authorization,entry,devices.snapshot(),entry.currentStep.schedule?schedules.entry(entry.currentStep.schedule.id):null),
@@ -155,6 +157,7 @@ const assistant = new Assistant({directory:dataDir,snapshot:()=>devices.snapshot
   authorizationRequest:id=>{const entry=messages.state.entries.find(e=>e.id===id&&e.status==='queued');return entry?responsibilityAuthorization.dispatchRequest({...entry,messageId:id},devices.snapshot()):null;},
   commitments,
   research,
+  reflections,
   delegations,
   workControls,
   binary:queue.state.settings.codexBinary,log:diagnostics,
@@ -207,6 +210,9 @@ commitments.on('change',()=>publish());
 research.on('change',()=>publish());
 function driveResearch(){void research.tick().catch(()=>diagnostics.write('research.recovery_failed',{code:'RESEARCH_STORAGE_FAILED',noResend:true}));}
 const researchTimer=setInterval(driveResearch,60000);researchTimer.unref();queueMicrotask(driveResearch);
+function driveReflections(){try{reflections.tick();}catch{diagnostics.write('reflection.recovery_failed',{code:'REFLECTION_STORAGE_FAILED',noResend:true});}}
+reflections.on('change',()=>publish());
+const reflectionTimer=setInterval(driveReflections,60000);reflectionTimer.unref();queueMicrotask(driveReflections);
 function driveDelegations(){void delegations.tick().catch(()=>diagnostics.write('delegation.recovery_failed',{code:'DELEGATION_RECOVERY_FAILED',noResend:true}));}
 delegations.on('change',()=>publish());
 const delegationTimer=setInterval(driveDelegations,60000);delegationTimer.unref();
@@ -947,6 +953,7 @@ app.on('before-quit', () => {
   authorization.close();
   commitments.close();
   research.close();clearInterval(researchTimer);
+  reflections.close();clearInterval(reflectionTimer);
   delegations.close();clearInterval(delegationTimer);
   workControls.close();
   hostPeer?.close();
