@@ -27,6 +27,7 @@ class AssistantProvider {
   constructor(options={}) { this.options=options; this.client=null; this.model=null; }
   async answer(input) {
     const client=this.client=this.options.clientFactory?.() || new Codex({binary:this.options.binary,requestTimeoutMs:15000});
+    let reservation=null, dispatched=false, completed=false, acceptedTurn=null, reported=null;
     try {
       await client.connect();
       const models=await client.call('model/list',{includeHidden:false});
@@ -34,7 +35,7 @@ class AssistantProvider {
       // visual questions: the small model failed the left/right image audit.
       const preferred=input.images?.length?['gpt-6-sol','gpt-5.6-sol','gpt-6-luna','gpt-5.6-luna']:['gpt-6-luna','gpt-5.6-luna'];
       this.model=preferred.find(id=>models.data.some(m=>m.model===id&&(!input.images?.length||!m.inputModalities||m.inputModalities.includes('image'))));
-      if(!this.model)throw new Error('Hyphen’s small model is unavailable in this Codex account.');
+      if(!this.model)throw new Error('Hyphen’s configured model is absent from the provider catalog.');
       if(input.images?.length&&models.data.find(m=>m.model===this.model)?.inputModalities?.includes('image')===false)
         throw new Error('Hyphen’s model cannot read images in this account.');
       const {config:existing}=await client.call('config/read',{includeLayers:false});
@@ -45,6 +46,8 @@ class AssistantProvider {
       for(const id of Object.keys(existing.mcp_servers||{})){config[`mcp_servers.${id}.enabled`]=false;config[`mcp_servers.${id}.required`]=false;}
       for(const id of Object.keys(existing.plugins||{}))config[`plugins.${id}.enabled`]=false;
       fs.mkdirSync(this.options.directory,{recursive:true});
+      if(this.options.budgets)reservation=this.options.budgets.reserve({id:require('node:crypto').randomUUID(),kind:'model',provider:'codex-app-server',model:this.model,
+        estimate:{tokens:Math.ceil(Buffer.byteLength(JSON.stringify(input))/3)+6000,costMicros:null}});
       const started=await client.call('thread/start',{ephemeral:true,model:this.model,cwd:this.options.directory,
         approvalPolicy:'never',sandbox:'read-only',baseInstructions:instructions+coordinationInstructions,developerInstructions:instructions+coordinationInstructions,config,serviceName:'hyphen_assistant'});
       if(started.thread.ephemeral!==true)throw new Error('Hyphen could not create a private assistant session.');
@@ -59,27 +62,37 @@ class AssistantProvider {
         const requested=request=>{client.reject(request.id);finish(new Error('Hyphen attempted an unsupported tool. No action was authorized.'));};
         const notification=message=>{
           const p=message.params;if(p?.threadId!==threadId)return;
+          if(message.method==='turn/started'&&p.turn?.id){acceptedTurn=p.turn.id;try{if(reservation)this.options.budgets.started(reservation,acceptedTurn);}catch{return finish(new Error('Hyphen cannot confirm its resource reservation.'));}}
+          if(message.method==='thread/tokenUsage/updated'&&acceptedTurn&&p.turnId===acceptedTurn){
+            try{reported=require('./resource-budgets.cjs').usage(p.tokenUsage?.last);}catch{return finish(new Error('Hyphen received invalid usage accounting.'));}
+          }
           if(message.method==='item/started'&&!['agentMessage','reasoning','userMessage'].includes(p.item?.type))
             return finish(new Error('Hyphen attempted an unsupported tool.'));
           if(message.method==='item/agentMessage/delta')output+=p.delta||'';
           if(message.method==='item/completed'&&p.item?.type==='agentMessage')output=p.item.text||output;
           if(output.length>18000)return finish(new Error('Hyphen’s answer exceeded the size limit.'));
           if(message.method==='turn/completed') {
+            if(reservation&&(!acceptedTurn||p.turn?.id!==acceptedTurn))return finish(new Error('Hyphen received an unmatched completion receipt.'));
             if(p.turn.status!=='completed')return finish(new Error('Hyphen could not finish answering. Your message is saved.'));
             try {const value=JSON.parse(output);
               if(typeof value.answer!=='string'||!value.answer.trim()||value.answer.length>6000||!Array.isArray(value.links)||value.links.length>3||
                 value.links.some(link=>typeof link.ref!=='string'||typeof link.draft!=='string'||link.draft.length>12000))throw new Error();
-              finish(null,{...value,model:this.model});
+              if(reservation)this.options.budgets.finish(reservation,{reported,turnId:acceptedTurn});
+              completed=true;finish(null,{...value,model:this.model});
             }catch{finish(new Error('Hyphen returned an invalid answer. Your message is saved.'));}
           }
         };
         client.on('notification',notification);client.on('disconnected',disconnected);client.on('request',requested);
         const {images=[],...context}=input;
+        dispatched=true;
         client.call('turn/start',{threadId,input:[{type:'text',text:JSON.stringify({...context,attachedImages:images.length})},
           ...images.map(image=>({type:'localImage',path:image.path}))],model:this.model,effort:'low',outputSchema})
           .catch(()=>finish(new Error('Hyphen could not start answering. Check your Codex sign-in.')));
       });
-    } finally {client.close();if(this.client===client)this.client=null;}
+    } finally {
+      if(reservation&&!completed)try{this.options.budgets.finish(reservation,{status:dispatched?'unknown':'not_started',reported,turnId:acceptedTurn});}catch{}
+      client.close();if(this.client===client)this.client=null;
+    }
   }
   close(){this.cancel?.();this.client?.close();}
 }

@@ -96,6 +96,7 @@ async function waitFor(page, fn) {
     const support=(await page.evaluate(()=>window.workUpdates.capabilities())).value;
     check(support.accountPlan==='unknown'&&support.channels.find(c=>c.name==='Paired phone').assistant===false,'Capability inspection preserves unknown entitlement and unsupported phone assistant');
     await page.getByRole('button',{name:'Settings',exact:true}).click();
+    await page.screenshot({path:path.join(output,'assistant-preferences.png')});
     await page.getByLabel('Reduce motion',{exact:true}).uncheck();
     await page.getByRole('button',{name:'Save assistant preferences',exact:true}).click();
     await page.waitForFunction(()=>!document.documentElement.classList.contains('profile-reduced-motion'));

@@ -14,6 +14,7 @@ using Json=nlohmann::json;
 namespace {
 DWORD pid=0;HWND panel=nullptr,control=nullptr,editor=nullptr,search=nullptr;
 std::filesystem::path artifacts,fixture;bool baseline=false;unsigned requestId=0;
+Json interactionSamples=Json::array();
 BOOL CALLBACK find(HWND h,LPARAM){DWORD p=0;GetWindowThreadProcessId(h,&p);if(p!=pid)return TRUE;wchar_t name[80]{};GetClassNameW(h,name,80);if(!wcscmp(name,L"NativeHoverPanel"))panel=h;if(!wcscmp(name,L"NativeHoverTrigger"))control=h;return TRUE;}
 Json read(const std::filesystem::path& p){std::ifstream f(p);return Json::parse(f);}
 Json state(){SendMessageW(panel,WM_APP+215,0,0);return read(artifacts/L"ux-state.json");}
@@ -21,6 +22,7 @@ void wait(auto f,const char* error){for(int i=0;i<240;++i){if(f())return;Sleep(2
 void check(bool okay,const char* message){if(!okay)throw std::runtime_error(message);}
 double click(const Json& requested){
  auto t=std::chrono::steady_clock::now();
+ int cancelled=0;
  for(int attempt=0;attempt<3;++attempt){
   auto h=requested;
   if(h.value("action","")=="card"){
@@ -28,15 +30,24 @@ double click(const Json& requested){
    check(present,"Requested chat disappeared before its test click");
   }
   auto b=h.at("box");const int x=static_cast<int>((b[0].get<float>()+b[2].get<float>())/2),y=static_cast<int>((b[1].get<float>()+b[3].get<float>())/2);auto point=MAKELPARAM(x,y);
-  SendMessageW(panel,WM_LBUTTONDOWN,MK_LBUTTON,point);
+  auto downAt=std::chrono::steady_clock::now();SendMessageW(panel,WM_LBUTTONDOWN,MK_LBUTTON,point);
+  const auto downMs=std::chrono::duration<double,std::milli>(std::chrono::steady_clock::now()-downAt).count();
   if(h.value("action","")=="card"){
    // The backend may reorder rows between the snapshot and mouse-down. Cancel
    // before release rather than accidentally testing another chat's draft.
    const auto liveState=state();bool same=false;for(const auto& live:liveState["hits"]){auto box=live.at("box");if(x>=box[0].get<float>()&&x<=box[2].get<float>()&&y>=box[1].get<float>()&&y<=box[3].get<float>())same=live.value("key","")==h.value("key","");}
-   if(!same){SendMessageW(panel,WM_CANCELMODE,0,0);continue;}
+   if(!same){SendMessageW(panel,WM_CANCELMODE,0,0);++cancelled;continue;}
   }
-  SendMessageW(panel,WM_LBUTTONUP,0,point);
-  if(h.value("action","")!="card"||state().value("source","")==h.value("sourceId",""))return std::chrono::duration<double,std::milli>(std::chrono::steady_clock::now()-t).count();
+  auto upAt=std::chrono::steady_clock::now();SendMessageW(panel,WM_LBUTTONUP,0,point);
+  const auto handlerMs=downMs+std::chrono::duration<double,std::milli>(std::chrono::steady_clock::now()-upAt).count();
+  if(h.value("action","")!="card"||state().value("source","")==h.value("sourceId","")){
+   const auto totalMs=std::chrono::duration<double,std::milli>(std::chrono::steady_clock::now()-t).count();
+   interactionSamples.push_back({{"action",h.value("action","")},{"handler_ms",handlerMs},{"identity_checked_total_ms",totalMs},{"cancelled_presses",cancelled}});
+   // Identity snapshots synchronously write/read diagnostic JSON. Report that
+   // audit overhead separately from the exact accepted down/up handlers.
+   return handlerMs;
+  }
+  ++cancelled;
  }
  throw std::runtime_error("Chat rows did not stabilize for the identity-checked test click");
 }
@@ -84,14 +95,15 @@ try{
  wait([]{return !state().value("pending",true);},"Image import did not finish");check(text()==L"Keep writing while an image imports elsewhere","Image import stole the draft");click(action("assistant"));check(text()==L"Write while the image loads","Import lost its own destination draft");result["image_import_and_navigation_verified"]=true;
  // Preserve the reading bookmark, including incoming updates while scrolled up.
  fault("patch",{{"assistant",{{"messages",Json::array()},{"responding",false},{"error",""}}}});click(source(firstSource));wait([]{return !state().value("detailPending",true);},"Bookmark chat did not load");POINT scrollPoint{600,260};ClientToScreen(panel,&scrollPoint);SendMessageW(panel,WM_MOUSEWHEEL,MAKEWPARAM(0,120),MAKELPARAM(scrollPoint.x,scrollPoint.y));const auto bookmark=state();check(bookmark.value("detailOffset",0)>0&&!bookmark.value("detailFollow",true),"Fixture does not exercise a nonzero reading bookmark");click(source(secondSource));click(source(firstSource));check(state()["detailOffset"]==bookmark["detailOffset"]&&state()["detailFollow"]==bookmark["detailFollow"],"Returning to a chat lost the reading bookmark");result["reading_bookmark_verified"]=true;
- for(const auto& key:{"cold_click_handler_ms","second_click_handler_ms","cached_click_handler_ms","send_click_handler_ms","navigation_during_send_ms","typing_during_image_decode_ms","search_during_image_decode_ms","menu_open_during_image_decode_ms","menu_dismiss_ms"})check(result[key].get<double>()<250,"Local interaction stalled for more than 250ms");
+ for(const auto& key:{"cold_click_handler_ms","second_click_handler_ms","cached_click_handler_ms","send_click_handler_ms","navigation_during_send_ms","typing_during_image_decode_ms","search_during_image_decode_ms","menu_open_during_image_decode_ms","menu_dismiss_ms"})if(result[key].get<double>()>=250){result["failed_latency_metric"]=key;throw std::runtime_error("Local interaction stalled for more than 250ms");}
  }
  SendMessageW(panel,WM_APP+210,0,0);PostMessageW(control,WM_CLOSE,0,0);check(WaitForSingleObject(child.hProcess,4000)==WAIT_OBJECT_0,"Own child did not cancel background reads on close");CloseHandle(child.hProcess);child.hProcess=nullptr;
  result["mode"]=baseline?"baseline":"final";result["details_fixture_delay_ms"]=1500;result["send_fixture_delay_ms"]=2000;result["scope"]="Own Win32 handlers and painted state; synthetic backend, no Explorer injection or signed-in messages";
+ result["interaction_samples"]=interactionSamples;result["latency_measurement"]="Accepted Win32 down/up handler sum; diagnostic identity-check total and cancelled presses recorded separately";
  {std::ofstream f(artifacts/(baseline?L"responsiveness-baseline.json":L"responsiveness-final.json"));f<<result.dump(2);}std::cout<<result.dump(2)<<"\n";return 0;
 }catch(const std::exception& e){
  std::cerr<<"FAIL "<<e.what()<<"\n";
  // Preserve the exact failed assertion and partial measurements before closing
  // the disposable child. This contains only the synthetic fixture's state.
- try{result["passed"]=false;result["error"]=e.what();result["mode"]=baseline?"baseline":"final";std::ofstream f(artifacts/L"responsiveness-failure.json");f<<result.dump(2);}catch(...){}
+ try{result["passed"]=false;result["error"]=e.what();result["mode"]=baseline?"baseline":"final";result["interaction_samples"]=interactionSamples;std::ofstream f(artifacts/L"responsiveness-failure.json");f<<result.dump(2);}catch(...){}
  if(control)PostMessageW(control,WM_CLOSE,0,0);if(child.hProcess){if(WaitForSingleObject(child.hProcess,4000)!=WAIT_OBJECT_0)TerminateProcess(child.hProcess,2);CloseHandle(child.hProcess);}return 1;}}

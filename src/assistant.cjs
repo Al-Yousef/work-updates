@@ -44,7 +44,7 @@ class Assistant extends EventEmitter {
       if(recovered)this.save();
     }}catch{this.error='Assistant history could not be loaded. The original file is preserved.';}
     this.attachments=options.attachments||new Attachments(options.directory);
-    this.provider=options.provider||new AssistantProvider({directory:path.join(options.directory,'assistant-session'),binary:options.binary});
+    this.provider=options.provider||new AssistantProvider({directory:path.join(options.directory,'assistant-session'),binary:options.binary,budgets:options.budgets});
   }
   trim(){const kept=new Set([...this.state.messages.filter(conversation).slice(-500),...this.state.messages.filter(m=>m.kind==='update').slice(-40)]);this.state.messages=this.state.messages.filter(m=>kept.has(m));}
   save(){this.trim();if(Buffer.byteLength(JSON.stringify(this.state))>32*1024*1024)throw new Error('Hyphen history reached its local storage limit.');atomic(this.file,this.state);}
@@ -162,6 +162,7 @@ class Assistant extends EventEmitter {
         message.answer=JSON.stringify(this.options.capabilities?.()||{state:'unsupported'},null,2).slice(0,6000);
         message.status='completed';this.save();return;
       }
+      const budget=require('./budget-command.cjs').command(message.text);if(budget){require('./budget-command.cjs').manage(this.options.budgets,message,budget);this.save();return;}
       const browserControl=require('./browser-command.cjs'),browser=browserControl.command(message.text);
       if(browser){await browserControl.manage(this.options.browsers,message,browser);this.save();return;}
       const documentControl=require('./document-command.cjs'),document=documentControl.command(message.text);
@@ -229,6 +230,7 @@ class Assistant extends EventEmitter {
         assistantPresentation:this.options.profile?.snapshot(),
         responsibilities:this.options.responsibilities?.snapshot().slice(-8).map(r=>({id:r.id,origin:{text:clip(r.origin.text,600),provenance:'accepted_human_instruction'},instruction:clip(r.instruction,800),revision:r.revision,state:r.state,chatName:r.scope.chatName,ownerId:r.ownerId,stepStatus:r.currentStep.status,wakeReason:r.wakeReason.kind,completionCriteria:r.completionCriteria})),
         schedules:this.options.schedules?.snapshot().slice(-8).map(s=>({id:s.id,responsibilityId:s.responsibilityId,state:s.state,reason:s.reason,timeZone:s.schedule.timeZone,endAt:s.schedule.endAt,nextWake:s.nextWake,lastActualRun:s.lastActualRun,lastRun:s.runs.at(-1)?.status})),
+        budgets:this.options.budgets?.inspect(),
         commitments:this.options.commitments?.context(),
         research:this.options.research?.context(),
         workControls:this.options.workControls?{holds:this.options.workControls.state.holds.filter(h=>h.active).slice(-16).map(h=>({kind:h.kind,target:h.target})),recent:this.options.workControls.state.actions.slice(-5).map(a=>({kind:a.kind,status:a.status,checkpoints:a.resources.slice(0,8).map(r=>({kind:r.kind,status:r.status})),omittedCheckpoints:Math.max(0,a.resources.length-8)})),coverage:'Bounded private control summary; exact receipt and source verification remain distinct.'}:null,
