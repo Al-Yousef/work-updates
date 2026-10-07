@@ -409,6 +409,92 @@ def atomic(path, payload):
     os.replace(temp, path)
 
 
+def read_original_thread(home, thread_id, since, until, nonce, limit=32):
+    """One bounded original-record read, with no catalogue scan or persistent subscription."""
+    if not re.fullmatch(r'[a-f0-9-]{36}', thread_id or '') or not re.fullmatch(r'[a-f0-9]{32}', nonce or ''):
+        raise ValueError('Invalid scoped reader identity')
+    if not (0 <= since <= until <= time.time() + 5) or not 1 <= limit <= 64:
+        raise ValueError('Invalid scoped reader bounds')
+    root = Path(home).resolve(strict=True)
+    database = (root / 'state_5.sqlite').resolve(strict=True)
+    if root not in database.parents:
+        raise ValueError('The selected database is outside the source store')
+    connection = readonly(database)
+    try:
+        columns = {r['name'] for r in connection.execute('PRAGMA table_info(threads)')}
+        extra = ",thread_source" if 'thread_source' in columns else ''
+        rows = connection.execute('SELECT id,rollout_path,archived,source' + extra + ' FROM threads WHERE id=?', (thread_id,)).fetchall()
+    finally:
+        connection.close()
+    if len(rows) != 1 or rows[0]['archived'] or rows[0]['source'] not in ('exec', 'vscode', 'cli', 'appServer'):
+        raise ValueError('The exact active local source is unavailable')
+    if 'thread_source' in columns and rows[0]['thread_source'] in ('subagent', 'guardian_review'):
+        raise ValueError('The source is not a user-owned chat')
+    rollout = Path(rows[0]['rollout_path']).resolve(strict=True)
+    # The database cannot point this scoped reader at arbitrary private files.
+    if root not in rollout.parents or rollout.suffix != '.jsonl' or not rollout.is_file():
+        raise ValueError('The original record location is outside the selected store')
+    before = rollout.stat()
+    with rollout.open('rb') as stream:
+        start = max(0, before.st_size - MAX_TAIL)
+        stream.seek(start)
+        data = stream.read(MAX_TAIL)
+    records, skipped = [], 0
+    offset = start
+    lines = data.splitlines(keepends=True)
+    if start and lines:
+        offset += len(lines.pop(0))
+    for line in lines:
+        position = offset
+        offset += len(line)
+        if not line.strip():
+            continue
+        if len(line) > MAX_LINE or not line.endswith(b'\n'):
+            skipped += 1
+            continue
+        try:
+            row = json.loads(line)
+        except (ValueError, UnicodeDecodeError):
+            skipped += 1
+            continue
+        if not isinstance(row, dict) or not isinstance(row.get('payload'), dict):
+            skipped += 1
+            continue
+        p = row['payload']
+        if row.get('type') != 'response_item' or p.get('type') != 'message' or p.get('role') not in ('user', 'assistant') or p.get('channel') not in (None, 'final', 'commentary'):
+            continue
+        at = timestamp(row.get('timestamp'))
+        if not isinstance(p.get('content'), list):
+            skipped += 1
+            continue
+        value = '\n'.join(x['text'] for x in p['content'] if isinstance(x, dict) and x.get('type') in ('input_text', 'output_text', 'text') and isinstance(x.get('text'), str))
+        if not value or not at or not since <= at <= until:
+            if value and not at:
+                skipped += 1
+            continue
+        bounded = value.encode('utf-16-le', errors='surrogatepass')[:12000].decode('utf-16-le', errors='ignore')
+        records.append({'id': hashlib.sha256(thread_id.encode() + str(position).encode() + line).hexdigest(),
+                        'role': p['role'], 'text': bounded, 'at': at, 'truncated': value != bounded})
+    after = rollout.stat()
+    source_identity = str(root).lower() if sys.platform == 'win32' else str(root)
+    gaps = ['This is a bounded original-message tail, not exhaustive chat or account history.',
+            'Tool and image contents are not included.']
+    if start:
+        gaps.append('Older bytes outside the tail were not read.')
+    if skipped:
+        gaps.append('Some malformed, partial, oversized or undated records were skipped.')
+    if (before.st_size, before.st_mtime_ns) != (after.st_size, after.st_mtime_ns):
+        gaps.append('The source changed while being read; retry may reveal additional records.')
+    if len(records) > limit or any(r['truncated'] for r in records[-limit:]):
+        gaps.append('Record count or text was truncated.')
+    return {'schema': 1, 'threadId': thread_id, 'requestNonce': nonce,
+            'storeId': hashlib.sha256(source_identity.encode()).hexdigest(), 'capturedAt': time.time(),
+            'since': since, 'until': until, 'records': records[-limit:],
+            'coverage': {'exhaustive': False, 'candidateRecords': len(records), 'includedRecords': min(len(records), limit),
+                         'bytesRead': len(data), 'byteLimit': MAX_TAIL, 'recordLimit': limit, 'skippedRecords': skipped,
+                         'gaps': gaps}}
+
+
 def main():
     ap = argparse.ArgumentParser()
     ap.add_argument('--root')
@@ -418,8 +504,19 @@ def main():
     ap.add_argument('--codex-home')
     ap.add_argument('--session')
     ap.add_argument('--source-id')
+    ap.add_argument('--read-thread')
+    ap.add_argument('--since', type=float)
+    ap.add_argument('--until', type=float)
+    ap.add_argument('--request-nonce')
+    ap.add_argument('--record-limit', type=int, default=32)
     ap.add_argument('--poll-seconds', type=float, default=3)
     args = ap.parse_args()
+    if args.read_thread:
+        if not args.codex_home:
+            ap.error('A scoped reader needs its exact local Codex store')
+        print(json.dumps(read_original_thread(args.codex_home, args.read_thread, args.since, args.until,
+                                              args.request_nonce, args.record_limit), ensure_ascii=True))
+        return
     if args.stdio:
         if not args.codex_home or not args.session:
             ap.error('--stdio requires --codex-home and --session')

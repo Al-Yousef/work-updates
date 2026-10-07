@@ -14,6 +14,7 @@ const {currentScope}=require('./responsibility-target.cjs');
 const {command:authorizationCommand}=require('./authorization-command.cjs');
 const {command:scheduleCommand}=require('./schedule-command.cjs');
 const {command:commitmentCommand}=require('./commitment-command.cjs');
+const {command:researchCommand}=require('./research-command.cjs');
 class Assistant extends EventEmitter {
   constructor(options) {
     super();this.options=options;this.file=path.join(options.directory,'assistant.json');this.active=false;this.closed=false;this.error='';
@@ -145,6 +146,7 @@ class Assistant extends EventEmitter {
     try {
       const authorization=authorizationCommand(message.text);
       if(authorization){await this.manageAuthorization(message,authorization);this.save();return;}
+      const research=researchCommand(message.text);if(research){await require('./research-control.cjs').manage(this.options.research,message,research,this.options.snapshot());this.save();return;}
       const recorded=commitmentCommand(message.text);if(recorded){require('./commitment-control.cjs').manage(this.options.commitments,message,recorded,this.options.snapshot());this.save();return;}
       const planned=scheduleCommand(message.text);if(planned){await this.manageSchedule(message,planned);this.save();return;}
       const ongoing=responsibilityCommand(message.text);
@@ -175,6 +177,7 @@ class Assistant extends EventEmitter {
         responsibilities:this.options.responsibilities?.snapshot().slice(-8).map(r=>({id:r.id,origin:{text:clip(r.origin.text,600),provenance:'accepted_human_instruction'},instruction:clip(r.instruction,800),revision:r.revision,state:r.state,chatName:r.scope.chatName,ownerId:r.ownerId,stepStatus:r.currentStep.status,wakeReason:r.wakeReason.kind,completionCriteria:r.completionCriteria})),
         schedules:this.options.schedules?.snapshot().slice(-8).map(s=>({id:s.id,responsibilityId:s.responsibilityId,state:s.state,reason:s.reason,timeZone:s.schedule.timeZone,endAt:s.schedule.endAt,nextWake:s.nextWake,lastActualRun:s.lastActualRun,lastRun:s.runs.at(-1)?.status})),
         commitments:this.options.commitments?.context(),
+        research:this.options.research?.context(),
         canRequestChatMessage:!!this.options.dispatch&&!!requestedRef,requestedChatRef:requestedRef,requestedMessage:requested?.proposal||null});
       if(this.closed)return;
       if(typeof value.answer!=='string'||!value.answer.trim()||value.answer.length>6000||!Array.isArray(value.links)||value.links.length>3)
@@ -245,7 +248,7 @@ class Assistant extends EventEmitter {
       }
       else if(command.kind==='approve'){
         const store=this.options.responsibilities,entry=store?.state.entries.find(e=>e.currentStep.messageId===command.id);
-        const request=entry?bridge.request(entry,this.options.snapshot()):this.options.authorizationRequest?.(command.id);
+        const request=entry?bridge.request(entry,this.options.snapshot()):this.options.research?.approvalRequest(command.id)||this.options.authorizationRequest?.(command.id);
         if(!request)throw new Error('Open the owning source for this operation. It cannot be approved from an unrelated chat.');
         policy.approve(command.id,human,request);
         if(entry?.state==='waiting_approval'&&entry.wakeReason.kind==='authorization_ask'){store.wake(entry.id,{role:'human',messageId:message.id,text:message.text,kind:'approval'});await store.dispatch(entry.id);}

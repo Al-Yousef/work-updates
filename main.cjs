@@ -46,6 +46,7 @@ const scheduledResponsibility=require('./src/scheduled-responsibility.cjs');
 const {Authorization}=require('./src/authorization.cjs');
 const responsibilityAuthorization=require('./src/responsibility-authorization.cjs');
 const {Commitments}=require('./src/commitments.cjs');
+const {Research}=require('./src/research.cjs');
 let nativeControl;
 const args = process.argv;
 function argument(name) {
@@ -132,6 +133,8 @@ const devices = new Devices({
 diagnostics.setContext({deviceId:devices.local.id});
 const authorization=new Authorization({directory:dataDir,actorId:'human:'+devices.local.id});
 const commitments=new Commitments({directory:dataDir,humanActorId:'human:'+devices.local.id});
+const researchReader=require('./src/research-reader.cjs').reader(app.isPackaged?{helper:path.join(process.resourcesPath,'helper',process.platform==='win32'?'collector.exe':'collector'),helperScript:path.join(process.resourcesPath,'helper','collector.py')}:{});
+const research=new Research({directory:dataDir,policy:authorization,reader:researchReader,snapshot:()=>devices.snapshot(),preferences:()=>commitments.preferenceSnapshot(),maintenance:()=>quitting||maintenanceActive(dataDir),log:diagnostics});
 const responsibilities=new Responsibilities({directory:dataDir,snapshot:()=>devices.snapshot(),log:diagnostics,maintenance:()=>quitting||maintenanceActive(dataDir),...responsibilityTarget,
   authorize:entry=>responsibilityAuthorization.prepare(authorization,entry,devices.snapshot(),entry.currentStep.schedule?schedules.entry(entry.currentStep.schedule.id):null),
   outcome:require('./src/assistant-coordination.cjs').outcome,
@@ -144,6 +147,7 @@ const assistant = new Assistant({directory:dataDir,snapshot:()=>devices.snapshot
   authorization,
   authorizationRequest:id=>{const entry=messages.state.entries.find(e=>e.id===id&&e.status==='queued');return entry?responsibilityAuthorization.dispatchRequest({...entry,messageId:id},devices.snapshot()):null;},
   commitments,
+  research,
   binary:queue.state.settings.codexBinary,log:diagnostics,
   loadContext:targets=>require('./src/assistant-context.cjs').loadContext({
     snapshot:()=>devices.snapshot(),
@@ -190,6 +194,9 @@ messages.on('change', () => {try{responsibilityAuthorization.observe(authorizati
 authorization.on('change',()=>{publish();queueMicrotask(()=>messages.pump().catch(()=>diagnostics.write('authorization.recovery_failed',{code:'AUTHORIZATION_STORAGE_FAILED',noResend:true})));});
 assistant.on('change', () => publish());
 commitments.on('change',()=>publish());
+research.on('change',()=>publish());
+function driveResearch(){void research.tick().catch(()=>diagnostics.write('research.recovery_failed',{code:'RESEARCH_STORAGE_FAILED',noResend:true}));}
+const researchTimer=setInterval(driveResearch,60000);researchTimer.unref();queueMicrotask(driveResearch);
 function driveSchedules(){try{schedules.observe();}catch{diagnostics.write('schedule.recovery_failed',{code:'SCHEDULE_RECOVERY_FAILED',noResend:true});}void schedules.tick().catch(()=>diagnostics.write('schedule.recovery_failed',{code:'SCHEDULE_RECOVERY_FAILED',noResend:true}));}
 schedules.on('change',()=>publish());
 responsibilities.on('change',()=>{publish();queueMicrotask(()=>responsibilities.pump());queueMicrotask(driveSchedules);});
@@ -630,7 +637,7 @@ app.whenReady().then(async () => {
         const result = await perform(method, input);
         return method === 'details' ? cardView(result, true,attachments) : ['send','queueMessage','assistantAsk','assistantUse','attachImages','openAttachment'].includes(method) ? result : {};
       },
-      status: () => ({activeWriters:Math.max(client.status?.().active ?? 0, client.status?.().pending ?? 0, queue.busy?.size ?? 0,messages.active.size,desktop?.pending.size||0,assistant.active?1:0,responsibilities.pending.size,schedules.pending.size),
+      status: () => ({activeWriters:Math.max(client.status?.().active ?? 0, client.status?.().pending ?? 0, queue.busy?.size ?? 0,messages.active.size,desktop?.pending.size||0,assistant.active?1:0,responsibilities.pending.size,schedules.pending.size,research.pending.size),
         mode:'native-backend', windowCount:BrowserWindow.getAllWindows().length,
         rendererCount:app.getAppMetrics().filter(p => p.type === 'Tab').length}),
       quit: () => {quitting=true; app.quit();},
@@ -840,7 +847,7 @@ app.whenReady().then(async () => {
       status: () => ({
         cornerConfigured: !!queue.state.settings.corner,
         launcherActive: !!corner && !corner.isDestroyed(),
-        activeWriters: Math.max(client.status?.().active ?? 0,client.status?.().pending??0,queue.busy.size,messages.active.size,desktop?.pending.size||0,assistant.active?1:0,responsibilities.pending.size,schedules.pending.size),
+        activeWriters: Math.max(client.status?.().active ?? 0,client.status?.().pending??0,queue.busy.size,messages.active.size,desktop?.pending.size||0,assistant.active?1:0,responsibilities.pending.size,schedules.pending.size,research.pending.size),
         windowMode: windowController.mode,
       }),
       quit: () => {quitting = true; app.quit();},
@@ -922,6 +929,7 @@ app.on('before-quit', () => {
   schedules.close();
   authorization.close();
   commitments.close();
+  research.close();clearInterval(researchTimer);
   hostPeer?.close();
   devices.close();
   nativeControl?.close();
