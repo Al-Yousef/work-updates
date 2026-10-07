@@ -178,8 +178,8 @@ class Assistant extends EventEmitter {
           this.options.openVoice();
           message.answer='Opened the private voice window. Configure its separate provider and accept microphone/API billing for each finite session before starting.';
         }else if(voiceControl[1].toLowerCase()==='end'){
-          this.options.voice.close();
-          message.answer='Closed this local voice connection. Existing tasks continue. Remote termination is not verified.';
+          await this.options.voice.close();
+          message.answer='Closed this local voice connection and requested termination of its exact provider call when available. Existing tasks continue. Use /voice inspect for the provider acknowledgement; final usage and billing remain unknown.';
         }else message.answer=JSON.stringify(this.options.voice.inspect(),null,2).slice(0,6000);
         message.status='completed';this.save();return;
       }

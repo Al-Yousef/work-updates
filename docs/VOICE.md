@@ -58,4 +58,31 @@ microphone/device behavior, authenticated API
 access, bill amounts, phone parity or outbound telephony. Actual hardware/audio
 and any paid provider check remain separate acceptance work for #30.
 
+End now requests server hangup for the exact call ID supplied in the creation
+response's `Location` header. The ID and the credential used for that particular
+call remain in bounded backend memory; neither reaches the renderer or ordinary
+journal. The endpoint and accepted Location origin/path are fixed. Ending during
+a handshake waits for that original reference, while the microphone/peer stop
+immediately. Concurrent or repeated end controls share one request. A refused or
+unconfirmed request offers an explicit human retry of that same call; it never
+reconnects or creates a replacement. A missing/unsafe reference remains unknown.
+
+The official hangup contract returns `200` when termination **begins**, so the UI
+records `initiated`, not confirmed final termination or billing. `404`, timeout,
+denial and transport errors remain unconfirmed. Exact final provider usage and
+charges remain unknown, and an attempted call keeps its uncertain shared resource
+checkpoint. The app waits for its bounded end request during normal shutdown;
+update/idle-quit and credential removal hold while voice or termination is active.
+Removing the configured key explicitly also clears in-memory provider references.
+Crash/restart retains the unconfirmed checkpoint and does not replay a provider
+call or infer a remote target from stored text. Provider IDs are not persisted.
+
+References: [server call identity](https://developers.openai.com/api/docs/guides/voice-server-controls#with-webrtc)
+and [hangup endpoint](https://developers.openai.com/api/reference/resources/realtime/subresources/calls/methods/hangup).
+Synthetic tests cover end during creation, original-credential ownership, unsafe
+Locations, exact retries, duration/disconnect/shutdown, storage holds and unchanged
+budget uncertainty. The sandboxed runtime audit uses injected audio, peers and
+provider receipts to exercise mute and typed steering. These are distinct from
+actual microphone, account entitlement, provider billing and phone audio evidence.
+
 The production voice client reserves shared resource capacity before requesting the microphone. The human chooses an estimated token reservation; finite cost caps refuse unpriced calls. Reported tokens accumulate across accepted response identities, with missing responses/usage shown separately and actual cost left unknown. At the reservation or global token limit, local audio stops; unrelated tasks continue. A never-started call releases its local slot. Once a provider handshake was attempted, End/disconnection keeps an uncertain resource checkpoint because transport closure alone is not verified server termination or a final bill. These controls do not place outbound calls, run paid audits or enable a fallback provider.

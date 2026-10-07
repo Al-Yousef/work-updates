@@ -77,9 +77,8 @@ class VoiceWindow {
     if (name === 'steer') return this.ledger.steer(this.human(), v.id, v.text);
     if (name === 'mute') return this.ledger.mute(this.human(), v.id, v.muted);
     if (name === 'end') {
-      const result = this.ledger.end(this.human(), v.id);
-      this.ledger.options.stopAudio(v.id);
-      return result;
+      const result = this.ledger.end(this.human(), v.id, 'human_end', v.retryTermination === true);
+      return { ...result, providerTermination: await this.ledger.waitForTermination(v.id) };
     }
     if (name === 'disconnected') return this.ledger.disconnect(v.id);
     throw new Error('Unsupported voice control.');
@@ -135,7 +134,7 @@ class VoiceWindow {
   }
   stop() {
     try {
-      this.ledger.close();
+      Promise.resolve(this.ledger.close()).catch(() => {});
     } catch {
       this.ledger.live?.abort.abort();
       this.ledger.live = null;

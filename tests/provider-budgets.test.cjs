@@ -139,6 +139,10 @@ test('voice totals accepted response usage without dropping unknown responses, k
   assert.equal(reservation.actual.tokens, 45);
   assert.equal(reservation.actual.costMicros, null);
   assert.equal(f.voice.end(f.human(), s.sessionId).remoteTerminationVerified, false);
+  f.provider.terminate = async () => ({state: 'initiated'});
+  await f.voice.waitForTermination(s.sessionId);
+  assert.equal(f.voice.termination(s.sessionId).state, 'initiated');
+  assert.equal(f.voice.termination(s.sessionId).finalUsageVerified, false);
   const restarted = new ResourceBudgets(f.budgetOptions);
   assert.equal(restarted.state.entries[0].status, 'unknown');
   assert.equal(restarted.state.entries[0].actual.tokens, 45);

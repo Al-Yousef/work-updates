@@ -78,6 +78,17 @@ function validate(s) {
   for (const e of s.sessions)
     if (e.selectedContext !== undefined)
       require('./voice-context.cjs').validateMetadata(e.selectedContext);
+  for (const e of s.sessions)
+    if (
+      e.providerTermination !== undefined &&
+      (!['pending', 'initiated', 'unconfirmed', 'unavailable'].includes(
+        e.providerTermination.state,
+      ) ||
+        !Number.isSafeInteger(e.providerTermination.attempts) ||
+        e.providerTermination.attempts < 1 ||
+        !Number.isFinite(e.providerTermination.at))
+    )
+      throw held('Invalid provider termination checkpoint.');
 }
 class VoiceSession {
   constructor(options) {
@@ -86,23 +97,44 @@ class VoiceSession {
     this.file = path.join(options.directory, 'voice.json');
     this.live = null;
     this.failed = false;
+    this.terminationJobs = new Map();
+    this.pendingTerminations = new Set();
     const saved = readStore(this.file);
     this.state = saved.missing ? { version: 1, sessions: [] } : saved.value;
     validate(this.state);
     for (const session of this.state.sessions) Object.assign(session, usageSummary(session));
     this.diskHash = saved.missing ? null : hash(fs.readFileSync(this.file));
-    if (this.state.sessions.some((s) => ['starting', 'connected', 'muted'].includes(s.status)))
+    if (
+      this.state.sessions.some(
+        (s) =>
+          ['starting', 'connected', 'muted'].includes(s.status) ||
+          s.providerTermination?.state === 'pending',
+      )
+    )
       this.change((v) => {
-        for (const s of v.sessions)
+        for (const s of v.sessions) {
+          if (s.providerTermination?.state === 'pending')
+            s.providerTermination.state = 'unconfirmed';
           if (['starting', 'connected', 'muted'].includes(s.status)) {
             s.status = 'unconfirmed';
             for (const r of s.responses) if (r.status === 'active') r.status = 'unconfirmed';
             Object.assign(s, usageSummary(s));
           }
+        }
       });
   }
   now() {
     return this.options.now?.() ?? Date.now();
+  }
+  get active() {
+    return !!this.live || this.pendingTerminations.size > 0;
+  }
+  forgetProviderCredentials() {
+    if (this.active)
+      throw held(
+        'End the current voice session and wait for its end request before removing credentials.',
+      );
+    this.options.provider.forgetCredentials?.();
   }
   change(update) {
     const disk = fs.existsSync(this.file) ? hash(fs.readFileSync(this.file)) : null;
@@ -254,6 +286,7 @@ class VoiceSession {
       if (live.context) this.options.context.assertCurrent(live.context);
       this.options.budgets?.started(id, id);
       const answer = await this.options.provider.connect({
+        sessionId: id,
         sdp,
         signal: live.abort.signal,
         model: e.model,
@@ -272,6 +305,7 @@ class VoiceSession {
       live.connected = true;
       return { sdp: answer, sessionId: id };
     } catch (error) {
+      this.requestTermination(id);
       if (this.options.budgets) {
         const reservation = this.options.budgets.state.entries.find((r) => r.id === id);
         this.options.budgets.finish(id, {
@@ -355,7 +389,6 @@ class VoiceSession {
           updated.usageActual.totalTokens >= updated.tokenReservation ||
           this.options.budgets.tokenLimitReached(id)
         ) {
-          this.options.stopAudio?.(id);
           this.end(
             {
               role: 'human',
@@ -400,21 +433,86 @@ class VoiceSession {
     });
     return { sessionId: id, microphoneMuted: muted, providerSessionContinues: true };
   }
-  end(i, id, reason = 'human_end') {
+  requestTermination(id, retry = false) {
+    const entry = this.entry(id);
+    if (
+      this.terminationJobs.has(id) &&
+      (!retry || entry.providerTermination?.state !== 'unconfirmed')
+    )
+      return this.terminationJobs.get(id);
+    if (entry.providerTermination?.state === 'initiated')
+      return Promise.resolve(entry.providerTermination);
+    const checkpoint = {
+      state: 'pending',
+      attempts: (entry.providerTermination?.attempts || 0) + 1,
+      at: this.now(),
+    };
+    try {
+      this.change((v) => {
+        v.sessions.find((s) => s.id === id).providerTermination = checkpoint;
+      });
+    } catch {
+      /* Stop the exact owned call even when its journal requires recovery. */
+    }
+    this.pendingTerminations.add(id);
+    const job = Promise.resolve()
+      .then(() => this.options.provider.terminate?.(id, { retry }) || { state: 'unavailable' })
+      .catch(() => ({ state: 'unconfirmed' }))
+      .then((result) => {
+        const state = ['initiated', 'unconfirmed', 'unavailable'].includes(result?.state)
+          ? result.state
+          : 'unconfirmed';
+        const settled = { ...checkpoint, state };
+        try {
+          this.change((v) => {
+            v.sessions.find((s) => s.id === id).providerTermination = settled;
+          });
+        } catch {
+          return { ...settled, checkpoint: 'unconfirmed' };
+        }
+        return settled;
+      })
+      .finally(() => this.pendingTerminations.delete(id));
+    this.terminationJobs.set(id, job);
+    return job;
+  }
+  termination(id) {
+    const e = this.entry(id);
+    return {
+      sessionId: id,
+      state: e.providerTermination?.state || 'unavailable',
+      remoteTerminationVerified: false,
+      remoteTerminationRequested: e.providerTermination?.state === 'initiated',
+      finalUsageVerified: false,
+      retryAvailable:
+        e.providerTermination?.state === 'unconfirmed' &&
+        !!this.options.provider.canTerminate?.(id),
+    };
+  }
+  async waitForTermination(id) {
+    await this.terminationJobs.get(id);
+    return this.termination(id);
+  }
+  end(i, id, reason = 'human_end', retryTermination = false) {
     this.human(i);
     const e = this.entry(id);
     if (this.live?.id === id) {
       this.live.abort.abort();
       this.live = null;
     }
-    this.change((v) => {
-      const s = v.sessions.find((x) => x.id === id);
-      s.status = 'ended';
-      s.endedAt = this.now();
-      s.reason = reason;
-      for (const r of s.responses) if (r.status === 'active') r.status = 'unconfirmed';
-      Object.assign(s, usageSummary(s));
-    });
+    this.options.stopAudio?.(id);
+    try {
+      this.change((v) => {
+        const s = v.sessions.find((x) => x.id === id);
+        s.status = 'ended';
+        s.endedAt = this.now();
+        s.reason = reason;
+        for (const r of s.responses) if (r.status === 'active') r.status = 'unconfirmed';
+        Object.assign(s, usageSummary(s));
+      });
+    } finally {
+      this.requestTermination(id, retryTermination);
+    }
     if (this.options.budgets) {
       const reservation = this.options.budgets.state.entries.find((x) => x.id === id);
       if (reservation && ['reserved', 'running', 'unknown'].includes(reservation.status)) {
@@ -436,12 +534,17 @@ class VoiceSession {
       this.live.abort.abort();
       this.live = null;
     }
-    this.change((v) => {
-      const s = v.sessions.find((x) => x.id === id);
-      s.status = 'disconnected';
-      for (const r of s.responses) if (r.status === 'active') r.status = 'unconfirmed';
-      Object.assign(s, usageSummary(s));
-    });
+    this.options.stopAudio?.(id);
+    try {
+      this.change((v) => {
+        const s = v.sessions.find((x) => x.id === id);
+        s.status = 'disconnected';
+        for (const r of s.responses) if (r.status === 'active') r.status = 'unconfirmed';
+        Object.assign(s, usageSummary(s));
+      });
+    } finally {
+      this.requestTermination(id);
+    }
     if (this.options.budgets) {
       this.options.budgets.finish(id, { status: 'unknown' });
     }
@@ -465,7 +568,6 @@ class VoiceSession {
         id,
         'finite_session_or_work_hold',
       );
-      this.options.stopAudio?.(id);
     }
   }
   inspect() {
@@ -476,14 +578,15 @@ class VoiceSession {
       taskDispatch: false,
       outboundTelephony: false,
       automaticReconnect: false,
+      providerTermination: this.state.sessions.slice(-8).map((s) => this.termination(s.id)),
     };
   }
   close() {
     if (this.live) {
       const id = this.live.id;
       this.disconnect(id);
-      this.options.stopAudio?.(id);
     }
+    return Promise.allSettled([...this.terminationJobs.values()]);
   }
 }
 module.exports = { VoiceSession, validate };

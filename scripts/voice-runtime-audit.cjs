@@ -25,6 +25,7 @@ fs.mkdirSync(directory, { recursive: true });
     assert.equal(await app.evaluate(() => global.voiceFixture.ledger.state.sessions.length), 0);
     await page.evaluate(() => {
       window.syntheticVoiceTracks = [];
+      window.syntheticVoiceEvents = [];
       Object.defineProperty(navigator, 'mediaDevices', {
         value: {
           getUserMedia: async () => {
@@ -44,12 +45,23 @@ fs.mkdirSync(directory, { recursive: true });
       window.RTCPeerConnection = class {
         addTrack() {}
         createDataChannel() {
-          return { readyState: 'connecting', close() {}, send() {} };
+          this.channel = {
+            readyState: 'connecting',
+            close() {},
+            send(value) {
+              window.syntheticVoiceEvents.push(JSON.parse(value));
+            },
+          };
+          return this.channel;
         }
         async createOffer() {
           return { sdp: 'v=0\r\nsynthetic offer' };
         }
         async setLocalDescription() {}
+        async setRemoteDescription() {
+          this.channel.readyState = 'open';
+          this.channel.onopen?.();
+        }
         close() {
           this.connectionState = 'closed';
           this.onconnectionstatechange?.();
@@ -100,6 +112,71 @@ fs.mkdirSync(directory, { recursive: true });
       false,
     );
     assert.equal(await page.getByLabel('Use my microphone for this session').isChecked(), false);
+    await page.waitForFunction(() =>
+      document.getElementById('terminationStatus').textContent.includes('unconfirmed'),
+    );
+    await page
+      .getByRole('button', { name: 'Retry provider end request', exact: true })
+      .waitFor({ state: 'visible' });
+    await app.evaluate(() => {
+      global.voiceFixture.provider.endState = 'initiated';
+    });
+    await page.getByRole('button', { name: 'Retry provider end request', exact: true }).click();
+    await page.waitForFunction(() =>
+      document.getElementById('terminationStatus').textContent.includes('accepted the end request'),
+    );
+    const endedId = await app.evaluate(() => global.voiceFixture.ledger.state.sessions.at(-1).id);
+    assert.deepEqual(await app.evaluate(() => global.voiceFixture.endRequests), [endedId, endedId]);
+    assert.match(
+      await page.locator('#terminationStatus').textContent(),
+      /Final usage and billing remain unknown/,
+    );
+    await page.screenshot({
+      path: path.join(directory, 'provider-end-initiated.png'),
+      fullPage: true,
+    });
+    await app.evaluate(() => {
+      global.voiceFixture.provider.connect = async () => 'v=0\r\nsynthetic connected';
+    });
+    await page.getByLabel('Discuss a task').selectOption('');
+    await page.getByLabel('Use my microphone for this session').check();
+    await page.getByLabel('I accept separate API billing for this session').check();
+    await page.getByRole('button', { name: 'Start voice', exact: true }).click();
+    await page.waitForFunction(() =>
+      document.getElementById('status').textContent.includes('waiting for audio'),
+    );
+    await page.getByRole('button', { name: 'Mute microphone', exact: true }).click();
+    await page.waitForFunction(() => window.syntheticVoiceTracks.at(-1).enabled === false);
+    await page.getByRole('button', { name: 'Unmute microphone', exact: true }).click();
+    await page.waitForFunction(() => window.syntheticVoiceTracks.at(-1).enabled === true);
+    await app.evaluate(() => {
+      const l = global.voiceFixture.ledger;
+      l.events(l.live.id, {
+        type: 'response.created',
+        response: { id: 'synthetic-active-response' },
+      });
+    });
+    await page.getByLabel('Say it in text').fill('Synthetic typed steering while voice continues');
+    await page
+      .getByRole('button', { name: 'Send to this voice conversation', exact: true })
+      .click();
+    assert.deepEqual(
+      (await page.evaluate(() => window.syntheticVoiceEvents)).map((e) => e.type),
+      [
+        'response.cancel',
+        'output_audio_buffer.clear',
+        'conversation.item.create',
+        'response.create',
+      ],
+    );
+    await page.getByRole('button', { name: 'End voice', exact: true }).click();
+    await page.waitForFunction(
+      () =>
+        window.syntheticVoiceTracks.at(-1).stopped &&
+        document
+          .getElementById('terminationStatus')
+          .textContent.includes('accepted the end request'),
+    );
     await app.close();
     app = null;
     fs.writeFileSync(
@@ -113,7 +190,7 @@ fs.mkdirSync(directory, { recursive: true });
           realAudioDevicesUsed: 0,
           installedAppChanged: false,
           evidence:
-            'Sandboxed voice window; injected capture/peer; pending-handshake end stops owned tracks',
+            'Sandboxed voice window; injected capture/peer/provider; pending-handshake end, exact human retry, provider initiation disclosure, mute/unmute and simultaneous typed steering',
           ...result,
         },
         null,

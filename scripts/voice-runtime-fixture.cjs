@@ -11,12 +11,18 @@ const { VoiceSession } = require('../src/voice-session.cjs'),
   { VoiceContext } = require('../src/voice-context.cjs'),
   { VoiceWindow } = require('../src/voice-window.cjs');
 let window, ledger;
+const endRequests = [];
 app.on('window-all-closed', () => {});
 app.on('before-quit', () => window?.close());
 app.whenReady().then(() => {
   const provider = {
     support: () => ({ provider: 'openai-realtime', model: 'synthetic', configured: true }),
     connect: async () => new Promise(() => {}),
+    canTerminate: () => true,
+    terminate: async (id) => {
+      endRequests.push(id);
+      return { state: provider.endState || 'unconfirmed' };
+    },
   };
   ledger = new VoiceSession({
     directory,
@@ -53,5 +59,5 @@ app.whenReady().then(() => {
     actorId: ledger.actorId,
   });
   window.open();
-  global.voiceFixture = { ledger, window };
+  global.voiceFixture = { ledger, window, provider, endRequests };
 });

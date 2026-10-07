@@ -194,7 +194,11 @@ test('provider transport keeps key server-side, fixes endpoint, bounds timeout a
     available: () => true,
     fetch: async (url, options) => {
       request = { url, options };
-      return { ok: true, text: async () => 'v=0\r\nfixture' };
+      return {
+        ok: true,
+        headers: new Headers({ Location: '/v1/realtime/calls/rtc_owned_fixture' }),
+        text: async () => 'v=0\r\nfixture',
+      };
     },
   });
   assert.equal(provider.support().configured, false);
@@ -202,6 +206,7 @@ test('provider transport keeps key server-side, fixes endpoint, bounds timeout a
   assert.equal(fs.readFileSync(provider.file).includes(Buffer.from(secret)), false);
   assert.equal(JSON.stringify(provider.support()).includes(secret), false);
   await provider.connect({
+    sessionId: crypto.randomUUID(),
     sdp: 'v=0\r\noffer',
     model: 'gpt-realtime-2.1',
     signal: new AbortController().signal,
