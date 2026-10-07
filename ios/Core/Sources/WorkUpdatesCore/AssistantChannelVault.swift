@@ -4,7 +4,7 @@ import Security
 public enum AssistantChannelVault {
     private static func held(_ status:OSStatus) -> PeerError {
         if status==errSecMissingEntitlement {return .server("This build cannot access the iPhone Keychain. Use a correctly signed build.")}
-        return .server("The private assistant credential is unavailable in Keychain. Unlock this device and reconnect; no question was sent.")
+        return .server("The private assistant credential is unavailable in Keychain. Unlock this device and reconnect.")
     }
     private static let service="io.workupdates.iphone.private-assistant"
     public static func load() throws -> String? {

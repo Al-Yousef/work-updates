@@ -101,6 +101,7 @@ function capabilities({
   browsers,
   peerContract,
   helper,
+  privateChannels,
 } = {}) {
   const features = [
     {
@@ -137,9 +138,14 @@ function capabilities({
     },
     {
       name: 'Phone assistant',
-      state: peerContract?.assistant === true ? 'negotiated' : 'unsupported',
+      state: privateChannels
+        ? 'separate_private_owner_grant_required'
+        : peerContract?.assistant === true
+          ? 'negotiated'
+          : 'unsupported',
       lastVerifiedAt: null,
-      reason: 'Phone task controls do not establish assistant or voice support',
+      reason:
+        'Private owner questions use a separate finite grant; task pairing and voice remain separate',
     },
   ];
   return {
@@ -155,21 +161,30 @@ function capabilities({
         attachments: peerContract?.attachments === true,
         voice: false,
       },
+      {
+        name: 'Private owner phone channel',
+        version: privateChannels ? 1 : null,
+        assistantQuestions: !!privateChannels,
+        grantRequired: true,
+        sharedAudience: false,
+        taskActions: false,
+        attachments: false,
+        voice: false,
+        accountEntitlement: 'unverified',
+      },
     ],
-    executors: (executors?.inspect?.() || [])
-      .slice(-32)
-      .map((e) => ({
-        id: e.id,
-        taskId: e.taskId,
-        deviceId: e.deviceId,
-        workspace: e.workspace,
-        provider: e.provider,
-        serverVersion: e.serverVersion,
-        access: e.access,
-        lastVerifiedAt: e.verifiedAt || null,
-        verification: 'Binding recorded at grant; current account is rechecked before dispatch',
-        online: 'unknown_until_next_handshake',
-      })),
+    executors: (executors?.inspect?.() || []).slice(-32).map((e) => ({
+      id: e.id,
+      taskId: e.taskId,
+      deviceId: e.deviceId,
+      workspace: e.workspace,
+      provider: e.provider,
+      serverVersion: e.serverVersion,
+      access: e.access,
+      lastVerifiedAt: e.verifiedAt || null,
+      verification: 'Binding recorded at grant; current account is rechecked before dispatch',
+      online: 'unknown_until_next_handshake',
+    })),
     appScopes: documents
       ? [
           {

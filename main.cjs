@@ -197,7 +197,7 @@ responsibilities.options.outcomeRequired=entry=>outcomes.required(entry);
 responsibilities.options.outcomeAdmission=(entry,human)=>outcomes.admission(entry,human);
 const assistant = new Assistant({directory:dataDir,snapshot:()=>devices.snapshot(),attachments,
   budgets,
-  profile:assistantProfile,capabilities:()=>profileCapabilities({assistant,executors,documents,voice:assistant.options.voice,browsers:assistant.options.browsers,peerContract:require('./src/peer-contract.cjs').capabilities(),helper:client.status?.()}),
+  profile:assistantProfile,capabilities:()=>profileCapabilities({assistant,executors,documents,voice:assistant.options.voice,browsers:assistant.options.browsers,peerContract:require('./src/peer-contract.cjs').capabilities(),helper:client.status?.(),privateChannels:assistantChannels}),
   voice,openVoice,openChannels,
   privacy:null,
   executors,
