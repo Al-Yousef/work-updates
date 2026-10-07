@@ -36,7 +36,7 @@ class VoiceWindow {
           };
         }
       });
-    ledger.options.stopAudio = (id) => this.window?.webContents.send('hyphen:voice:stop', id);
+    ledger.options.stopAudio = (id) => this.notifyStop(id);
     this.timer = setInterval(() => {
       try {
         ledger.expire();
@@ -132,6 +132,14 @@ class VoiceWindow {
     owned.loadFile(this.file);
     return { opened: true, microphoneStarted: false };
   }
+  notifyStop(id) {
+    try {
+      if (this.window && !this.window.isDestroyed() && !this.window.webContents.isDestroyed())
+        this.window.webContents.send('hyphen:voice:stop', id);
+    } catch {
+      /* Window teardown cannot block provider termination or application quit. */
+    }
+  }
   stop() {
     try {
       Promise.resolve(this.ledger.close()).catch(() => {});
@@ -139,7 +147,7 @@ class VoiceWindow {
       this.ledger.live?.abort.abort();
       this.ledger.live = null;
     } finally {
-      this.window?.webContents.send('hyphen:voice:stop', null);
+      this.notifyStop(null);
     }
   }
   close() {

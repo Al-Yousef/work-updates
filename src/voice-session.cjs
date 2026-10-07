@@ -493,6 +493,13 @@ class VoiceSession {
     await this.terminationJobs.get(id);
     return this.termination(id);
   }
+  stopLocalAudio(id) {
+    try {
+      this.options.stopAudio?.(id);
+    } catch {
+      /* A destroyed renderer must not prevent the owned provider end request. */
+    }
+  }
   end(i, id, reason = 'human_end', retryTermination = false) {
     this.human(i);
     const e = this.entry(id);
@@ -500,7 +507,7 @@ class VoiceSession {
       this.live.abort.abort();
       this.live = null;
     }
-    this.options.stopAudio?.(id);
+    this.stopLocalAudio(id);
     try {
       this.change((v) => {
         const s = v.sessions.find((x) => x.id === id);
@@ -534,7 +541,7 @@ class VoiceSession {
       this.live.abort.abort();
       this.live = null;
     }
-    this.options.stopAudio?.(id);
+    this.stopLocalAudio(id);
     try {
       this.change((v) => {
         const s = v.sessions.find((x) => x.id === id);
@@ -584,7 +591,12 @@ class VoiceSession {
   close() {
     if (this.live) {
       const id = this.live.id;
-      this.disconnect(id);
+      try {
+        this.disconnect(id);
+      } catch {
+        // Disconnect already stopped audio and requested the exact provider
+        // end in its finally block. Wait for that request despite a held disk.
+      }
     }
     return Promise.allSettled([...this.terminationJobs.values()]);
   }

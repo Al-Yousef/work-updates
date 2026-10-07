@@ -226,3 +226,31 @@ test('restart retains uncertainty and cannot target a foreign call or reconnect 
   assert.equal(restarted.termination(id).state, 'initiated');
   assert.equal(restarted.termination(id).remoteTerminationVerified, false);
 });
+test('a destroyed audio renderer cannot prevent exact provider termination', async (t) => {
+  const f = fixture(t), id = await f.start();
+  f.options.stopAudio = () => { throw new Error('Renderer was destroyed'); };
+  f.ledger.end(f.human(), id);
+  await f.ledger.close();
+  assert.equal(f.ledger.live, null);
+  assert.equal(f.calls.length, 2);
+  assert.equal(f.ledger.termination(id).state, 'initiated');
+});
+test('application close waits for the exact end request when checkpoint bytes are held', async (t) => {
+  let release;
+  const gate = new Promise(resolve => { release = resolve; });
+  const f = fixture(t, async url => url.endsWith('/hangup') ? gate : {
+    ok: true, headers: new Headers({ Location: '/v1/realtime/calls/rtc_close_held' }), text: async () => 'v=0\r\n',
+  }), id = await f.start();
+  fs.writeFileSync(f.ledger.file, '{"version":99,"preserve":"close-original"}');
+  const before = fs.readFileSync(f.ledger.file);
+  const closing = f.ledger.close();
+  await new Promise(resolve => setImmediate(resolve));
+  assert.equal(f.ledger.live, null);
+  assert.equal(f.ledger.active, true);
+  assert.equal(f.calls.length, 2);
+  release({ status: 200 });
+  await closing;
+  assert.equal(f.ledger.active, false);
+  assert.deepEqual(fs.readFileSync(f.ledger.file), before);
+  assert.equal(f.ledger.termination(id).remoteTerminationVerified, false);
+});
