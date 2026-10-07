@@ -11,7 +11,7 @@ const policy = {
   'authorizations.json':['Human grants, revocations and action receipts','Finite grants; revocation/replay evidence retained','Private export; revoke access independently of stored content'],
   'commitments.json':['Action items and user corrections','Component bounds; original evidence retained','Private export; original commitment controls'],
   'delegations.json':['Child scopes, accepted turns and parent reviews','Component bounds; restart/replay checkpoints retained','Private export; stop does not erase accepted external work'],
-  'research.json':['Read grants and retained source extracts','64 statements and 32 scans per scope; grants bounded','Private export; revoke stops future reads; extracts remain'],
+  'research.json':['Read grants and retained source extracts','64 statements and 32 scans per scope; grants bounded','Exact disconnected source-extracts preview; active reads/retained reflection dependencies hold removal; grants and receipts remain'],
   'work-controls.json':['Stop/resume holds and resource checkpoints','Component bounds; replay guards retained','Private export; no deletion that silently resumes work'],
   'reflections.json':['Review scopes, source statements and suggestions','Configured 1..365 days for old review checkpoints','Private export; original review controls; pinned notes separate'],
   'triage.json':['Notification rules, findings and delivery decisions','256 findings and 512 decisions; finite rules','Private export; disable notifications separately'],
@@ -28,9 +28,9 @@ function inventory(versions) {
   });
   return local.concat([
     {name:'observer/data/source-cache.json + feed.json + details-request.json',location:'local app data',retention:'Collector cache; disconnect retains prior records',access:'local collector; connected snapshots',removal:'Exact disconnected source preview; derivatives remain'},
-    {name:'voice-provider.enc',location:'OS-encrypted local app data',retention:'Until owner removes voice configuration',access:'Configured local voice provider; secret never exported',removal:'Explicit provider key removal pending'},
-    {name:'attachments/',location:'local app data',retention:'No automatic expiry; referenced by drafts/history/receipts',access:'local app; explicitly selected dispatch',removal:'Dependency-aware removal adapter pending'},
-    {name:'logs/',location:'local app data',retention:'Each logger: 512 KiB plus two backups maximum',access:'local app; explicit redacted diagnostic export',removal:'Explicit diagnostic file cleanup pending'},
+    {name:'voice-provider.enc',location:'OS-encrypted local app data',retention:'Until owner removes voice configuration',access:'Configured local voice provider; secret never exported',removal:'Exact voice-configuration preview and confirmation; live voice blocks removal'},
+    {name:'attachments/',location:'local app data',retention:'No automatic expiry; referenced by drafts/history/receipts',access:'local app; explicitly selected dispatch',removal:'Exact orphan-attachments preview; referenced or used/imported this session images remain'},
+    {name:'logs/',location:'local app data',retention:'Each logger: 512 KiB plus two backups maximum',access:'local app; explicit redacted diagnostic export',removal:'Exact diagnostic-backups preview removes app.log.1/.2; active and other logger files remain'},
     {name:'exports/',location:'local app data',retention:'Until explicitly removed by owner; no automatic sharing',access:'local owner; exported files remain private',removal:'Original files; export copies do not track later deletion'},
     {name:'paired-devices.enc / paired-host.enc',location:'OS-encrypted local app data',retention:'Until forgotten/revoked; invalid encryption is held',access:'local OS protected app; never plaintext export',removal:'Forget/revoke pairing; remote retained content is separate'},
     {name:'iPhone draft journal / Keychain',location:'paired phone only',retention:'128 drafts and 512 receipts; credential until forgotten',access:'phone file protection/Keychain and paired authenticated host',removal:'Phone-owned controls; desktop cannot erase it'},

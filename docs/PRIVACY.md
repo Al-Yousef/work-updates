@@ -9,13 +9,14 @@ Hyphen uses local app data on each desktop. Its paired phone has separate protec
 | Assistant conversation and alerts | Local desktop; 500 conversation exchanges and 40 alerts | Exact local conversation preview removes selected exchanges and old memory inspections; controls, replay guards and pinned notes remain |
 | Pinned notes | Local desktop; 32 explicit notes, up to 1000 characters each | Exact note preview; conversation and source extracts remain |
 | Source catalogue, feed and cached conversations | Local collector; bounded original reads; old disconnected cache records remain | Disconnect excludes the source from future SQL results and rollout reads. Exact source-cache preview removes that source from cache, feed and pending detail IDs after verified writer shutdown |
-| Research extracts | Local desktop; 64 retained statements and 32 scans per scope; finite read grants | Existing pause/revoke denies future research. Private redacted export is available; cached-source deletion does not remove these derivatives. A separate extract-removal adapter remains required |
+| Research extracts | Local desktop; 64 retained statements and 32 scans per scope; finite read grants | Exact disconnected-source `source-extracts` preview removes original retained statement bodies. Active reads and retained reflection statements hold removal. Grants, cursor/seen and scan/replay evidence remain; other derivatives require separate controls |
 | Reflection context, findings and suggestions | Local desktop; configured 1..365-day retention for old checkpoints and finite review limits | Original reflection controls and private export; pinned notes and commitments are separate |
 | Task status, drafts, human instructions, action items, schedules, access grants, workers and stop/resume | Local desktop; individual component bounds, finite grants and persisted action/replay checkpoints | Private redacted exports and original cancel/revoke/stop controls. Cancellation and disconnect do not erase instructions or already accepted action receipts |
 | Outcome checks and resource/executor records when supported | Local desktop; finite freshness/budget windows and preserved uncertain/revoked checkpoints | Original component controls; no blanket deletion that silently reenables an action |
 | Activity | Local desktop; default 30 days and 2048 content-free events; explicit retention configuration | Existing paginated inspection and opt-in redacted export. Missing events are not proof that no action occurred |
-| Diagnostics | Local desktop; each logger capped at 512 KiB with up to two backups; event fields allowlisted and sensitive text omitted | Existing previewed redacted diagnostic export. Explicit file-cleanup adapter remains required |
-| Attachments | Local desktop; content-addressed images, at most 20 MiB each; no automatic expiry | Explicitly selected message dispatch. References in drafts, conversation and receipts must be considered before a future removal adapter; clearing text does not claim to erase an image |
+| Diagnostics | Local desktop; each logger capped at 512 KiB with up to two backups; event fields allowlisted and sensitive text omitted | Existing previewed redacted diagnostic export. `diagnostic-backups` removes exact `app.log.1`/`.2` after hash preview; current/future diagnostics and other loggers remain |
+| Attachments | Local desktop; content-addressed images, at most 20 MiB each; no automatic expiry | `orphan-attachments` removes only unused files. Every supported private journal, live assistant/message state and this session's imported/read images are checked for references. Referenced images and external copies remain |
+| Voice provider key | OS-encrypted local file; until explicitly removed | `voice-configuration` preview exposes file metadata only. Current voice must end before removal; the secret cannot be exported. Voice session/usage and remote account data remain |
 | Export copies | Private `exports/` on this desktop; no automatic expiry or upload | Owner reviews free text before sharing. Deleting original records does not erase previous export copies |
 | Pairing credentials | OS-encrypted desktop files; until pairing forgotten/revoked | Existing pairing controls. Credential files cannot be exported through privacy text controls; forgetting a peer does not erase that peer's copies |
 | Phone draft journal and Keychain | Protected phone storage; 128 drafts, 512 receipts; credentials until forgotten | Phone-owned controls and exact authenticated host/source binding. Desktop deletion does not erase phone storage |
@@ -32,10 +33,15 @@ These controls run without model inference. Only the exact accepted human comman
 /privacy preview notes
 /privacy preview conversation
 /privacy preview source-cache SOURCE_UUID
+/privacy preview source-extracts SOURCE_UUID
+/privacy preview orphan-attachments
+/privacy preview diagnostic-backups
+/privacy preview voice-configuration
 /privacy delete PREVIEW_UUID
 /privacy export notes
 /privacy export conversation
 /privacy export source-cache SOURCE_UUID
+/privacy export source-extracts SOURCE_UUID
 /privacy export SUPPORTED_PRIVATE_STORE.json
 ```
 
@@ -49,4 +55,6 @@ Export copies omit recognized credential fields and text patterns, reject encryp
 
 Synthetic production-path tests cover literal Assistant controls, distinct notes/conversation, stale previews, expired confirmations, foreign actors, busy dependencies, concurrent deletion, replay/restart, preserved future formats, writer-shutdown failure, source boundaries, private export and redirected-directory refusal. The collector tests use only an owned temporary SQLite database and rollout files. Observer checks confirm configuration preservation and actual owned Python-child exit.
 
-No existing account/chat, phone, installed Hyphen data or model is used. Remaining #31 acceptance includes dependency-aware extract/attachment/diagnostic cleanup, phone-owned removal and broader cross-channel inspection. The pending reader account audit stays separate and is not retried by this feature.
+Retained-data production-path tests remove actual owned temporary files and exact Research statement records; restart retains disconnects and replay receipts. They cover active reads/reflection derivatives/voice, new live image references, preserved draft/history references, redirected attachment folders, changed backup files, ongoing redacted diagnostics, secret export refusal and foreign actors. Newly imported/read images stay protected for the whole app session because a renderer can still hold an unsaved reference. A fresh session may preview truly unused files.
+
+No existing account/chat, phone, installed Hyphen data or model is used. Remaining #31 scope includes reflection derivative cleanup, document-copy/browser-login classes as those providers integrate, phone-owned removal and broader cross-channel inspection. The pending reader account audit stays separate and is not retried by this feature.
