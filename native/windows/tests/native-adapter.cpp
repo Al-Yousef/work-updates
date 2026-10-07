@@ -79,6 +79,8 @@ int main() {
         check(command(endpoint,taskbar::Command::Hover)==1,"Reopen after X"); Sleep(380);
         SendMessageW(panel,WM_KEYDOWN,VK_ESCAPE,0); Sleep(380);
         check(!IsWindowVisible(panel),"Escape dismisses");
+        check(command(endpoint,taskbar::Command::Stopped)==1&&WaitForSingleObject(process.hProcess,0)==WAIT_TIMEOUT,"Stopped adapter leaves the queue and tray available");
+        check(command(endpoint,taskbar::Command::Failed)==1&&command(endpoint,taskbar::Command::Hello)==1,"Failed adapter leaves the native control responsive");
         PostMessageW(control,WM_CLOSE,0,0);
         check(WaitForSingleObject(process.hProcess,3000)==WAIT_OBJECT_0,"Own native app exits gracefully");
         DWORD exit=1; check(GetExitCodeProcess(process.hProcess,&exit)!=0,"Read native child exit status");
@@ -94,7 +96,24 @@ int main() {
         check(!trace.empty(),"Read trace from this isolated app only");
         check(trace.find("\"weatherGuard\":true")==std::string::npos && trace.find("\"triggerVisible\":true")==std::string::npos,"Runtime never enabled global hook or visible trigger");
         check(trace.find("\"adapterAutoAttach\":true")==std::string::npos&&trace.find("\"event\":\"explorer-restarted\"")==std::string::npos,"Isolated app cannot attach to Explorer after the taskbar restart message");
-        CloseHandle(process.hProcess);
+        CloseHandle(process.hProcess);process={};panel=nullptr;
+        launch+=L" --no-auto-attach";
+        check(CreateProcessW(executable.c_str(),launch.data(),nullptr,nullptr,FALSE,0,nullptr,nullptr,&startup,&process)!=0,"Start only a fresh owned replacement panel with attachment disabled");
+        targetPid=process.dwProcessId;CloseHandle(process.hThread);taskbar::Endpoint replacement{};ready=false;
+        for(int i=0;i<80;++i){ready=taskbar::readEndpoint(taskbar::endpointPath(executable),replacement)&&replacement.pid==targetPid;if(ready||WaitForSingleObject(process.hProcess,0)!=WAIT_TIMEOUT)break;Sleep(50);}
+        check(ready&&replacement.cookie!=endpoint.cookie,"Replacement panel publishes a different session");EnumWindows(findPanel,0);check(panel!=nullptr,"Find only the replacement panel");
+        auto obsolete=replacement;obsolete.cookie=endpoint.cookie;
+        check(command(obsolete,taskbar::Command::Hover)==0&&!IsWindowVisible(panel),"Obsolete session cannot reveal the replacement panel");
+        check(command(replacement,taskbar::Command::Hello)==1,"Fresh replacement session remains responsive");
+        const HWND replacementControl=reinterpret_cast<HWND>(static_cast<std::uintptr_t>(replacement.window));
+        check(SendMessageTimeoutW(replacementControl,RegisterWindowMessageW(L"TaskbarCreated"),0,0,SMTO_ABORTIFHUNG,2000,&restartResult)!=0,"Replacement no-auto-attach restart message completes");
+        PostMessageW(replacementControl,WM_CLOSE,0,0);check(WaitForSingleObject(process.hProcess,3000)==WAIT_OBJECT_0,"Replacement exits normally without forced termination");
+        check(GetExitCodeProcess(process.hProcess,&exit)&&exit==0,"Replacement returns successful shutdown");
+        check(!std::filesystem::exists(taskbar::endpointPath(executable)),"Replacement removes only its own descriptor");
+        std::ifstream replacementLog(executable.parent_path()/L"artifacts/native-hover.jsonl");std::string replacementTrace;const std::string replacementPid="\"pid\":"+std::to_string(targetPid);
+        while(std::getline(replacementLog,line)){const auto at=line.find(replacementPid);if(at!=std::string::npos&&at+replacementPid.size()<line.size()&&(line[at+replacementPid.size()]==','||line[at+replacementPid.size()]=='}'))replacementTrace+=line+'\n';}
+        check(!replacementTrace.empty()&&replacementTrace.find("\"adapterAutoAttach\":true")==std::string::npos&&replacementTrace.find("\"event\":\"explorer-restarted\"")==std::string::npos,"Replacement never enables attachment after startup or simulated restart");
+        CloseHandle(process.hProcess);process={};
         std::cout<<"PASS "<<checks<<" native adapter integration checks; simulated commands, no Explorer injection\n"; return 0;
     } catch(const std::exception& error) {
         const DWORD windowsError=GetLastError();
