@@ -47,7 +47,8 @@ const {Authorization}=require('./src/authorization.cjs');
 const responsibilityAuthorization=require('./src/responsibility-authorization.cjs');
 const {Commitments}=require('./src/commitments.cjs');
 const {Research}=require('./src/research.cjs');
-let nativeControl;
+const {Delegations}=require('./src/delegations.cjs');
+let nativeControl,delegations;
 const args = process.argv;
 function argument(name) {
   const index = args.indexOf(name);
@@ -119,10 +120,11 @@ const client = demo
 const desktop = demo ? null : new CodexDesktop({log:diagnostics});
 const controller = new Controller(queue, client, {desktop,log:diagnostics});
 function authorizationAdmission(entry){
+  const childAdmission=delegations?.admission(entry);if(childAdmission&&childAdmission!=='allow')return childAdmission;
   const scheduled=scheduledResponsibility.admission(responsibilities,schedules,entry);if(scheduled!=='allow')return scheduled;
   try{return responsibilityAuthorization.messageAdmission(authorization,responsibilities,devices.snapshot(),entry,schedules);}catch{diagnostics.write('authorization.recovery_failed',{code:'AUTHORIZATION_STORAGE_FAILED',noResend:true});return 'wait';}
 }
-const messages = new Messages(queue,controller,{log:diagnostics,attachments,admission:authorizationAdmission,authorize:input=>responsibilityAuthorization.authorizeDispatch(authorization,input,devices.snapshot())});
+const messages = new Messages(queue,controller,{log:diagnostics,attachments,admission:authorizationAdmission,authorize:input=>{const child=delegations?.admission(input,{creating:true});return child&&child!=='allow'?{decision:child==='wait'?'ask':'deny',reason:'delegation_writer_or_permission_gate'}:responsibilityAuthorization.authorizeDispatch(authorization,input,devices.snapshot());}});
 const devices = new Devices({
   directory: dataDir,
   state: () => messages.decorate(queue.snapshot()),
@@ -136,11 +138,12 @@ const commitments=new Commitments({directory:dataDir,humanActorId:'human:'+devic
 const researchReader=require('./src/research-reader.cjs').reader(app.isPackaged?{helper:path.join(process.resourcesPath,'helper',process.platform==='win32'?'collector.exe':'collector'),helperScript:path.join(process.resourcesPath,'helper','collector.py')}:{});
 const research=new Research({directory:dataDir,policy:authorization,reader:researchReader,snapshot:()=>devices.snapshot(),preferences:()=>commitments.preferenceSnapshot(),maintenance:()=>quitting||maintenanceActive(dataDir),log:diagnostics});
 const responsibilities=new Responsibilities({directory:dataDir,snapshot:()=>devices.snapshot(),log:diagnostics,maintenance:()=>quitting||maintenanceActive(dataDir),...responsibilityTarget,
-  authorize:entry=>responsibilityAuthorization.prepare(authorization,entry,devices.snapshot(),entry.currentStep.schedule?schedules.entry(entry.currentStep.schedule.id):null),
+  authorize:entry=>delegations?.authorize(entry)||responsibilityAuthorization.prepare(authorization,entry,devices.snapshot(),entry.currentStep.schedule?schedules.entry(entry.currentStep.schedule.id):null),
   outcome:require('./src/assistant-coordination.cjs').outcome,
   dispatch:(mode,input)=>devices.command(mode==='queue'?'queueMessage':'send',input),cancel:input=>devices.command('cancelMessage',input)});
 const schedules=new Schedules({directory:dataDir,log:diagnostics,maintenance:()=>quitting||maintenanceActive(dataDir),
   probe:entry=>scheduledResponsibility.probe(responsibilities,entry),run:entry=>scheduledResponsibility.run(responsibilities,entry),outcome:(entry,run)=>scheduledResponsibility.outcome(responsibilities,entry,run)});
+delegations=new Delegations({directory:dataDir,policy:authorization,messages,responsibilities,snapshot:()=>devices.snapshot(),log:diagnostics});
 const assistant = new Assistant({directory:dataDir,snapshot:()=>devices.snapshot(),attachments,
   responsibilities,
   schedules,
@@ -148,6 +151,7 @@ const assistant = new Assistant({directory:dataDir,snapshot:()=>devices.snapshot
   authorizationRequest:id=>{const entry=messages.state.entries.find(e=>e.id===id&&e.status==='queued');return entry?responsibilityAuthorization.dispatchRequest({...entry,messageId:id},devices.snapshot()):null;},
   commitments,
   research,
+  delegations,
   binary:queue.state.settings.codexBinary,log:diagnostics,
   loadContext:targets=>require('./src/assistant-context.cjs').loadContext({
     snapshot:()=>devices.snapshot(),
@@ -197,12 +201,17 @@ commitments.on('change',()=>publish());
 research.on('change',()=>publish());
 function driveResearch(){void research.tick().catch(()=>diagnostics.write('research.recovery_failed',{code:'RESEARCH_STORAGE_FAILED',noResend:true}));}
 const researchTimer=setInterval(driveResearch,60000);researchTimer.unref();queueMicrotask(driveResearch);
+function driveDelegations(){void delegations.tick().catch(()=>diagnostics.write('delegation.recovery_failed',{code:'DELEGATION_RECOVERY_FAILED',noResend:true}));}
+delegations.on('change',()=>publish());
+const delegationTimer=setInterval(driveDelegations,60000);delegationTimer.unref();
+queueMicrotask(driveDelegations);
 function driveSchedules(){try{schedules.observe();}catch{diagnostics.write('schedule.recovery_failed',{code:'SCHEDULE_RECOVERY_FAILED',noResend:true});}void schedules.tick().catch(()=>diagnostics.write('schedule.recovery_failed',{code:'SCHEDULE_RECOVERY_FAILED',noResend:true}));}
 schedules.on('change',()=>publish());
-responsibilities.on('change',()=>{publish();queueMicrotask(()=>responsibilities.pump());queueMicrotask(driveSchedules);});
+responsibilities.on('change',()=>{publish();queueMicrotask(()=>responsibilities.pump());queueMicrotask(driveSchedules);queueMicrotask(driveDelegations);});
 schedules.start();
 devices.on('change', () => {
   responsibilities.observe(devices.snapshot());
+  driveDelegations();
   driveSchedules();
   void responsibilities.pump();
   assistant.observe(devices.snapshot());
@@ -215,6 +224,7 @@ devices.on('change', () => {
 let publication;
 queue.on('change', () => {
   responsibilities.observe(devices.snapshot());
+  driveDelegations();
   driveSchedules();
   void responsibilities.pump();
   assistant.observe(devices.snapshot());
@@ -930,6 +940,7 @@ app.on('before-quit', () => {
   authorization.close();
   commitments.close();
   research.close();clearInterval(researchTimer);
+  delegations.close();clearInterval(delegationTimer);
   hostPeer?.close();
   devices.close();
   nativeControl?.close();

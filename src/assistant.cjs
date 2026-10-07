@@ -15,6 +15,7 @@ const {command:authorizationCommand}=require('./authorization-command.cjs');
 const {command:scheduleCommand}=require('./schedule-command.cjs');
 const {command:commitmentCommand}=require('./commitment-command.cjs');
 const {command:researchCommand}=require('./research-command.cjs');
+const {command:delegationCommand}=require('./delegation-command.cjs');
 class Assistant extends EventEmitter {
   constructor(options) {
     super();this.options=options;this.file=path.join(options.directory,'assistant.json');this.active=false;this.closed=false;this.error='';
@@ -147,6 +148,7 @@ class Assistant extends EventEmitter {
       const authorization=authorizationCommand(message.text);
       if(authorization){await this.manageAuthorization(message,authorization);this.save();return;}
       const research=researchCommand(message.text);if(research){await require('./research-control.cjs').manage(this.options.research,message,research,this.options.snapshot());this.save();return;}
+      const delegated=delegationCommand(message.text);if(delegated){await require('./delegation-control.cjs').manage(this.options.delegations,message,delegated,this.options.snapshot());this.save();return;}
       const recorded=commitmentCommand(message.text);if(recorded){require('./commitment-control.cjs').manage(this.options.commitments,message,recorded,this.options.snapshot());this.save();return;}
       const planned=scheduleCommand(message.text);if(planned){await this.manageSchedule(message,planned);this.save();return;}
       const ongoing=responsibilityCommand(message.text);
@@ -178,6 +180,7 @@ class Assistant extends EventEmitter {
         schedules:this.options.schedules?.snapshot().slice(-8).map(s=>({id:s.id,responsibilityId:s.responsibilityId,state:s.state,reason:s.reason,timeZone:s.schedule.timeZone,endAt:s.schedule.endAt,nextWake:s.nextWake,lastActualRun:s.lastActualRun,lastRun:s.runs.at(-1)?.status})),
         commitments:this.options.commitments?.context(),
         research:this.options.research?.context(),
+        delegations:this.options.delegations?.snapshot().slice(-8).map(e=>({id:e.id,parentId:e.parentId,parentRevision:e.parentRevision,childId:e.childId,chatName:e.scope.chatName,ownerId:e.scope.ownerId,purpose:clip(e.purpose,500),phase:e.phase,limits:e.limits,cancelRequested:e.cancelRequested,review:e.review?{kind:e.review.kind,text:clip(e.review.text,300)}:null,missingEvidence:e.missingEvidence,parentGoalVerification:'Tracked separately on the parent responsibility'})),
         canRequestChatMessage:!!this.options.dispatch&&!!requestedRef,requestedChatRef:requestedRef,requestedMessage:requested?.proposal||null});
       if(this.closed)return;
       if(typeof value.answer!=='string'||!value.answer.trim()||value.answer.length>6000||!Array.isArray(value.links)||value.links.length>3)

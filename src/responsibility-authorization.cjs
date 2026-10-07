@@ -47,6 +47,7 @@ function request(entry, snapshot, operationId = entry.currentStep.messageId) {
   };
 }
 function prepare(policy, entry, snapshot, schedule) {
+  if(entry.delegationId){const grant=policy.state.grants.find(g=>g.key==='delegation:'+entry.delegationId);return grant?{...policy.reserve(grant.id,request(entry,snapshot)),grantId:grant.id}:{decision:'deny',reason:'delegation_grant_unavailable'};}
   const step = entry.currentStep,
     steer = entry.steering.findLast((s) => s.instruction === step.text),
     origin = steer || entry.origin;
