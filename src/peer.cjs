@@ -8,6 +8,8 @@ const https = require('node:https'),
 const { EventEmitter } = require('node:events');
 const { StringDecoder } = require('node:string_decoder');
 const selfsigned = require('selfsigned');
+const peerContract = require('./peer-contract.cjs');
+const { StatePublisher } = require('./state-order.cjs');
 const allowed = new Set([
   'create',
   'start',
@@ -67,6 +69,7 @@ class HostPeer extends EventEmitter {
     super();
     this.options = options;
     this.clients = new Set();
+    this.publisher = new StatePublisher();
     this.file = path.join(options.directory, 'paired-host.enc');
   }
   async start(host) {
@@ -149,10 +152,14 @@ class HostPeer extends EventEmitter {
     });
     res.end(JSON.stringify(value));
   }
+  state() {
+    const state = this.options.state();
+    return {...(state.stateVersion ? state : this.publisher.stamp(state)), peerContract:peerContract.capabilities(this.options.commands)};
+  }
   request(req, res) {
     if (!this.authorized(req)) return this.json(res, 401, { error: 'Pairing required.' });
     if (req.method === 'GET' && req.url === '/state')
-      return this.json(res, 200, this.options.state());
+      return this.json(res, 200, this.state());
     if (req.method === 'GET' && req.url === '/events') {
       if (this.clients.size >= 8)
         return this.json(res, 429, { error: 'Too many connected devices.' });
@@ -163,7 +170,7 @@ class HostPeer extends EventEmitter {
         'X-Content-Type-Options': 'nosniff',
       });
       this.clients.add(res);
-      res.write('data: ' + JSON.stringify(this.options.state()) + '\n\n');
+      res.write('data: ' + JSON.stringify(this.state()) + '\n\n');
       const timer = setInterval(() => res.write(': keepalive\n\n'), 15000);
       req.on('close', () => {
         clearInterval(timer);
@@ -200,17 +207,18 @@ class HostPeer extends EventEmitter {
       )
         return this.json(res, 400, { error: 'Unknown action.' });
       try {
+        peerContract.admission(this.state(), input.method, input);
         this.json(res, 200, {
           ok: true,
           value: await this.options.command(input.method, input.input),
         });
       } catch (error) {
-        this.json(res, 400, { ok: false, error: error.message });
+        this.json(res, 400, { ok: false, error: error.message, code:error.code, delivery:error.delivery });
       }
     });
   }
   broadcast(state) {
-    this.latest = structuredClone(state);
+    this.latest = {...(state.stateVersion ? structuredClone(state) : this.publisher.stamp(state)),peerContract:peerContract.capabilities(this.options.commands)};
     if (this.broadcastTimer) return;
     this.broadcastTimer = setTimeout(() => {
       this.broadcastTimer = null;
@@ -321,6 +329,8 @@ class RemotePeer extends EventEmitter {
       try {
         const state = await this.json('/state');
         if (this.closed || generation !== this.generation) throw new Error('Pairing was closed.');
+        peerContract.negotiate(state);
+        this.state = state;
         this.connected = true;
         this.attempt = 0;
         this.emit('state', state);
@@ -365,8 +375,12 @@ class RemotePeer extends EventEmitter {
         buffer = buffer.slice(at + 2);
         if (event.startsWith('data: ')) {
           try {
-            this.emit('state', JSON.parse(event.slice(6)));
-          } catch {}
+            const value = JSON.parse(event.slice(6));
+            peerContract.negotiate(value);
+            const previous = this.state?.stateVersion;
+            if (!previous || !value.stateVersion || previous.epoch !== value.stateVersion.epoch || previous.revision < value.stateVersion.revision) this.state = value;
+            this.emit('state', value);
+          } catch (error) { if(error.code === 'PEER_CAPABILITY') res.destroy(); }
         }
       }
     });
@@ -400,8 +414,10 @@ class RemotePeer extends EventEmitter {
   async command(method, input = {}) {
     if (!allowed.has(method)) throw new Error('Unknown paired action.');
     if (!this.connected) throw new Error('Reconnect to your desktop before sending this action.');
-    const out = await this.json('/command', 'POST', { method, input });
-    if (!out.ok) throw new Error(out.error || 'The desktop rejected this action.');
+    const contract = peerContract.negotiate(this.state);
+    peerContract.admission(this.state, method, contract.version === 2 ? {peerProtocolVersion:2,hostEpoch:this.state?.stateVersion?.epoch} : undefined);
+    const out = await this.json('/command', 'POST', { method, input, ...(contract.version === 2 ? {peerProtocolVersion:2,hostEpoch:this.state?.stateVersion?.epoch} : {}) });
+    if (!out.ok) throw Object.assign(new Error(out.error || 'The desktop rejected this action.'),{code:out.code,delivery:out.delivery});
     return out.value;
   }
   close() {

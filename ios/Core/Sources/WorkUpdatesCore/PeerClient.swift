@@ -101,9 +101,13 @@ public final class PeerClient: PeerConnection, @unchecked Sendable {
         throw PeerError.server("Connection ended. Reconnecting to this computer.")
     }
     public func command(_ method: String, input: [String:JSONValue]) async throws -> JSONValue {
-        let allowed:Set<String>=["create","start","action","undo","send","stop","respond","details","group","refresh","open"]
+        let allowed=PeerContract.supported
         guard allowed.contains(method) else {throw PeerError.server("Unsupported app action.")}
-        let data = try JSONEncoder().encode(JSONValue.object(["method":.string(method),"input":.object(input)]))
+        var parameters=input
+        let epoch=parameters.removeValue(forKey:"_peerHostEpoch")?.string
+        var envelope:[String:JSONValue]=["method":.string(method),"input":.object(parameters)]
+        if let epoch {envelope["peerProtocolVersion"] = .number(2);envelope["hostEpoch"] = .string(epoch)}
+        let data = try JSONEncoder().encode(JSONValue.object(envelope))
         guard data.count <= 64_000 else {throw PeerError.server("This message is too long.")}
         do {
             let (bytes,response) = try await session.bytes(for:request("command",method:"POST",body:data),delegate:delegate)

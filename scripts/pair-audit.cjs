@@ -2,6 +2,7 @@
 const { _electron: electron } = require('playwright');
 const {closeAuditApp,forceAuditApp}=require('./electron-audit-lifecycle.cjs');
 const fs = require('node:fs'),
+  crypto = require('node:crypto'),
   os = require('node:os'),
   path = require('node:path'),
   assert = require('node:assert/strict');
@@ -78,10 +79,24 @@ async function waitState(page, predicate) {
     });
     await invoke(c, 'start', { id: task.id });
     await waitState(c, (state) => state.cards.find((t) => t.id === task.id)?.status === 'ready');
-    const version = (await invoke(c, 'state')).cards.find(
+    const sourceCard = (await invoke(c, 'state')).cards.find(
       (t) => t.id === task.id,
-    ).notificationVersion;
-    await invoke(c, 'send', { id: task.id, text: 'Verify the paired follow-up.' });
+    );
+    const version = sourceCard.notificationVersion;
+    assert.equal(sourceCard.sources.length, 1);
+    const messageId = crypto.randomUUID();
+    const receipt = await invoke(c, 'send', {
+      id: task.id,
+      taskKey: sourceCard.taskKey,
+      sourceId: sourceCard.sources[0].id,
+      contextRevision: sourceCard.contextRevision,
+      messageId,
+      text: 'Verify the paired follow-up.',
+    });
+    assert.equal(receipt.messageId, messageId);
+    assert.equal(receipt.sourceId, sourceCard.sources[0].id);
+    assert.equal(receipt.delivery, 'sent');
+    assert.ok(receipt.turnId);
     await waitState(c, (state) => {
       const card = state.cards.find((t) => t.id === task.id);
       return (
