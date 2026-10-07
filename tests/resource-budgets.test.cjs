@@ -82,6 +82,8 @@ test('global and parent/child budgets reserve atomically before dispatch; estima
 test('a finite cost cap refuses unpriced inference and unknown actuals never become zero', (t) => {
   const f = setup(t);
   f.configure('global', { costMicros: 500 });
+  assert.equal(f.b.inspect().scopes[0].remaining.costMicros, 500);
+  assert.equal(f.b.inspect().scopes[0].newModelCostRequiresPricing, true);
   assert.throws(() => f.b.reserve(request()), /budget reached/);
   const id = f.b.reserve(request({ estimate: { tokens: 100, costMicros: 300 } }));
   f.b.started(id, 't');

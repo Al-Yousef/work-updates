@@ -280,8 +280,11 @@ class BrowserSessions {
   }
   async read(lease) {
     const { e, live } = await this.check(lease);
-    const value = await this.run(live, () => live.adapter.read());
-    await this.check(lease);
+    const value = await this.resource(e, async () => {
+      const result = await this.run(live, () => live.adapter.read());
+      await this.check(lease);
+      return result;
+    });
     return {
       sessionId: e.id,
       origin: origin(live.adapter.url()),
@@ -295,12 +298,37 @@ class BrowserSessions {
     const { e, live } = await this.check(lease);
     if (!e.origins.includes(origin(url)))
       throw held('Destination is outside the authorized origins.');
-    await this.run(live, () => live.adapter.navigate(url));
-    await this.check(lease);
+    await this.resource(e, async () => {
+      await this.run(live, () => live.adapter.navigate(url));
+      await this.check(lease);
+    });
     this.change((s) => {
       s.entries.find((x) => x.id === e.id).origin = origin(live.adapter.url());
     });
     return { sessionId: e.id, origin: origin(live.adapter.url()), navigationCompleted: true };
+  }
+  async resource(entry, operation) {
+    if (!this.options.budgets) return operation();
+    const budgets = this.options.budgets,
+      id = crypto.randomUUID();
+    budgets.reserve({
+      id,
+      kind: 'read',
+      provider: 'private-browser',
+      model: 'none',
+      sourceId: entry.origin,
+      taskKey: entry.taskId,
+      estimate: { tokens: 0, costMicros: 0 },
+    });
+    budgets.started(id);
+    try {
+      const result = await operation();
+      budgets.finish(id);
+      return result;
+    } catch (error) {
+      budgets.finish(id, { status: 'unknown' });
+      throw error;
+    }
   }
   async saveLogin(i, id) {
     this.human(i, '/browser save-login ' + id);
@@ -370,14 +398,12 @@ class BrowserSessions {
         automaticFallback: false,
         osEncryptedExplicitLogin: !!this.options.vault,
       },
-      sessions: this.state.entries
-        .slice(-16)
-        .map((e) => ({
-          ...e,
-          live: this.live.has(e.id),
-          pageContentsIncluded: false,
-          credentialValuesIncluded: false,
-        })),
+      sessions: this.state.entries.slice(-16).map((e) => ({
+        ...e,
+        live: this.live.has(e.id),
+        pageContentsIncluded: false,
+        credentialValuesIncluded: false,
+      })),
     };
   }
   shutdown() {
