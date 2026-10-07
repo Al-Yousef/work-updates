@@ -108,7 +108,7 @@ struct LinkState {
         if let actual=state.host?.id {expectedHosts[id]=actual}
         if let hostID=state.host?.id {
             do {try channelDrafts?.reconcile(computerID:id,hostID:hostID,sources:(state.cards+state.done).flatMap{$0.sources})}
-            catch {error="Phone delivery recovery is held. "+error.localizedDescription}
+            catch {self.error="Phone delivery recovery is held. "+error.localizedDescription}
         }
         states[id]=state
         links[id]=LinkState(online:true,lastSeen:Date(),message:state.health?.ok == false ?
