@@ -380,8 +380,9 @@ class Codex extends EventEmitter {
       throw error;
     }
   }
-  async send(threadId, value, images=[], {messageId}={}) {
+  async send(threadId, value, images=[], {messageId,expiresAt,beforeDispatch}={}) {
     await this.prepare(threadId);
+    require('./dispatch-deadline.cjs').admission({expiresAt,beforeDispatch});
     const input=[...(value?[{type:'text',text:value}]:[]),...images.map(image=>({type:'localImage',path:image.path}))];
     if (this.active.has(threadId))
       return this.call('turn/steer', {

@@ -90,10 +90,11 @@ class CodexDesktop extends EventEmitter {
     try{return (await this.request('thread-owner-discovery',{hostId:'local',conversationId:threadId})).handledByClientId;}
     catch(error){if(error.code==='DESKTOP_NO_OWNER')return null;throw error;}
   }
-  async send(threadId,text,{owner,working=false,messageId=crypto.randomUUID(),images=[]}={}){
+  async send(threadId,text,{owner,working=false,messageId=crypto.randomUUID(),images=[],expiresAt,beforeDispatch}={}){
     await this.connect();
     const target=owner||await this.owner(threadId);
     if(!target)throw new DesktopError('Codex has no available owner for this chat.','DESKTOP_NO_OWNER');
+    require('./dispatch-deadline.cjs').admission({expiresAt,beforeDispatch});
     const input=[...(text?[{type:'text',text,text_elements:[]}]:[]),...images.map(image=>({type:'localImage',path:image.path}))];
     const method=working?'thread-follower-steer-turn':'thread-follower-start-turn';
     const params=working?{conversationId:threadId,input,clientUserMessageId:messageId,attachments:[],

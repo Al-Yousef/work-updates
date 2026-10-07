@@ -440,6 +440,8 @@ class Responsibilities extends EventEmitter {
           sourceId: scope.sourceId,
           messageId: step.messageId,
           text: step.text,
+          ...(step.expiresAt!==undefined?{expiresAt:step.expiresAt}:{}),
+          ...(step.schedule?{scheduleId:step.schedule.id,runId:step.schedule.runId}:{}),
         });
       } catch (error) {
         this.change((next) => {
@@ -469,6 +471,7 @@ class Responsibilities extends EventEmitter {
             : 'accepted'
           : 'unconfirmed';
         if (matched && receipt.turnId) current.currentStep.turnId = receipt.turnId;
+        if(matched&&receipt.delivery==='sent')current.currentStep.acceptedAt=Number.isSafeInteger(receipt.acceptedAt)?receipt.acceptedAt:Date.now();
         if (current.state === 'running') {
           current.state = matched ? 'waiting_external' : 'waiting_user';
           current.wakeReason = { kind: matched ? 'source_progress' : 'delivery_unconfirmed' };
@@ -534,13 +537,14 @@ class Responsibilities extends EventEmitter {
           const entry = next.entries.find((x) => x.id === id);
           entry.currentStep.status = proof.status;
           entry.currentStep.turnId = proof.turnId;
+          if(Number.isSafeInteger(proof.acceptedAt))entry.currentStep.acceptedAt=proof.acceptedAt;
           const explicitlyWaiting = held(entry);
           if (explicitlyWaiting && proof.status !== 'cancelled') {
             if (proof.status === 'not-sent') entry.currentStep.status = 'failed';
             entry.updatedAt = Date.now();
             continue;
           }
-          if (proof.status === 'completed') {
+          if (proof.status === 'completed'||proof.status==='cancelled'&&entry.steering.at(-1)?.instruction===entry.instruction&&entry.instruction!==entry.currentStep.text) {
             this.finishStep(entry, snapshot);
           } else if (['failed', 'not-sent', 'cancelled'].includes(proof.status)) {
             entry.state = proof.status === 'cancelled' ? 'cancelled' : 'blocked';

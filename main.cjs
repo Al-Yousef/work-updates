@@ -41,6 +41,8 @@ const { Messages } = require('./src/messages.cjs');
 const { Assistant } = require('./src/assistant.cjs');
 const { Responsibilities }=require('./src/responsibilities.cjs');
 const responsibilityTarget=require('./src/responsibility-target.cjs');
+const {Schedules}=require('./src/schedules.cjs');
+const scheduledResponsibility=require('./src/scheduled-responsibility.cjs');
 let nativeControl;
 const args = process.argv;
 function argument(name) {
@@ -112,7 +114,7 @@ const client = demo
   : new Codex({ binary: queue.state.settings.codexBinary, log: diagnostics });
 const desktop = demo ? null : new CodexDesktop({log:diagnostics});
 const controller = new Controller(queue, client, {desktop,log:diagnostics});
-const messages = new Messages(queue,controller,{log:diagnostics,attachments});
+const messages = new Messages(queue,controller,{log:diagnostics,attachments,admission:entry=>scheduledResponsibility.admission(responsibilities,schedules,entry)});
 const devices = new Devices({
   directory: dataDir,
   state: () => messages.decorate(queue.snapshot()),
@@ -124,8 +126,11 @@ diagnostics.setContext({deviceId:devices.local.id});
 const responsibilities=new Responsibilities({directory:dataDir,snapshot:()=>devices.snapshot(),log:diagnostics,maintenance:()=>quitting||maintenanceActive(dataDir),...responsibilityTarget,
   outcome:require('./src/assistant-coordination.cjs').outcome,
   dispatch:(mode,input)=>devices.command(mode==='queue'?'queueMessage':'send',input),cancel:input=>devices.command('cancelMessage',input)});
+const schedules=new Schedules({directory:dataDir,log:diagnostics,maintenance:()=>quitting||maintenanceActive(dataDir),
+  probe:entry=>scheduledResponsibility.probe(responsibilities,entry),run:entry=>scheduledResponsibility.run(responsibilities,entry),outcome:(entry,run)=>scheduledResponsibility.outcome(responsibilities,entry,run)});
 const assistant = new Assistant({directory:dataDir,snapshot:()=>devices.snapshot(),attachments,
   responsibilities,
+  schedules,
   binary:queue.state.settings.codexBinary,log:diagnostics,
   loadContext:targets=>require('./src/assistant-context.cjs').loadContext({
     snapshot:()=>devices.snapshot(),
@@ -170,9 +175,13 @@ function publish() {
 }
 messages.on('change', () => publish());
 assistant.on('change', () => publish());
-responsibilities.on('change',()=>{publish();queueMicrotask(()=>responsibilities.pump());});
+function driveSchedules(){try{schedules.observe();}catch{diagnostics.write('schedule.recovery_failed',{code:'SCHEDULE_RECOVERY_FAILED',noResend:true});}void schedules.tick().catch(()=>diagnostics.write('schedule.recovery_failed',{code:'SCHEDULE_RECOVERY_FAILED',noResend:true}));}
+schedules.on('change',()=>publish());
+responsibilities.on('change',()=>{publish();queueMicrotask(()=>responsibilities.pump());queueMicrotask(driveSchedules);});
+schedules.start();
 devices.on('change', () => {
   responsibilities.observe(devices.snapshot());
+  driveSchedules();
   void responsibilities.pump();
   assistant.observe(devices.snapshot());
   previousRemote = incoming(
@@ -184,6 +193,7 @@ devices.on('change', () => {
 let publication;
 queue.on('change', () => {
   responsibilities.observe(devices.snapshot());
+  driveSchedules();
   void responsibilities.pump();
   assistant.observe(devices.snapshot());
   if (!publication)
@@ -610,7 +620,7 @@ app.whenReady().then(async () => {
         const result = await perform(method, input);
         return method === 'details' ? cardView(result, true,attachments) : ['send','queueMessage','assistantAsk','assistantUse','attachImages','openAttachment'].includes(method) ? result : {};
       },
-      status: () => ({activeWriters:Math.max(client.status?.().active ?? 0, client.status?.().pending ?? 0, queue.busy?.size ?? 0,messages.active.size,desktop?.pending.size||0,assistant.active?1:0,responsibilities.pending.size),
+      status: () => ({activeWriters:Math.max(client.status?.().active ?? 0, client.status?.().pending ?? 0, queue.busy?.size ?? 0,messages.active.size,desktop?.pending.size||0,assistant.active?1:0,responsibilities.pending.size,schedules.pending.size),
         mode:'native-backend', windowCount:BrowserWindow.getAllWindows().length,
         rendererCount:app.getAppMetrics().filter(p => p.type === 'Tab').length}),
       quit: () => {quitting=true; app.quit();},
@@ -820,7 +830,7 @@ app.whenReady().then(async () => {
       status: () => ({
         cornerConfigured: !!queue.state.settings.corner,
         launcherActive: !!corner && !corner.isDestroyed(),
-        activeWriters: Math.max(client.status?.().active ?? 0,client.status?.().pending??0,queue.busy.size,messages.active.size,desktop?.pending.size||0,assistant.active?1:0,responsibilities.pending.size),
+        activeWriters: Math.max(client.status?.().active ?? 0,client.status?.().pending??0,queue.busy.size,messages.active.size,desktop?.pending.size||0,assistant.active?1:0,responsibilities.pending.size,schedules.pending.size),
         windowMode: windowController.mode,
       }),
       quit: () => {quitting = true; app.quit();},
@@ -899,6 +909,7 @@ app.on('before-quit', () => {
   messages.close();
   assistant.close();
   responsibilities.close();
+  schedules.close();
   hostPeer?.close();
   devices.close();
   nativeControl?.close();
