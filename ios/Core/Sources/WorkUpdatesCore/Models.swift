@@ -75,7 +75,8 @@ public struct ChatSource: Codable, Identifiable, Sendable {
     public var lifecycle: String?
     public var contextLoaded: Bool?
     public var device: DeviceIcon?
-    public var queuedMessages: [JSONValue]?
+    public var queuedMessages: Int?
+    public var messageQueue: [JSONValue]?
     public var deliveryOutcomes: [JSONValue]?
     public var messageOutcomes: [JSONValue]?
     public var taskRevision: String?
