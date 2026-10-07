@@ -10,14 +10,21 @@ import WorkUpdatesCore
     private var journal:AssistantDrafts?
     private var order=StateOrder()
     private var generation=UUID()
+    private let loadCredential:() throws -> String?
+    private let saveCredential:(String?) throws -> Void
+    init(loadCredential:@escaping () throws -> String?={try AssistantChannelVault.load()},
+         saveCredential:@escaping (String?) throws -> Void={try AssistantChannelVault.save($0)}) {
+        self.loadCredential=loadCredential;self.saveCredential=saveCredential
+    }
     func connect(_ code:String?=nil) async {
         stop();let current=generation
+        var owned:AssistantChannelClient?
         do {
             let savedCode:String?
-            if let code {savedCode=code} else {savedCode=try AssistantChannelVault.load()}
+            if let code {savedCode=code} else {savedCode=try loadCredential()}
             guard let saved=savedCode else {return}
-            let next=try AssistantChannelClient(code:saved)
-            if code != nil {try AssistantChannelVault.save(saved)}
+            let next=try AssistantChannelClient(code:saved);owned=next
+            if code != nil {try saveCredential(saved)}
             let directory=try FileManager.default.url(for:.applicationSupportDirectory,in:.userDomainMask,appropriateFor:nil,create:true)
             journal=try AssistantDrafts(file:directory.appendingPathComponent("private-assistant-drafts-v1.json"));client=next
             pending=journal?.pending(next.code)
@@ -29,10 +36,11 @@ import WorkUpdatesCore
                         if receipt.delivery=="accepted" {try journal?.accepted(next.code,receipt:receipt);pending=journal?.pending(next.code);message="Message accepted. Its answer is tracked separately."}
                     }
                 }catch PeerError.hostRestarted {order=StateOrder();state=nil;message="Computer restarted. Reading this channel again; no message was resent."}
-                catch {guard generation==current else {return};state=nil;message="Unavailable or revoked. Draft and receipt checks remain saved. "+error.localizedDescription;return}
+                catch {next.close();guard generation==current else {return};state=nil;client=nil;message="Unavailable or revoked. Draft and receipt checks remain saved. "+error.localizedDescription;return}
                 try await Task.sleep(nanoseconds:2_000_000_000)
             }
-        }catch{if generation==current {message=error.localizedDescription;state=nil}}
+            next.close();if generation==current {client=nil;state=nil}
+        }catch{owned?.close();if generation==current {message=error.localizedDescription;state=nil;client=nil}}
     }
     func send(_ text:String) async -> Bool {
         guard !busy,pending==nil,let client,let state,let journal else {return false}
@@ -51,16 +59,29 @@ import WorkUpdatesCore
             if generation==current {pending=journal.pending(client.code);message="Acceptance is unconfirmed. This message will not be resent automatically."};return false
         }
     }
-    func forget() {stop();do{try AssistantChannelVault.save(nil);state=nil;pending=nil;message="Phone credential forgotten. Revoke its grant on the computer. Saved receipt checks remain."}catch{message=error.localizedDescription}}
+    func forget() {stop();do{try saveCredential(nil);state=nil;pending=nil;message="Phone credential forgotten. Revoke its grant on the computer. Saved receipt checks remain."}catch{message=error.localizedDescription}}
     func stop(){generation=UUID();client?.close();client=nil;state=nil;pending=nil;order=StateOrder()}
 }
 struct AssistantView:View {
     @Environment(\.dismiss) private var dismiss
     @Environment(\.scenePhase) private var phase
-    @StateObject private var assistant=PhoneAssistant()
+    @StateObject private var assistant:PhoneAssistant
     @State private var code=""
     @State private var text=""
     @State private var session=UUID()
+    init() {
+        #if DEBUG
+        if ProcessInfo.processInfo.arguments.contains("--integration-test"),
+           let code=ProcessInfo.processInfo.environment["WU_ASSISTANT_CODE"],!code.isEmpty {
+            // Unsigned Simulator tests inject a disposable credential store.
+            // Normal/release builds always use Keychain and hold its failures.
+            let fixture=SyntheticAssistantCredential(code)
+            _assistant=StateObject(wrappedValue:PhoneAssistant(loadCredential:{fixture.code},saveCredential:{fixture.code=$0}))
+        } else {_assistant=StateObject(wrappedValue:PhoneAssistant())}
+        #else
+        _assistant=StateObject(wrappedValue:PhoneAssistant())
+        #endif
+    }
     var body:some View {
         NavigationStack {
             ScrollView {
@@ -101,3 +122,9 @@ struct AssistantView:View {
         }
     }
 }
+#if DEBUG
+@MainActor private final class SyntheticAssistantCredential {
+    var code:String?
+    init(_ code:String){self.code=code}
+}
+#endif
