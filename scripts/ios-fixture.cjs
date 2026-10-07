@@ -5,6 +5,7 @@ const fs = require('node:fs'),
   path = require('node:path');
 const { Queue } = require('../src/queue.cjs');
 const { Controller } = require('../src/controller.cjs');
+const { Messages } = require('../src/messages.cjs');
 const { DemoCodex, feed } = require('../src/demo.cjs');
 const { HostPeer } = require('../src/peer.cjs');
 const { StatePublisher } = require('../src/state-order.cjs');
@@ -14,14 +15,16 @@ const codeFile =
 const queue = new Queue(directory),
   client = new DemoCodex(),
   controller = new Controller(queue, client);
+const messages = new Messages(queue,controller);
 queue.setFeed(feed(), { ok: true });
 const publisher = new StatePublisher();
 const state = () =>
   publisher.stamp({
-    ...queue.snapshot(),
+    ...messages.decorate(queue.snapshot()),
     host: { id: '11111111-1111-4111-8111-111111111111', name: 'Synthetic desktop', kind: 'mac' },
   });
 const host = new HostPeer({
+  commands:['create','start','send','action','undo','details','respond','refresh'],
   directory,
   encrypt: (v) => Buffer.from(v),
   decrypt: (v) => v.toString(),
@@ -30,7 +33,7 @@ const host = new HostPeer({
     if (method === 'create') return queue.create(input);
     if (method === 'start') return controller.start(input.id);
     if (method === 'send')
-      return controller.send(input.id, input.text, input.sourceId, input.taskKey);
+      return messages.send(input);
     if (method === 'action') {
       queue.action(input.id, input.action, input.taskKey);
       return state();
@@ -59,6 +62,7 @@ host
   });
 function close() {
   host.close();
+  messages.close();
   client.close();
   fs.rmSync(codeFile, { force: true });
   fs.rmSync(directory, { recursive: true, force: true });

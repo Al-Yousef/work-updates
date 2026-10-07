@@ -30,6 +30,8 @@ class ProtocolDevices extends Devices {
       ...input,
       sourceId: scope.input.sourceId,
       fixtureEventId: scope.input.eventId,
+      messageId: scope.input.eventId,
+      contextRevision: scope.item.sourceContextRevision,
       fixtureHostId: entry.hostId,
       fixtureContext: scope.item.sourceContextRevision,
       fixtureViewerContext: scope.input.contextRevision,
@@ -152,6 +154,7 @@ class ProtocolFixture {
             messages: owner.replies.get(JSON.stringify([card.taskKey, source.id])) || [],
           })),
           sourceContextRevision: contextRevision({ ...card, owner: { id: identity.id } }),
+          contextRevision: contextRevision({ ...card, owner: { id: identity.id } }),
         });
         return owner.publisher.stamp({
           ...state,

@@ -8,6 +8,7 @@ const { compareCards, projectStatus } = require('./status-contract.cjs');
 const { executionDevice } = require('./presentation.cjs');
 const { StatePublisher, StateOrder } = require('./state-order.cjs');
 const {readStore,atomicJSON}=require('./private-store.cjs');
+const peerContract = require('./peer-contract.cjs');
 const now = () => Math.floor(Date.now() / 1000);
 const prefix = (id) => 'peer:' + id + ':';
 const validId = (id) => typeof id === 'string' && id.length > 0 && id.length <= 2048;
@@ -24,6 +25,7 @@ function identity(directory, platform = process.platform) {
   return value;
 }
 function validState(value) {
+  peerContract.negotiate(value);
   if (
     !value ||
     !Array.isArray(value.cards) ||
@@ -56,7 +58,7 @@ class Devices extends EventEmitter {
     this.publisher = new StatePublisher();
   }
   localState() {
-    return this.publisher.stamp({ ...this.options.state(), host: this.local });
+    return this.publisher.stamp({ ...this.options.state(), host: this.local, peerContract:peerContract.capabilities() });
   }
   receive(entry, value) {
     validState(value);
@@ -83,6 +85,7 @@ class Devices extends EventEmitter {
       kind: entry.state?.host?.kind || 'unknown',
       local: false,
       online: !!entry.peer.connected,
+      capabilities:peerContract.negotiate(entry.state),
       lastSeen: entry.lastSeen || 0,
     };
   }
@@ -308,6 +311,8 @@ class Devices extends EventEmitter {
     }
     if (entry && !entry.peer.connected)
       throw new Error(entry.name + ' is offline. Reconnect before sending this action.');
+    if (entry && !peerContract.negotiate(entry.state).commands.includes(method))
+      throw Object.assign(new Error('This paired computer does not support that action.'),{code:'PEER_CAPABILITY',delivery:'not-sent'});
     if(['send','queueMessage','cancelMessage'].includes(method)&&!next.sourceId){
       const state=entry?entry.state:this.options.state(),card=[...(state?.cards||[]),...(state?.done||[])].find(c=>c.id===next.id&&(!next.taskKey||c.taskKey===next.taskKey));
       if(card?.sources?.length!==1)throw new Error('Choose the exact source chat before sending this message.');

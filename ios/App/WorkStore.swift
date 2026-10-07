@@ -167,13 +167,21 @@ struct LinkState {
         let key=computerID+":"+lock
         guard !busy.contains(key) else {throw PeerError.server("This action is already being sent.")}
         guard online(computerID) else {throw PeerError.server(name(computerID)+" is offline. Reconnect before sending this action.")}
+        guard states[computerID]?.supports(method) == true else {throw PeerError.server("This computer does not support that action. Update its app before retrying.")}
         busy.insert(key);defer{busy.remove(key)}
         if demo {throw PeerError.server("This preview uses sample chats. Pair a computer to send real actions.")}
         guard let client=clients[computerID] else {throw PeerError.unpaired}
         let generation=generations[computerID]
         let connection=connections[computerID]
-        let result=try await client.command(method,input:input)
-        guard isCurrent(computerID,generation:generation,connection:connection) else {return result}
+        var boundInput=input
+        if let state=states[computerID],state.peerContract != nil,let epoch=state.stateVersion?.epoch {
+            boundInput["_peerHostEpoch"] = .string(epoch)
+        }
+        let result=try await client.command(method,input:boundInput)
+        guard isCurrent(computerID,generation:generation,connection:connection) else {
+            if ["send","queueMessage","cancelMessage"].contains(method) {throw PeerError.uncertainDelivery}
+            return result
+        }
         // A successful POST is never retried when the subsequent state fetch fails.
         do {
             let state=try await client.state()
@@ -181,7 +189,10 @@ struct LinkState {
         } catch PeerError.hostRestarted {
             if isCurrent(computerID,generation:generation,connection:connection),let computer=computers.first(where:{$0.id==computerID}) {start(computer)}
         } catch { /* A newer stream can still supply current state. Never repeat the POST. */ }
-        guard isCurrent(computerID,generation:generation,connection:connection) else {return result}
+        guard isCurrent(computerID,generation:generation,connection:connection) else {
+            if ["send","queueMessage","cancelMessage"].contains(method) {throw PeerError.uncertainDelivery}
+            return result
+        }
         if ["action","group"].contains(method) {lastUndoComputer=computerID}
         if method=="undo" {lastUndoComputer=nil}
         return result
