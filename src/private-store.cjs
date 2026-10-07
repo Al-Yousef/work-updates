@@ -2,7 +2,7 @@
 const fs=require('node:fs'),path=require('node:path'),crypto=require('node:crypto');
 const object=v=>v!==null&&typeof v==='object'&&!Array.isArray(v);
 const strings=(v,max=12000)=>object(v)&&Object.entries(v).every(([k,x])=>k.length>0&&k.length<512&&typeof x==='string'&&x.length<=max);
-const versions=Object.freeze({"state.json":1,"messages.json":1,"assistant.json":2,"device.json":1,"drafts.json":3,"responsibilities.json":1,"schedules.json":1,"authorizations.json":1,"commitments.json":1,"delegations.json":1,"research.json":1,"work-controls.json":1,"reflections.json":1,"triage.json":1,"activity.json":1,"outcomes.json":1,"privacy.json":3,"executors.json":1,"documents.json":1,"voice.json":1,"browsers.json":1,"budgets.json":1,"profile.json":1,"summary-cache.json":1});
+const versions=Object.freeze({"state.json":1,"messages.json":1,"assistant.json":2,"device.json":1,"drafts.json":3,"responsibilities.json":1,"schedules.json":1,"authorizations.json":1,"commitments.json":1,"delegations.json":1,"research.json":1,"work-controls.json":1,"reflections.json":1,"triage.json":1,"activity.json":1,"outcomes.json":2,"privacy.json":3,"executors.json":1,"documents.json":1,"voice.json":1,"browsers.json":1,"budgets.json":1,"profile.json":1,"summary-cache.json":1});
 class StorageRecoveryError extends Error {
   constructor(file,reason){super(`Hyphen cannot safely load ${path.basename(file)} (${reason}). The original file is preserved. Close Hyphen and repair a copy before restarting.`);this.code='PRIVATE_STORE_RECOVERY';this.store=path.basename(file);}
 }
@@ -22,7 +22,7 @@ function validate(name,value){
     if(!strings(result,48000))throw new Error('invalid legacy drafts');
     result={version:3,drafts:result,intentIds:{},attachments:{}};migrated=true;
   }
-  const supported=name==='privacy.json'?[1,2,3]:name==='assistant.json'?[1,2]:name==='drafts.json'?[1,2,3]:[versions[name]];
+  const supported=name==='privacy.json'?[1,2,3]:name==='outcomes.json'?[1,2]:name==='assistant.json'?[1,2]:name==='drafts.json'?[1,2,3]:[versions[name]];
   if(!supported.includes(result.version))throw new Error('unsupported version');
   if(name==='summary-cache.json'){
     require('./summaries.cjs').validateCache(result);
@@ -49,6 +49,10 @@ function validate(name,value){
   }else if(name==='executors.json'){
     require('./executor-bindings.cjs').validate(result);
   }else if(name==='outcomes.json'){
+    if(result.version===1){
+      if(!Array.isArray(result.entries)||result.entries.some(e=>e?.spec?.kind==='github_pr'||e?.connector!==undefined||['not_satisfied','rate_limited'].includes(e?.result?.status)))throw new Error('invalid legacy destination outcome');
+      result.version=2;migrated=true;
+    }
     require('./outcome-verification.cjs').validate(result);
   }else if(name==='work-controls.json'){
     require('./work-controls.cjs').validate(result);
