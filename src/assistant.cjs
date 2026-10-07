@@ -15,6 +15,7 @@ const {command:authorizationCommand}=require('./authorization-command.cjs');
 const {command:scheduleCommand}=require('./schedule-command.cjs');
 const {command:commitmentCommand}=require('./commitment-command.cjs');
 const {command:delegationCommand}=require('./delegation-command.cjs');
+const {command:workCommand}=require('./work-command.cjs');
 class Assistant extends EventEmitter {
   constructor(options) {
     super();this.options=options;this.file=path.join(options.directory,'assistant.json');this.active=false;this.closed=false;this.error='';
@@ -144,6 +145,7 @@ class Assistant extends EventEmitter {
   async generate(message) {
     const started=Date.now();
     try {
+      const work=workCommand(message.text);if(work){await require('./work-control.cjs').manage(this.options.workControls,message,work);this.save();return;}
       const authorization=authorizationCommand(message.text);
       if(authorization){await this.manageAuthorization(message,authorization);this.save();return;}
       const delegated=delegationCommand(message.text);if(delegated){await require('./delegation-control.cjs').manage(this.options.delegations,message,delegated,this.options.snapshot());this.save();return;}

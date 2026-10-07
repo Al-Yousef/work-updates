@@ -210,7 +210,16 @@ class Controller extends EventEmitter {
   async stop(id) {
     const task = this.queue.state.tasks.find((t) => t.id === id);
     if (!task?.threadId) throw new Error('There is no running chat for this task.');
-    await this.client.stop(task.threadId);
+    return this.stopSource({sourceId:task.threadId,turnId:task.turnId,taskKey:task.adoptedTaskKey||task.id});
+  }
+  async stopSource({sourceId,turnId,taskKey}) {
+    const task=this.taskFor(sourceId),active=this.client.active?.get(sourceId);
+    if(!task||!this.queue.ownedThreads.has(sourceId)||!turnId||active!==turnId||task.turnId!==turnId||(task.adoptedTaskKey||task.id)!==taskKey)
+      throw Object.assign(new Error('The exact active turn is not owned by this connection. Open its source chat to stop it.'),{delivery:'not-sent',code:'STOP_OWNER_UNCONFIRMED'});
+    const result=await this.client.stop(sourceId,turnId);
+    if(result?.sourceId!==sourceId||result.turnId!==turnId||result.delivery!=='interrupt_requested')
+      throw Object.assign(new Error('The interrupt acknowledgement is unconfirmed. Keep its source checkpoint.'),{delivery:'uncertain',code:'STOP_RECEIPT_UNCONFIRMED'});
+    return result;
   }
   event({ method, params: p }) {
     p ||= {};

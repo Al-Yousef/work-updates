@@ -57,6 +57,7 @@ function probe(store, schedule) {
   }
   if (['completed', 'cancelled'].includes(entry.state))
     return { eligible: false, reason: 'responsibility_finished' };
+  if(store.options.admission&&store.options.admission(entry)!=='allow')return {eligible:false,reason:'work_control_hold'};
   const ready = entry.state === 'running' && entry.currentStep.status === 'ready',
     finished =
       entry.state === 'waiting_user' &&

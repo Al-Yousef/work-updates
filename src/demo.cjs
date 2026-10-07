@@ -60,6 +60,7 @@ class DemoCodex extends EventEmitter {
   constructor() {
     super();
     this.active = new Map();
+    this.timers = new Map();
   }
   async start(task) {
     const threadId = task.threadId || crypto.randomUUID();
@@ -70,7 +71,9 @@ class DemoCodex extends EventEmitter {
     const id = crypto.randomUUID();
     this.active.set(threadId, id);
     this.emit('notification', { method: 'turn/started', params: { threadId, turn: { id } } });
-    setTimeout(() => {
+    const timer=setTimeout(() => {
+      this.timers.delete(threadId);
+      if(this.active.get(threadId)!==id)return;
       this.emit('notification', {
         method: 'item/completed',
         params: {
@@ -88,19 +91,23 @@ class DemoCodex extends EventEmitter {
         params: { threadId, turn: { id, status: 'completed' } },
       });
     }, 500);
+    this.timers.set(threadId,timer);
     return { threadId, turn: { id }, turnId: id };
   }
-  async stop(threadId) {
+  async stop(threadId,expectedTurnId=this.active.get(threadId)) {
     const id = this.active.get(threadId);
+    if(!id||id!==expectedTurnId)throw Object.assign(new Error('The exact demo turn is unavailable'),{delivery:'not-sent'});
+    clearTimeout(this.timers.get(threadId));this.timers.delete(threadId);
     this.emit('notification', {
       method: 'turn/completed',
       params: { threadId, turn: { id, status: 'interrupted' } },
     });
     this.active.delete(threadId);
+    return {sourceId:threadId,turnId:id,delivery:'interrupt_requested'};
   }
   reply() {}
   reject() {}
-  close() {}
+  close() {for(const timer of this.timers.values())clearTimeout(timer);this.timers.clear();this.active.clear();}
 }
 function startDemoObserver(queue,{initial=feed(),clock=now,intervalMs=5000}={}) {
   queue.setFeed(initial,{ok:true,synthetic:true});
