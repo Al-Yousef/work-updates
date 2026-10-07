@@ -5,7 +5,7 @@ research and delegation contracts. Whole-app performance acceptance remains in
 #13; this change does not measure native/Electron memory or CPU.
 
 `/budget inspect` works without inference. It shows global and configured
-responsibility limits, consumed reservations, unresolved runs, recent reported
+responsibility limits, remaining accounted capacity, reached limits, consumed reservations, unresolved runs, recent reported
 usage, duration, connector delays and expired configuration. Literal current
 human controls can configure the global scope or an existing responsibility:
 

@@ -101,6 +101,10 @@ test('exhausted shared budgets prevent import, confirmed edits and due scheduled
   f.documents.cancel(f.human('/document cancel ' + schedule.scheduleId), schedule.scheduleId);
   assert.equal(f.documents.state.schedules[0].status, 'cancelled');
   assert.equal(f.budgets.state.entries.length, 1);
+  const inspected = f.budgets.inspect().scopes[0];
+  assert.equal(inspected.remaining.runs, 0);
+  assert.ok(inspected.limitsReached.includes('runs'));
+  assert.equal(inspected.remaining.costMicros, null);
 });
 test('actual imported, edited and scheduled local files settle as model-free operations and no exhausted schedule catches up or replays', (t) => {
   const f = fixture(t);
@@ -153,6 +157,8 @@ test('lost document write acknowledgement preserves actual changed bytes and sha
     documents = new Documents({ ...f.documentOptions, budgets });
   t.after(() => budgets.close());
   assert.equal(budgets.accounting('global').concurrency, 1);
+  assert.equal(budgets.inspect().scopes[0].remaining.concurrency, 0);
+  assert.ok(budgets.inspect().scopes[0].limitsReached.includes('concurrency'));
   assert.throws(() => documents.apply(input, draft.draftId), { code: 'DOCUMENT_REQUEST_HELD' });
   const spec = { file: f.source, title: 'New request held by uncertainty' };
   assert.throws(() => documents.import(f.human('/document import ' + JSON.stringify(spec)), spec), {

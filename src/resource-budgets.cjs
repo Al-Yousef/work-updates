@@ -413,12 +413,33 @@ class ResourceBudgets {
       planEntitlements: 'unknown',
       hardExecutionTokenCap: false,
       hardProviderCostCap: false,
-      scopes: [...new Set(['global', ...Object.keys(this.state.policies)])].map((scope) => ({
-        scope,
-        limits: this.policy(scope),
-        expired: this.state.policies[scope] ? this.now() > this.state.policies[scope].until : false,
-        usage: this.accounting(scope),
-      })),
+      scopes: [...new Set(['global', ...Object.keys(this.state.policies)])].map((scope) => {
+        const policy = this.policy(scope),
+          accounting = this.accounting(scope),
+          expired = this.state.policies[scope]
+            ? this.now() > this.state.policies[scope].until
+            : false,
+          remaining = Object.fromEntries(
+            ['runs', 'tokens', 'concurrency', 'readsPerHour'].map((key) => [
+              key,
+              Math.max(0, policy[key] - accounting[key]),
+            ]),
+          );
+        remaining.costMicros =
+          policy.costMicros === null || accounting.unknownCost > 0
+            ? null
+            : Math.max(0, policy.costMicros - accounting.costMicros);
+        return {
+          scope,
+          limits: policy,
+          expired,
+          usage: accounting,
+          remaining,
+          limitsReached: Object.keys(remaining).filter((key) => remaining[key] === 0),
+          unpricedCostHeld: policy.costMicros !== null && accounting.unknownCost > 0,
+          newModelCostRequiresPricing: policy.costMicros !== null,
+        };
+      }),
       unresolved: this.state.entries.filter(active).slice(-16),
       recent: this.state.entries.slice(-8),
       connectorBackoffs: Object.values(this.state.connectors).filter((c) => c.nextAt > this.now())
