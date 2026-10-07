@@ -13,6 +13,8 @@ const methods = [
   'group',
   'refresh',
   'retrySummaries',
+  'assistantProfile',
+  'capabilities',
   'open',
   'project',
   'settings',

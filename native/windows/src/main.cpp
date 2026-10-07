@@ -272,13 +272,15 @@ struct Renderer {
     float composeY() const {return HEIGHT-22-composerHeight;}
     void contactHeader(ID2D1SolidColorBrush* brush,const Json& card,bool assistant) {
         const float center=chatlayout::contactCenter;
-        const auto name=assistant?std::string("Hyphen"):card.value("chatName","");
+        const auto profile=model.state.value("profile",Json::object());
+        const auto name=assistant?profile.value("displayName",std::string("Hyphen")):card.value("chatName","");
         auto value=wide(name);Com<IDWriteTextFormat> format;require(text->CreateTextFormat(chatstyle::font,nullptr,DWRITE_FONT_WEIGHT_SEMI_BOLD,DWRITE_FONT_STYLE_NORMAL,DWRITE_FONT_STRETCH_NORMAL,18,L"en-US",format.put()),"Contact format");
         Com<IDWriteTextLayout> layout;require(text->CreateTextLayout(value.c_str(),static_cast<UINT32>(value.size()),format.get(),280,28,layout.put()),"Contact name");
         DWRITE_TEXT_METRICS metrics{};layout->GetMetrics(&metrics);const float width=std::clamp(metrics.width+74,132.0f,354.0f);
         const auto box=D2D1::RectF(center-width/2,34,center+width/2,78);
         if(assistant){brush->SetColor(chatstyle::blue());canvas->FillEllipse(D2D1::Ellipse(D2D1::Point2F(box.left+20,56),20,20),brush);
-            brush->SetColor(chatstyle::inverse());canvas->FillRoundedRectangle(D2D1::RoundedRect(D2D1::RectF(box.left+11,54,box.left+29,58),2,2),brush);
+            if(profile.value("avatarStyle","hyphen")=="initials")centerLabel(profile.value("initials","H"),16,D2D1::RectF(box.left,36,box.left+40,76),chatstyle::inverse());
+            else{brush->SetColor(chatstyle::inverse());canvas->FillRoundedRectangle(D2D1::RoundedRect(D2D1::RectF(box.left+11,54,box.left+29,58),2,2),brush);}
         }else deviceIcon(brush,card,box.left,36);
         label(name,18,D2D1::RectF(box.left+50,43,box.right-22,71),chatstyle::ink(),DWRITE_FONT_WEIGHT_SEMI_BOLD);
         brush->SetColor(chatstyle::secondary());canvas->DrawLine(D2D1::Point2F(box.right-13,51),D2D1::Point2F(box.right-8,56),brush,1.6f);canvas->DrawLine(D2D1::Point2F(box.right-8,56),D2D1::Point2F(box.right-13,61),brush,1.6f);
@@ -469,7 +471,7 @@ struct Renderer {
         canvas->PushAxisAlignedClip(D2D1::RectF(CHAT_LEFT,top,WIDTH-28,bottom),D2D1_ANTIALIAS_MODE_PER_PRIMITIVE);
         float y=top-model.assistantOffset;
         if(messages.empty()) {
-            label("Talk to Hyphen",24,D2D1::RectF(CHAT_LEFT+8,185,WIDTH-36,230),chatstyle::ink(),DWRITE_FONT_WEIGHT_SEMI_BOLD);
+            label(std::string("Talk to ")+model.state.value("profile",Json::object()).value("displayName","Hyphen"),24,D2D1::RectF(CHAT_LEFT+8,185,WIDTH-36,230),chatstyle::ink(),DWRITE_FONT_WEIGHT_SEMI_BOLD);
             label("Ask about your work, think through an idea, or share an image.",16,D2D1::RectF(CHAT_LEFT+8,244,WIDTH-36,310),muted);
             button(brush,"What needs me?",D2D1::RectF(CHAT_LEFT+8,334,CHAT_LEFT+196,378),"askNeeds",model.canReply());
             button(brush,"What changed?",D2D1::RectF(CHAT_LEFT+208,334,CHAT_LEFT+396,378),"askChanges",model.canReply());
@@ -518,7 +520,9 @@ struct Renderer {
         if(assistant){brush->SetColor(chatstyle::blue());canvas->DrawEllipse(D2D1::Ellipse(D2D1::Point2F(chatlayout::pinX,chatlayout::pinY),33,33),brush,2);}
         brush->SetColor(chatstyle::blue());canvas->FillEllipse(D2D1::Ellipse(D2D1::Point2F(chatlayout::pinX,chatlayout::pinY),28,28),brush);
         brush->SetColor(chatstyle::inverse());canvas->FillRoundedRectangle(D2D1::RoundedRect(D2D1::RectF(137,127,159,132),2.5f,2.5f),brush);
-        centerLabel("Hyphen",12,D2D1::RectF(106,170,190,190),assistant?chatstyle::ink():muted);
+        const auto profile=model.state.value("profile",Json::object());
+        if(profile.value("avatarStyle","hyphen")=="initials"){brush->SetColor(chatstyle::blue());canvas->FillEllipse(D2D1::Ellipse(D2D1::Point2F(chatlayout::pinX,chatlayout::pinY),28,28),brush);centerLabel(profile.value("initials","H"),22,D2D1::RectF(120,104,176,156),chatstyle::inverse());}
+        centerLabel(profile.value("displayName","Hyphen"),12,D2D1::RectF(70,170,226,190),assistant?chatstyle::ink():muted);
         hits.push_back({assistantBox,"assistant",Json::object()});
         auto cards=model.cards();
         for(size_t index=model.offset;index<cards.size()&&index<size_t(model.offset+chatlayout::visibleRows);++index) {
@@ -842,7 +846,7 @@ struct App {
         if(a=="detailsMenu")return "Conversation details";
         if(a=="filterMenu")return "Filter conversations";
         if(a=="addMenu")return "Message options";
-        if(a=="assistant")return "Talk to Hyphen";
+        if(a=="assistant")return std::string("Talk to ")+renderer.model.state.value("profile",Json::object()).value("displayName","Hyphen");
         if(a=="removeImage")return "Remove image · "+hit.card.value("name",std::string("attachment"));
         if(a=="openImage")return "Open image · "+hit.card.value("name",std::string("attachment"));
         if(a=="retryDetails")return "Retry loading messages";
@@ -1168,7 +1172,7 @@ struct App {
         renderer.focused=stops[index].hit;SetFocus(stops[index].window);renderer.paint();
         NotifyWinEvent(EVENT_OBJECT_FOCUS,panel,OBJID_CLIENT,CHILDID_SELF);
     }
-    bool reducedMotion() const {BOOL animations=TRUE;SystemParametersInfoW(SPI_GETCLIENTAREAANIMATION,0,&animations,0);return !animations||auditReducedMotion;}
+    bool reducedMotion() const {BOOL animations=TRUE;SystemParametersInfoW(SPI_GETCLIENTAREAANIMATION,0,&animations,0);return !animations||auditReducedMotion||renderer.model.state.value("profile",Json::object()).value("reducedMotion",false);}
     void scroll(int delta,bool sidebar=false) {
         auto& model=renderer.model;
         if(sidebar||(!model.chatting()&&model.selectedId.empty())) {int count=static_cast<int>(model.cards().size());model.offset=std::clamp(model.offset+(delta<0?1:-1),0,std::max(0,count-chatlayout::visibleRows));}

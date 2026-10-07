@@ -292,6 +292,7 @@ if ($('corner-toggle')) {
   }
   function render() {
     if (!state || mode || pressed) return;
+    document.documentElement.classList.toggle('profile-reduced-motion',state.profile?.reducedMotion===true);
     $('demo-label').hidden = !state.demo;
     $('counts').textContent =
       view === 'updates' ? state.ready + ' ready · ' + state.working + ' working' : '';
@@ -1358,6 +1359,24 @@ if ($('corner-toggle')) {
     openPanel('settings', 'Queue settings');
     const panel = $('panel');
     panel.append(node('h2', 'Make it yours', { class: 'panel-title' }));
+    if(state.profile&&!state.remote){
+      const name=node('input','',{id:'assistant-display-name',maxlength:'48'});
+      name.value=state.profile.displayName;
+      const initials=node('input','',{id:'assistant-initials',maxlength:'4'});
+      initials.value=state.profile.initials;
+      const avatar=node('select','',{id:'assistant-avatar'});
+      avatar.append(node('option','Hyphen mark',{value:'hyphen'}),node('option','Initials',{value:'initials'}));avatar.value=state.profile.avatarStyle;
+      const motion=node('input','',{id:'assistant-motion',type:'checkbox'});motion.checked=state.profile.reducedMotion;
+      panel.append(node('label','Assistant name',{for:'assistant-display-name'}),name,
+        node('label','Avatar',{for:'assistant-avatar'}),avatar,node('label','Initials',{for:'assistant-initials'}),initials,
+        node('label','Reduce motion',{for:'assistant-motion'}),motion,
+        button('Save assistant preferences',async()=>{try{await call('assistantProfile',{displayName:name.value,avatarStyle:avatar.value,initials:initials.value,reducedMotion:motion.checked});closePanel();notice('Assistant preferences saved');}catch(e){notice(e.message,true);}},'settings-button'));
+    }
+    if(!state.remote)panel.append(button('Inspect capabilities',async()=>{
+      try{const result=await call('capabilities');const text=result.features.map(f=>f.name+': '+f.state.replaceAll('_',' ')).join('\n');
+        panel.append(node('p',text+'\nAccount plan: '+result.accountPlan+'. Current account entitlement is unverified.',{class:'field-note'}));
+      }catch(e){notice(e.message,true);}
+    },'settings-button'));
     panel.append(node('p', 'Work Updates ' + state.version, { class: 'field-note' }));
     for (const [key, label] of [
       ['pin', 'Keep above other windows'],
