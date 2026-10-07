@@ -41,6 +41,7 @@ class Codex extends EventEmitter {
     this.sequence = 0;
     this.waiting = new Map();
     this.active = new Map();
+    this.acceptedTurns = new Map();
     this.loaded = new Set();
     this.proc = null;
     this.connecting = null;
@@ -95,6 +96,7 @@ class Codex extends EventEmitter {
       this.proc = null;
       this.loaded.clear();
       this.active.clear();
+      this.acceptedTurns.clear();
       if (!connection.intentional) {
         this.lastFailure = { at: new Date().toISOString(), reason, ...details };
         this.emit('disconnected', { threadIds: [...affected], message: error.message });
@@ -152,17 +154,19 @@ class Codex extends EventEmitter {
           return;
         }
         try {
-          if (m.method && m.id !== undefined) this.emit('request', m);
+          if (m.method && m.id !== undefined) this.emit('request', m, connection);
           else if (m.method) {
             if (m.method === 'thread/closed') {
               this.loaded.delete(m.params.threadId);
               this.active.delete(m.params.threadId);
+              this.acceptedTurns.delete(m.params.threadId);
             }
             if (m.method === 'turn/started'&&!connection.completedTurns.has(m.params.threadId+'\0'+m.params.turn.id)) this.active.set(m.params.threadId, m.params.turn.id);
             if (m.method === 'turn/completed') {
               connection.completedTurns.add(m.params.threadId+'\0'+m.params.turn.id);
               if(connection.completedTurns.size>200)connection.completedTurns.delete(connection.completedTurns.values().next().value);
               if(this.active.get(m.params.threadId)===m.params.turn.id)this.active.delete(m.params.threadId);
+              if(this.acceptedTurns.get(m.params.threadId)===m.params.turn.id)this.acceptedTurns.delete(m.params.threadId);
             }
             if (['turn/started', 'turn/completed'].includes(m.method))
               this.log('codex.' + m.method.replace('/', '.'), {
@@ -203,7 +207,10 @@ class Codex extends EventEmitter {
                 // its delayed RPC acknowledgement.
                 const turnId=pending.method==='turn/start'?m.result?.turn?.id:pending.method==='turn/steer'?m.result?.turnId:null;
                 if(typeof turnId==='string'&&turnId&&pending.threadId&&!connection.completedTurns.has(pending.threadId+'\0'+turnId)&&
-                  !['completed','interrupted','failed'].includes(m.result?.turn?.status))this.active.set(pending.threadId,turnId);
+                  !['completed','interrupted','failed'].includes(m.result?.turn?.status)){
+                  this.active.set(pending.threadId,turnId);
+                  this.acceptedTurns.set(pending.threadId,turnId);
+                }
                 pending.resolve(m.result);
               }
             }
@@ -342,16 +349,18 @@ class Codex extends EventEmitter {
     if(executors)executors.grant(task.id,runtime,cwd);
     let id = task.threadId;
     if (!id) {
+      const tools=executors?this.options.browserTools?.registration(runtime):null;
       const out = await this.call('thread/start', {
         cwd,
         sandbox: 'workspace-write',
         approvalPolicy: 'on-request',
         approvalsReviewer: 'user',
+        ...(tools?{dynamicTools:tools.specs}:{}),
         developerInstructions:
           'This task is shown in Work Updates, a compact task queue. Keep progress concise. When input or an external dependency prevents completion, clearly state what is needed and whether the task is blocked or waiting. A completed pass means ready for review; the user decides when the overall task is Done.',
       });
       id = out.thread.id;
-      if(executors)executors.attach(task.id,id,runtime,out.cwd||out.thread.cwd);
+      if(executors)executors.attach(task.id,id,runtime,out.cwd||out.thread.cwd,tools?.contract);
       this.loaded.add(id);
       this.emit('created', { taskId: task.id, threadId: id });
       await this.call('thread/name/set', { threadId: id, name: task.title });
