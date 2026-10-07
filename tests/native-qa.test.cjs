@@ -213,3 +213,30 @@ test('uncertain cleanup stops later lanes and retains the affected process ident
   assert.equal(report.lanes[0].cases[0].processId, 1234);
   assert.equal(report.passed, false);
 });
+
+test('a controlled filesystem failure retains its bounded code, stops its actual owned child and cannot claim saved evidence', async (t) => {
+  const result = await execute(
+    {
+      file: process.execPath,
+      args: [
+        '-e',
+        'process.stdout.write("fixture");setTimeout(()=>process.exit(29),5000);setInterval(()=>{},1000)',
+      ],
+    },
+    {
+      cwd: root,
+      directory: temp(t),
+      timeoutMs: 5000,
+      writeLog: () => {
+        throw Object.assign(new Error('Synthetic private path must not be copied'), {
+          code: 'EPERM',
+        });
+      },
+    },
+  );
+  assert.equal(result.status, 'storage_failed');
+  assert.equal(result.storageFailureCode, 'EPERM');
+  assert.equal(result.exitObserved, true);
+  assert.ok(result.durationMs < 3000);
+  assert.ok(!JSON.stringify(result).includes('private path'));
+});

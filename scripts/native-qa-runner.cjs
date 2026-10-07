@@ -7,7 +7,10 @@ const hash = (file) => crypto.createHash('sha256').update(fs.readFileSync(file))
 
 // Commands come from the reviewed matrix, never from an account or source message.
 // Only the process created by this invocation can be terminated on interruption.
-function execute(command, { cwd, directory, timeoutMs, signal, maxBytes = 2 * 1024 * 1024 } = {}) {
+function execute(
+  command,
+  { cwd, directory, timeoutMs, signal, maxBytes = 2 * 1024 * 1024, writeLog = fs.writeSync } = {},
+) {
   if (!Number.isSafeInteger(timeoutMs) || timeoutMs < 1 || timeoutMs > 300000)
     throw new Error('Invalid bounded case timeout');
   if (signal?.aborted)
@@ -26,15 +29,36 @@ function execute(command, { cwd, directory, timeoutMs, signal, maxBytes = 2 * 10
       cleanup = 'normal_exit',
       bytes = 0,
       finished = false,
-      stopping = false;
+      stopping = false,
+      storageFailureCode = null;
+    const storageFailure = (error) => {
+      failure ||= 'storage_failed';
+      storageFailureCode = ['EACCES', 'EPERM', 'ENOSPC', 'EMFILE', 'EIO'].includes(error.code)
+        ? error.code
+        : 'UNKNOWN';
+    };
     const finish = (exitCode, terminationSignal, exitObserved = true) => {
       if (finished) return;
       finished = true;
       clearTimeout(timer);
       clearTimeout(killTimer);
       signal?.removeEventListener('abort', abort);
-      fs.closeSync(stdout);
-      fs.closeSync(stderr);
+      for (const fd of [stdout, stderr]) {
+        try {
+          fs.closeSync(fd);
+        } catch (error) {
+          storageFailure(error);
+        }
+      }
+      const logs = [];
+      for (const file of [stdoutFile, stderrFile]) {
+        try {
+          logs.push({ file: path.basename(file), sha256: hash(file) });
+        } catch (error) {
+          storageFailure(error);
+          logs.push({ file: path.basename(file), sha256: null });
+        }
+      }
       resolve({
         status: failure || (exitCode === 0 ? 'passed' : 'failed'),
         started: !!child?.pid,
@@ -46,10 +70,8 @@ function execute(command, { cwd, directory, timeoutMs, signal, maxBytes = 2 * 10
         terminationSignal,
         exitObserved,
         cleanup,
-        logs: [
-          { file: 'stdout.txt', sha256: hash(stdoutFile) },
-          { file: 'stderr.txt', sha256: hash(stderrFile) },
-        ],
+        storageFailureCode,
+        logs,
       });
     };
     const stop = (reason) => {
@@ -109,8 +131,9 @@ function execute(command, { cwd, directory, timeoutMs, signal, maxBytes = 2 * 10
       if (finished) return;
       const room = Math.max(0, maxBytes - bytes);
       try {
-        fs.writeSync(fd, chunk.subarray(0, room));
-      } catch {
+        writeLog(fd, chunk.subarray(0, room));
+      } catch (error) {
+        storageFailure(error);
         stop('storage_failed');
         return;
       }
