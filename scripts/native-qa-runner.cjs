@@ -170,7 +170,7 @@ function execute(
   });
 }
 
-function matrix(root, lane) {
+function matrix(root, lane, directory) {
   if (lane === 'isolated')
     return [
       {
@@ -217,7 +217,11 @@ function matrix(root, lane) {
       ps('status-scales', 'status-audit.ps1'),
     ];
   }
-  if (lane === 'physical' || lane === 'codex') return [];
+  if (lane === 'physical') return [{id:'separate-cursor-composer',
+    evidence:'separate_cursor_owned_synthetic_native_controls',file:process.execPath,
+    args:[path.join(root,'scripts/native-physical-audit.cjs'),path.join(directory || root,'separate-cursor-composer')],
+    timeoutMs:240000}];
+  if (lane === 'codex') return [];
   throw new Error('Unknown QA lane');
 }
 
@@ -229,6 +233,7 @@ async function run({
   signal,
   verifyCandidate,
   executeCase = execute,
+  physicalConfiguration = require('./native-physical-contract.cjs').configuration,
 }) {
   if (
     !Array.isArray(lanes) ||
@@ -273,16 +278,18 @@ async function run({
       save();
       continue;
     }
-    if (['physical', 'codex'].includes(lane)) {
+    if (lane === 'codex') {
       result.status = 'unsupported';
-      result.reason =
-        lane === 'physical'
-          ? 'physical_scenario_driver_pending_prerequisites_6_7'
-          : 'separate_authorized_disposable_account_driver_required';
+      result.reason = 'separate_authorized_disposable_account_driver_required';
       save();
       continue;
     }
-    if (lane === 'simulated') {
+    let physical;
+    if (lane === 'physical') {
+      try {physical = physicalConfiguration();}
+      catch {result.status='blocked';result.reason='explicit_chat_owned_separate_cursor_configuration_required';save();continue;}
+    }
+    if (lane === 'simulated' || lane === 'physical') {
       try {
         const candidate = verifyCandidate();
         if (candidate.dirty !== false || candidate.revision !== revision)
@@ -295,7 +302,7 @@ async function run({
         continue;
       }
     }
-    for (const spec of matrix(root, lane)) {
+    for (const spec of matrix(root, lane, directory)) {
       if (signal?.aborted) {
         result.status = 'interrupted';
         break;
@@ -319,6 +326,16 @@ async function run({
           cleanup: 'unverified',
           reason: 'case_execution_unconfirmed',
         };
+      }
+      if (lane === 'physical' && observed.status === 'passed') {
+        try {
+          const proof = JSON.parse(fs.readFileSync(path.join(caseDirectory,'physical-verification.json'),'utf8'));
+          if (proof.passed !== true || proof.normalExit !== true || proof.sourceRevision !== revision ||
+              proof.chatId !== physical.chatId || JSON.stringify(proof.candidateHashes) !== JSON.stringify(result.candidate.binaryHashes))
+            throw new Error('Physical proof differs from reviewed candidate');
+          require('./native-physical-contract.cjs').verify(proof.input,revision,physical.chatId,proof.nativePid);
+          observed.proofHash = hash(path.join(caseDirectory,'physical-verification.json'));
+        } catch {observed={...observed,status:'failed',reason:'independent_physical_proof_required'};}
       }
       Object.assign(started, observed);
       save();
