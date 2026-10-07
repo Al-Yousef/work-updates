@@ -1031,7 +1031,7 @@ async function waitFor(page, fn) {
       ),
       'Dismissal finishes outside the viewport on the left',
     );
-    const concealed = await app.evaluate(async ({ BrowserWindow }) => {
+    const captureConcealed = () => app.evaluate(async ({ BrowserWindow }) => {
       const w = BrowserWindow.getAllWindows().find((w) =>
         w.webContents.getURL().endsWith('/index.html'),
       );
@@ -1040,6 +1040,15 @@ async function waitFor(page, fn) {
       for (let i = 3; i < bitmap.length; i += 4) alpha = Math.max(alpha, bitmap[i]);
       return { alpha, focused: w.isFocused(), focusable: w.isFocusable(), shadow: w.hasShadow() };
     });
+    // The computed CSS state can precede the compositor's captured frame.
+    // Require a fresh fully concealed capture within the bounded render window.
+    let concealed;
+    const concealDeadline = Date.now() + 1500;
+    do {
+      concealed = await captureConcealed();
+      if (concealed.alpha === 0 && !concealed.focused && !concealed.focusable && !concealed.shadow) break;
+      await page.waitForTimeout(50);
+    } while (Date.now() < concealDeadline);
     check(
       concealed.alpha === 0 && !concealed.focused && !concealed.focusable && !concealed.shadow,
       'Concealed native surface has no visible pixels, focus or shadow: ' +
