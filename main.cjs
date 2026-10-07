@@ -165,7 +165,7 @@ const schedules=new Schedules({directory:dataDir,log:diagnostics,maintenance:()=
 delegations=new Delegations({directory:dataDir,policy:authorization,messages,responsibilities,snapshot:()=>devices.snapshot(),log:diagnostics,workAdmission:entry=>workControls?.responsibilityAdmission(entry)||'allow'});
 workControls=new WorkControls({directory:dataDir,policy:authorization,messages,responsibilities,schedules,delegations,snapshot:()=>devices.snapshot(),research:()=>research,interrupt:input=>controller.stopSource(input)});
 const budgets=new (require('./src/resource-budgets.cjs').ResourceBudgets)({directory:dataDir,actorId:authorization.actorId,responsibilities,snapshot:()=>devices.snapshot(),
-  scopes:(id,input)=>{const matches=input.kind==='read'?responsibilities.state.entries.filter(r=>r.scope.sourceId===input.sourceId||r.id===input.taskKey):responsibilities.state.entries.filter(r=>r.currentStep.messageId===id);return matches.flatMap(r=>{const d=delegations.state.entries.find(d=>d.childId===r.id);return [r.id,...(d?[d.parentId]:[])];});}});
+  scopes:(id,input)=>{const matches=input.kind==='read'||input.kind==='model'&&input.sourceId?responsibilities.state.entries.filter(r=>r.scope.sourceId===input.sourceId||r.id===input.taskKey):responsibilities.state.entries.filter(r=>r.currentStep.messageId===id);return matches.flatMap(r=>{const d=delegations.state.entries.find(d=>d.childId===r.id);return [r.id,...(d?[d.parentId]:[])];});}});
 messages.budgets=budgets;
 research.options.reader=budgets.reader(researchReader);
 const voiceProvider=new VoiceProvider({directory:dataDir,actorId:'human:'+devices.local.id,
@@ -213,7 +213,7 @@ const assistant = new Assistant({directory:dataDir,snapshot:()=>devices.snapshot
   dispatch:(mode,input)=>devices.command(mode==='cancel'?'cancelMessage':mode==='queue'?'queueMessage':'send',input)});
 privacy=new (require('./src/privacy.cjs').Privacy)({directory:dataDir,actorId:authorization.actorId,
   localSource:sourceId=>queue.cards().some(c=>c.sources?.some(s=>s.id===sourceId)),
-  disconnect:async sourceId=>{observer?.ignore?.(privacy.state.disconnected);publish();},
+  disconnect:async sourceId=>{observer?.ignore?.(privacy.state.disconnected);summaries?.refresh();publish();},
   adapters:require('./src/privacy-adapters.cjs').adapters({directory:dataDir,assistant:()=>assistant,
     sourceDependencies:sourceId=>[
       ...(research.snapshot().some(e=>e.scope.sourceId===sourceId&&research.pending.has(e.id))?['A selected source read is still running']:[]),
@@ -276,7 +276,7 @@ function publish() {
 messages.on('change', () => {try{responsibilityAuthorization.observe(authorization,messages);}catch{diagnostics.write('authorization.recovery_failed',{code:'AUTHORIZATION_STORAGE_FAILED',noResend:true});}publish();});
 authorization.on('change',()=>{publish();queueMicrotask(()=>messages.pump().catch(()=>diagnostics.write('authorization.recovery_failed',{code:'AUTHORIZATION_STORAGE_FAILED',noResend:true})));});
 assistant.on('change', () => publish());
-workControls.on('change',()=>publish());
+workControls.on('change',()=>{summaries?.refresh();publish();});
 commitments.on('change',()=>publish());
 research.on('change',()=>publish());
 function driveResearch(){void research.tick().catch(()=>diagnostics.write('research.recovery_failed',{code:'RESEARCH_STORAGE_FAILED',noResend:true}));}
@@ -675,7 +675,8 @@ function startCollection() {
   if (argument('--legacy-root')) queue.importLegacy(path.resolve(argument('--legacy-root')));
   if (demo) observer = require('./src/demo.cjs').startDemoObserver(queue);
   else {
-    summaries ||= new Summaries(queue, { log: diagnostics });
+    summaries ||= new Summaries(queue, { log: diagnostics, budgets,
+      admission:sourceId=>quitting||maintenanceActive(dataDir)||privacy?.activeRemoval||privacy?.disconnected(sourceId)||workControls.closed||workControls.storageFailed||workControls.active('all','all')?'deny':'allow' });
     const helper = app.isPackaged
       ? path.join(
           process.resourcesPath,
