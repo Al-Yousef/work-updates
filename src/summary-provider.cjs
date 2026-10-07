@@ -19,7 +19,12 @@ class CodexSummaryProvider {
     this.model = null;
     this.client = null;
   }
-  async summarize(input) {
+  async summarize(input, context = {}) {
+    const admission = () => {
+      if (this.options.admission && this.options.admission(context.sourceId) !== 'allow')
+        throw new Error('SUMMARY_WORK_HELD');
+    };
+    admission();
     const client = (this.client =
       this.options.clientFactory?.() ||
       new Codex({
@@ -27,6 +32,11 @@ class CodexSummaryProvider {
         requestTimeoutMs: 15000,
         // The summary connection deliberately does not log model payloads or stderr.
       }));
+    let reservation = null,
+      dispatched = false,
+      completed = false,
+      acceptedTurn = null,
+      reported = null;
     try {
       await client.connect();
       if (!this.model) {
@@ -61,6 +71,20 @@ class CodexSummaryProvider {
       }
       for (const id of Object.keys(existing.plugins || {})) config[`plugins.${id}.enabled`] = false;
       fs.mkdirSync(this.options.directory, { recursive: true });
+      admission();
+      if (this.options.budgets)
+        reservation = this.options.budgets.reserve({
+          id: context.requestId || require('node:crypto').randomUUID(),
+          kind: 'model',
+          provider: 'codex-summary',
+          model: this.model,
+          sourceId: context.sourceId || null,
+          estimate: {
+            tokens: Math.ceil(Buffer.byteLength(JSON.stringify(input)) / 3) + 1200,
+            costMicros: null,
+          },
+        });
+      admission();
       const started = await client.call('thread/start', {
         ephemeral: true,
         model: this.model,
@@ -100,6 +124,39 @@ class CodexSummaryProvider {
         const notification = (message) => {
           const p = message.params;
           if (p?.threadId !== threadId) return;
+          try {
+            admission();
+          } catch (error) {
+            finish(error);
+            return;
+          }
+          if (message.method === 'turn/started' && p.turn?.id) {
+            if (acceptedTurn && acceptedTurn !== p.turn.id) {
+              finish(new Error('SUMMARY_TURN_IDENTITY'));
+              return;
+            }
+            acceptedTurn = p.turn.id;
+            try {
+              if (reservation) this.options.budgets.started(reservation, acceptedTurn);
+            } catch {
+              finish(new Error('SUMMARY_RESOURCE_CHECKPOINT'));
+              return;
+            }
+          }
+          if (
+            message.method === 'thread/tokenUsage/updated' &&
+            acceptedTurn &&
+            p.turnId === acceptedTurn
+          ) {
+            try {
+              const next = require('./resource-budgets.cjs').usage(p.tokenUsage?.last);
+              if (reported && next.totalTokens < reported.totalTokens) throw new Error();
+              reported = next;
+            } catch {
+              finish(new Error('SUMMARY_USAGE_INVALID'));
+              return;
+            }
+          }
           if (
             message.method === 'item/started' &&
             !['agentMessage', 'reasoning', 'userMessage'].includes(p.item?.type)
@@ -115,12 +172,20 @@ class CodexSummaryProvider {
             return;
           }
           if (message.method === 'turn/completed') {
+            if (reservation && (!acceptedTurn || p.turn?.id !== acceptedTurn)) {
+              finish(new Error('SUMMARY_TURN_IDENTITY'));
+              return;
+            }
             if (p.turn.status !== 'completed') {
               finish(new Error('SUMMARY_TURN_FAILED'));
               return;
             }
             try {
-              finish(null, { ...validateSummary(JSON.parse(output)), model: this.model });
+              const value = { ...validateSummary(JSON.parse(output)), model: this.model };
+              if (reservation)
+                this.options.budgets.finish(reservation, { reported, turnId: acceptedTurn });
+              completed = true;
+              finish(null, value);
             } catch {
               finish(new Error('SUMMARY_INVALID'));
             }
@@ -129,6 +194,13 @@ class CodexSummaryProvider {
         client.on('notification', notification);
         client.on('disconnected', disconnected);
         client.on('request', requested);
+        try {
+          admission();
+        } catch (error) {
+          finish(error);
+          return;
+        }
+        dispatched = true;
         client
           .call('turn/start', {
             threadId,
@@ -142,6 +214,14 @@ class CodexSummaryProvider {
           .catch(() => finish(new Error('SUMMARY_START_FAILED')));
       });
     } finally {
+      if (reservation && !completed)
+        try {
+          this.options.budgets.finish(reservation, {
+            status: dispatched ? 'unknown' : 'not_started',
+            reported,
+            turnId: acceptedTurn,
+          });
+        } catch {}
       client.close();
       if (this.client === client) this.client = null;
     }
