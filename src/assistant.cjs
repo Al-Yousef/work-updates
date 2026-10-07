@@ -89,7 +89,7 @@ class Assistant extends EventEmitter {
     if(!/^[a-f0-9-]{36}$/i.test(input.messageId||''))throw new Error('A message identity is required.');
     const existing=this.state.receipts[input.messageId];
     if(existing){if(existing!==messageHash(text,ids))throw new Error('That message identity belongs to a different message.');return {accepted:true,messageId:input.messageId};}
-    const workControl=workCommand(text),priorityControl=workControl&&['pause-main','stop-child','disable-schedule','revoke-executor','stop-all','list','inspect'].includes(workControl.kind);
+    const workControl=workCommand(text),priorityControl=(workControl&&['pause-main','stop-child','disable-schedule','revoke-executor','stop-all','list','inspect'].includes(workControl.kind))||/^\/executor revoke [a-f0-9-]{36}$/i.test(text);
     if(this.active&&!priorityControl)throw new Error('Hyphen is answering. You can send another message when it finishes. Stop and pause controls remain available.');
     if(Object.keys(this.state.receipts).length>=5000)throw new Error('Assistant history reached its message limit.');
     const prior=structuredClone(this.state);
@@ -153,6 +153,16 @@ class Assistant extends EventEmitter {
     try {
       const privacyControl=require('./privacy-command.cjs'),privacy=privacyControl.command(message.text);
       if(privacy){await privacyControl.manage(this.options.privacy,message,privacy);this.save();return;}
+      const executorControl=message.text.match(/^\/executor (inspect|revoke)(?: ([a-f0-9-]{36}))?$/i);
+      if(executorControl){
+        if(!this.options.executors)throw new Error('Executor binding controls are unavailable.');
+        if(executorControl[1].toLowerCase()==='revoke'){
+          if(!executorControl[2])throw new Error('Specify the exact executor grant from /executor inspect.');
+          this.options.executors.revoke(executorControl[2].toLowerCase(),this.options.executors.actorId);
+          message.answer='Revoked future access for this executor grant. Its existing source records remain; an already accepted turn requires the separate stop control.';
+        }else message.answer=JSON.stringify(this.options.executors.inspect().slice(-8),null,2).slice(0,6000);
+        message.status='completed';this.save();return;
+      }
       const work=workCommand(message.text);if(work){await require('./work-control.cjs').manage(this.options.workControls,message,work);this.save();return;}
       const reflection=reflectionCommand(message.text);if(reflection){require('./reflection-control.cjs').manage(this.options.reflections,message,reflection);this.save();return;}
       const activity=activityControl.command(message.text);if(activity){activityControl.manage(this.options.activity,message,activity);this.save();return;}
