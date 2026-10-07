@@ -69,6 +69,21 @@ class FeedTests(unittest.TestCase):
         self.assertEqual(before, (self.home / 'state_5.sqlite').read_bytes())
         self.assertEqual(path.read_text().count('response_item'), 2)
 
+    def test_activity_metadata_distinguishes_catalogue_context_and_unchanged_cache_without_content(self):
+        self.add('audit-source', 'SECRET chat name', [self.record('SECRET source content')])
+        first = collector.collect(self.config)['activityAccess']
+        self.assertEqual([r['reason'] for r in first['reads']], ['source_catalogue_read', 'collector_context_read'])
+        self.assertEqual(first['outcome'], 'returned')
+        self.assertTrue(all(r['startedAt'] <= r['endedAt'] for r in first['reads']))
+        self.assertNotIn('SECRET', json.dumps(first))
+        self.assertNotIn(str(self.home), json.dumps(first))
+        later = collector.collect(self.config)['activityAccess']
+        self.assertNotEqual(first['sessionId'], later['sessionId'])
+        self.assertEqual([r['reason'] for r in later['reads']], ['source_catalogue_read'])
+        self.config['_requestedIds'] = ['audit-source']
+        detail = collector.collect(self.config)['activityAccess']
+        self.assertTrue(any(r['reason'] == 'source_details_request' for r in detail['reads']))
+
     def test_actual_image_wrapper_preserves_local_reference_without_displaying_protocol_markup(self):
         image = str(self.home / 'attachment.png')
         record = self.record('Describe it\n<image name=[Image #1] path="' + image + '">\n</image>')

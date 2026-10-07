@@ -16,6 +16,7 @@ const {command:scheduleCommand}=require('./schedule-command.cjs');
 const {command:commitmentCommand}=require('./commitment-command.cjs');
 const {command:researchCommand}=require('./research-command.cjs');
 const {command:triageCommand}=require('./triage-command.cjs');
+const activityControl=require('./activity-command.cjs');
 const {command:delegationCommand}=require('./delegation-command.cjs');
 class Assistant extends EventEmitter {
   constructor(options) {
@@ -146,6 +147,7 @@ class Assistant extends EventEmitter {
   async generate(message) {
     const started=Date.now();
     try {
+      const activity=activityControl.command(message.text);if(activity){activityControl.manage(this.options.activity,message,activity);this.save();return;}
       const notice=triageCommand(message.text);if(notice){require('./triage-control.cjs').manage(this.options.triage,message,notice);this.save();return;}
       const authorization=authorizationCommand(message.text);
       if(authorization){await this.manageAuthorization(message,authorization);this.save();return;}
@@ -183,6 +185,7 @@ class Assistant extends EventEmitter {
         commitments:this.options.commitments?.context(),
         research:this.options.research?.context(),
         notifications:this.options.triage?.context(),
+        activity:this.options.activity?.context(),
         delegations:this.options.delegations?.snapshot().slice(-8).map(e=>({id:e.id,parentId:e.parentId,parentRevision:e.parentRevision,childId:e.childId,chatName:e.scope.chatName,ownerId:e.scope.ownerId,purpose:clip(e.purpose,500),phase:e.phase,limits:e.limits,cancelRequested:e.cancelRequested,review:e.review?{kind:e.review.kind,text:clip(e.review.text,300)}:null,missingEvidence:e.missingEvidence,parentGoalVerification:'Tracked separately on the parent responsibility'})),
         canRequestChatMessage:!!this.options.dispatch&&!!requestedRef,requestedChatRef:requestedRef,requestedMessage:requested?.proposal||null});
       if(this.closed)return;

@@ -248,6 +248,26 @@ def current_task(history, id, path, previous=''):
 def collect(config):
     now = int(time.time())
     home = Path(config['codexHome'])
+    # Content-free metadata for this existing collector session. Bounds and
+    # dropped entries are explicit; a batch is one logical source access.
+    access = {'schema': 1, 'sessionId': os.urandom(16).hex(),
+              'storeId': hashlib.sha256((str(home.resolve()).lower() if sys.platform == 'win32' else str(home.resolve())).encode()).hexdigest(),
+              'startedAt': int(time.time() * 1000), 'endedAt': None,
+              'outcome': 'unknown', 'reads': [], 'droppedReads': 0}
+    config['_lastActivityAccess'] = access
+    def begin_access(source_id, reason):
+        item = {'id': os.urandom(16).hex(), 'sourceId': source_id,
+                'reason': reason, 'startedAt': int(time.time() * 1000),
+                'endedAt': None, 'outcome': 'unknown'}
+        if len(access['reads']) < 256:
+            access['reads'].append(item)
+        else:
+            access['droppedReads'] += 1
+        return item
+    def end_access(item):
+        item['endedAt'] = int(time.time() * 1000)
+        item['outcome'] = 'returned'
+    catalogue_access = begin_access(None, 'source_catalogue_read')
     state = readonly(home / 'state_5.sqlite')
     history = None
     warnings = []
@@ -263,6 +283,7 @@ def collect(config):
         rows = state.execute("SELECT id,name,title,preview,cwd,rollout_path,updated_at "
                              "FROM threads WHERE archived=0 AND source IN ('exec','vscode','cli','appServer')" + extra +
                              ' ORDER BY updated_at DESC').fetchall()
+        end_access(catalogue_access)
         ignored = set(config.get('ignoredThreadIds', []))
         requested = set(config.get('_requestedIds', []))
         # Conversations belong to opened chats, not every queue notification.
@@ -294,7 +315,10 @@ def collect(config):
                     record['conversationLoaded'] = False
                     cached['record'] = record
                 if cached.get('taskTitleVersion') != TASK_TITLE_VERSION:
+                    title_access = begin_access(r['id'], 'collector_context_read') if record.get('contextLoaded') else None
                     record['taskTitle'] = current_task(history, r['id'], r['rollout_path']) if record.get('contextLoaded') else ''
+                    if title_access:
+                        end_access(title_access)
                     cached['record'] = record; cached['taskTitleVersion'] = TASK_TITLE_VERSION
                 if record.get('lifecycle') == 'working' and now - record.get('notificationAt', 0) >= 3600:
                     record['status'], record['label'] = 'unknown', 'Check status'
@@ -315,6 +339,7 @@ def collect(config):
                 SOURCE_CACHE[r['id']] = {'signature': signature, 'record': record, 'taskTitleVersion': TASK_TITLE_VERSION}
                 result.append(record)
                 continue
+            context_access = begin_access(r['id'], 'source_details_request' if requested_context else 'collector_context_read')
             try:
                 turn, message = history_latest(history, r['id'])
             except (sqlite3.Error, ValueError):
@@ -389,11 +414,15 @@ def collect(config):
                            'uri': 'codex://threads/' + r['id'], 'evidence': 'Recorded completion event' if ready else 'Local recorded chat activity'}
             SOURCE_CACHE[r['id']] = {'signature': signature, 'record': record, 'taskTitleVersion': TASK_TITLE_VERSION}
             result.append(record)
+            end_access(context_access)
         live_ids = {r['id'] for r in rows}
         for id in list(SOURCE_CACHE):
             if id not in live_ids:
                 del SOURCE_CACHE[id]
+        access['endedAt'] = int(time.time() * 1000)
+        access['outcome'] = 'returned'
         return {'schemaVersion': 2, 'collectorVersion': TASK_TITLE_VERSION, 'collectedAt': int(time.time()), 'scope': 'Local Codex chats',
+                'activityAccess': access,
                 'threads': result, 'monitoredCount': len(result), 'warnings': warnings,
                 'device': {'kind': {'win32': 'pc', 'darwin': 'mac', 'linux': 'linux'}.get(sys.platform, 'unknown')}}
     finally:
@@ -598,8 +627,13 @@ def main():
                                   'sequence': sequence, 'ok': False,
                                   'completedAt': time.time(), 'error': type(e).__name__}), flush=True)
             else:
+                access = config.get('_lastActivityAccess')
+                if access:
+                    access['endedAt'] = int(time.time() * 1000)
+                    access['outcome'] = 'failed'
                 atomic(root / 'data' / 'health.json', {'ok': False, 'at': int(time.time()),
-                                                      'message': type(e).__name__ + ': ' + str(e)[:180]})
+                                                      'message': type(e).__name__ + ': ' + str(e)[:180],
+                                                      'activityAccess': access})
             if args.once:
                 return 1
         if args.once:
