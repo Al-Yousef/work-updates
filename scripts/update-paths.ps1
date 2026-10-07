@@ -18,5 +18,8 @@ function Get-UpdateCanonicalPath([string]$Path) {
   $taskBuffer=[Text.StringBuilder]::new(32768)
   $taskLength=[HyphenUpdate.Paths]::GetLongPathName($taskAbsolute,$taskBuffer,$taskBuffer.Capacity)
   if (-not $taskLength -or $taskLength -ge $taskBuffer.Capacity) { throw 'The update path cannot be resolved to an existing long Windows path' }
-  return $taskBuffer.ToString()
+  $taskLong=$taskBuffer.ToString()
+  if($taskLong.StartsWith('\\?\UNC\')){return '\\'+$taskLong.Substring(8)}
+  if($taskLong.StartsWith('\\?\')){return $taskLong.Substring(4)}
+  return $taskLong
 }
