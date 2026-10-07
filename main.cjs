@@ -47,6 +47,7 @@ const {Authorization}=require('./src/authorization.cjs');
 const responsibilityAuthorization=require('./src/responsibility-authorization.cjs');
 const {Commitments}=require('./src/commitments.cjs');
 const {Research}=require('./src/research.cjs');
+const {Triage}=require('./src/triage.cjs');
 const {Delegations}=require('./src/delegations.cjs');
 let nativeControl,delegations;
 const args = process.argv;
@@ -159,6 +160,12 @@ const assistant = new Assistant({directory:dataDir,snapshot:()=>devices.snapshot
     request:targets=>Promise.allSettled(targets.map(target=>devices.command('details',{id:target.id,taskKey:target.taskKey,sourceId:target.sourceId}))),
   },targets),
   dispatch:(mode,input)=>devices.command(mode==='cancel'?'cancelMessage':mode==='queue'?'queueMessage':'send',input)});
+const triage=new Triage({directory:dataDir,policy:authorization,responsibilities,research,snapshot:()=>devices.snapshot(),deviceId:devices.local.id,
+  preferences:()=>commitments.preferenceSnapshot(),maintenance:()=>quitting||maintenanceActive(dataDir),
+  admission:entry=>assistant.options.workControls?.responsibilityAdmission(entry)||'allow',
+  destination:require('./src/notification-destination.cjs').destination({assistant,deviceId:devices.local.id,Notification,show:()=>show(),
+    systemEnabled:()=>queue.state.settings.attention&&(!windowController||windowController.mode==='hidden')})});
+assistant.options.triage=triage;
 const csp =
   "default-src 'self'; script-src 'self'; style-src 'self'; img-src 'self' data:; connect-src 'none'; base-uri 'none'; object-src 'none'; form-action 'none'; frame-ancestors 'none'";
 function snapshot() {
@@ -201,13 +208,16 @@ commitments.on('change',()=>publish());
 research.on('change',()=>publish());
 function driveResearch(){void research.tick().catch(()=>diagnostics.write('research.recovery_failed',{code:'RESEARCH_STORAGE_FAILED',noResend:true}));}
 const researchTimer=setInterval(driveResearch,60000);researchTimer.unref();queueMicrotask(driveResearch);
+function driveTriage(){void triage.pump().catch(()=>diagnostics.write('notification.recovery_failed',{code:'NOTIFICATION_STORAGE_FAILED',noResend:true}));}
+triage.on('change',()=>publish());
+const triageTimer=setInterval(driveTriage,60000);triageTimer.unref();queueMicrotask(driveTriage);
 function driveDelegations(){void delegations.tick().catch(()=>diagnostics.write('delegation.recovery_failed',{code:'DELEGATION_RECOVERY_FAILED',noResend:true}));}
 delegations.on('change',()=>publish());
 const delegationTimer=setInterval(driveDelegations,60000);delegationTimer.unref();
 queueMicrotask(driveDelegations);
 function driveSchedules(){try{schedules.observe();}catch{diagnostics.write('schedule.recovery_failed',{code:'SCHEDULE_RECOVERY_FAILED',noResend:true});}void schedules.tick().catch(()=>diagnostics.write('schedule.recovery_failed',{code:'SCHEDULE_RECOVERY_FAILED',noResend:true}));}
 schedules.on('change',()=>publish());
-responsibilities.on('change',()=>{publish();queueMicrotask(()=>responsibilities.pump());queueMicrotask(driveSchedules);queueMicrotask(driveDelegations);});
+responsibilities.on('change',()=>{publish();queueMicrotask(()=>responsibilities.pump());queueMicrotask(driveSchedules);queueMicrotask(driveDelegations);queueMicrotask(driveTriage);});
 schedules.start();
 devices.on('change', () => {
   responsibilities.observe(devices.snapshot());
@@ -237,6 +247,7 @@ queue.on('change', () => {
 const notified = new Set();
 function attention(event) {
   if (
+    triage.managedEvent(event,devices.snapshot()) ||
     !queue.state.settings.attention ||
     (windowController && windowController.mode !== 'hidden') ||
     !['needs', 'blocked', 'waiting', 'ready'].includes(event.status) ||
@@ -278,6 +289,7 @@ function incoming(cards, previous) {
         !card.snoozed
       )
         attention({
+          cardId:card.id,sourceId:card.primarySourceId,
           key: card.id + ':' + next.get(card.id),
           title: card.title,
           status: card.status,
@@ -647,7 +659,7 @@ app.whenReady().then(async () => {
         const result = await perform(method, input);
         return method === 'details' ? cardView(result, true,attachments) : ['send','queueMessage','assistantAsk','assistantUse','attachImages','openAttachment'].includes(method) ? result : {};
       },
-      status: () => ({activeWriters:Math.max(client.status?.().active ?? 0, client.status?.().pending ?? 0, queue.busy?.size ?? 0,messages.active.size,desktop?.pending.size||0,assistant.active?1:0,responsibilities.pending.size,schedules.pending.size,research.pending.size),
+      status: () => ({activeWriters:Math.max(client.status?.().active ?? 0, client.status?.().pending ?? 0, queue.busy?.size ?? 0,messages.active.size,desktop?.pending.size||0,assistant.active?1:0,responsibilities.pending.size,schedules.pending.size,research.pending.size,triage.pending.size),
         mode:'native-backend', windowCount:BrowserWindow.getAllWindows().length,
         rendererCount:app.getAppMetrics().filter(p => p.type === 'Tab').length}),
       quit: () => {quitting=true; app.quit();},
@@ -857,7 +869,7 @@ app.whenReady().then(async () => {
       status: () => ({
         cornerConfigured: !!queue.state.settings.corner,
         launcherActive: !!corner && !corner.isDestroyed(),
-        activeWriters: Math.max(client.status?.().active ?? 0,client.status?.().pending??0,queue.busy.size,messages.active.size,desktop?.pending.size||0,assistant.active?1:0,responsibilities.pending.size,schedules.pending.size,research.pending.size),
+        activeWriters: Math.max(client.status?.().active ?? 0,client.status?.().pending??0,queue.busy.size,messages.active.size,desktop?.pending.size||0,assistant.active?1:0,responsibilities.pending.size,schedules.pending.size,research.pending.size,triage.pending.size),
         windowMode: windowController.mode,
       }),
       quit: () => {quitting = true; app.quit();},
@@ -940,6 +952,7 @@ app.on('before-quit', () => {
   authorization.close();
   commitments.close();
   research.close();clearInterval(researchTimer);
+  triage.close();clearInterval(triageTimer);
   delegations.close();clearInterval(delegationTimer);
   hostPeer?.close();
   devices.close();

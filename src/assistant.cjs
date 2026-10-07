@@ -15,6 +15,7 @@ const {command:authorizationCommand}=require('./authorization-command.cjs');
 const {command:scheduleCommand}=require('./schedule-command.cjs');
 const {command:commitmentCommand}=require('./commitment-command.cjs');
 const {command:researchCommand}=require('./research-command.cjs');
+const {command:triageCommand}=require('./triage-command.cjs');
 const {command:delegationCommand}=require('./delegation-command.cjs');
 class Assistant extends EventEmitter {
   constructor(options) {
@@ -61,7 +62,7 @@ class Assistant extends EventEmitter {
       const descriptions={accepted:'Codex accepted the queued message for',completed:'The requested pass completed in',failed:'The requested pass failed or was stopped in',cancelled:'Cancelled the queued message for','not-sent':'The queued message was not sent to',unconfirmed:'Delivery is unconfirmed for'};
       next.link.coordinationId=message.id;arrived.push({id:crypto.randomUUID(),text:'',kind:'update',status:'completed',at:Date.now(),coordinationId:message.id,answer:descriptions[next.status]+' '+message.action.chatName+'.',links:[next.link]});}
     if(!baseline)for(const card of cards) {
-      if(progress.some(p=>p.next.link.id===card.id))continue;
+      if(progress.some(p=>p.next.link.id===card.id)||this.options.triage?.managedCard(card))continue;
       if(this.state.seen[card.id]===seen[card.id]||card.done||card.reviewed||card.snoozed||card.owner?.online===false||
         (card.at||0)<(snapshot.settings?.queueSince||0)||!['needs','ready','blocked','waiting'].includes(card.status)||
         !(card.urgent||card.status==='needs'||card.status==='ready'||card.waitingOn?.kind==='you'||(card.status==='blocked'&&card.waitingOn?.kind!=='other')))continue;
@@ -145,6 +146,7 @@ class Assistant extends EventEmitter {
   async generate(message) {
     const started=Date.now();
     try {
+      const notice=triageCommand(message.text);if(notice){require('./triage-control.cjs').manage(this.options.triage,message,notice);this.save();return;}
       const authorization=authorizationCommand(message.text);
       if(authorization){await this.manageAuthorization(message,authorization);this.save();return;}
       const research=researchCommand(message.text);if(research){await require('./research-control.cjs').manage(this.options.research,message,research,this.options.snapshot());this.save();return;}
@@ -180,6 +182,7 @@ class Assistant extends EventEmitter {
         schedules:this.options.schedules?.snapshot().slice(-8).map(s=>({id:s.id,responsibilityId:s.responsibilityId,state:s.state,reason:s.reason,timeZone:s.schedule.timeZone,endAt:s.schedule.endAt,nextWake:s.nextWake,lastActualRun:s.lastActualRun,lastRun:s.runs.at(-1)?.status})),
         commitments:this.options.commitments?.context(),
         research:this.options.research?.context(),
+        notifications:this.options.triage?.context(),
         delegations:this.options.delegations?.snapshot().slice(-8).map(e=>({id:e.id,parentId:e.parentId,parentRevision:e.parentRevision,childId:e.childId,chatName:e.scope.chatName,ownerId:e.scope.ownerId,purpose:clip(e.purpose,500),phase:e.phase,limits:e.limits,cancelRequested:e.cancelRequested,review:e.review?{kind:e.review.kind,text:clip(e.review.text,300)}:null,missingEvidence:e.missingEvidence,parentGoalVerification:'Tracked separately on the parent responsibility'})),
         canRequestChatMessage:!!this.options.dispatch&&!!requestedRef,requestedChatRef:requestedRef,requestedMessage:requested?.proposal||null});
       if(this.closed)return;

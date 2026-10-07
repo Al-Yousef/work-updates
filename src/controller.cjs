@@ -283,6 +283,7 @@ class Controller extends EventEmitter {
       q.save();
       if (!done)
         this.emit('attention', {
+          sourceId:task.id,
           key: p.turn.id,
           status,
           title: task.title,
@@ -331,7 +332,7 @@ class Controller extends EventEmitter {
     };
     q.approvals.set(request.id, request);
     q.patch(task.id, { status: 'needs' });
-    this.emit('attention', { key: 'approval:' + request.id, status: 'needs', title: task.title });
+    this.emit('attention', { sourceId:task.id,key: 'approval:' + request.id, status: 'needs', title: task.title });
   }
   respond(id, decision, answers) {
     const q = this.queue,
