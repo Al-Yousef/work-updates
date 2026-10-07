@@ -10,7 +10,7 @@ async function packCandidate(output,{audit=false}={}){
 }
 async function main(args=process.argv.slice(2)){
   const [baseline,output]=args;if(![baseline,output].every(v=>v&&path.isAbsolute(v)))throw new Error('Provide absolute reviewed baseline archive and package output directory paths');
-  const candidate=await packCandidate(path.join(output,'candidate')),value=create({baseline,candidate,output,sourceRoot});
+  const candidate=await packCandidate(path.join(output,'candidate')),value=await create({baseline,candidate,output,sourceRoot});
   console.log(JSON.stringify({built:true,version:value.candidate.version,sourceRevision:value.sourceRevision}));
 }
 if(require.main===module)main().catch(e=>{console.error(e.message);process.exit(1);});

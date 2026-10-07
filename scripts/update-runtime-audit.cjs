@@ -3,7 +3,7 @@
 // synthetic chats, no collector/model/account calls or Explorer attachment.
 const fs=require('node:fs'),path=require('node:path'),os=require('node:os'),assert=require('node:assert/strict'),asar=require('@electron/asar');
 const {execFileSync}=require('node:child_process');
-const {packCandidate}=require('./package-transactional-update.cjs'),{identity}=require('./create-update-manifest.cjs'),{windowsHooks}=require('./update-host.cjs');
+const {packCandidate}=require('./package-transactional-update.cjs'),{identity,create}=require('./create-update-manifest.cjs'),{windowsHooks}=require('./update-host.cjs');
 const {UpdateTransaction,digest}=require('../src/update-transaction.cjs'),{atomicJSON}=require('../src/private-store.cjs');
 const root=path.resolve(__dirname,'..');
 async function audit(){
@@ -12,20 +12,20 @@ async function audit(){
   try{fs.unlinkSync(path.join(output,'verification.json'));}catch(e){if(e.code!=='ENOENT')throw e;}
   const packed=await packCandidate(path.join(output,'package'),{audit:true});
   const directory=fs.mkdtempSync(path.join(os.tmpdir(),'hyphen-packaged-update-')),installRoot=path.join(directory,'install'),dataDirectory=path.join(installRoot,'data/desktop'),packageDirectory=path.join(directory,'candidate');
+  let hooks=null,primaryError;
+  try{
   for(const dir of [installRoot,dataDirectory,packageDirectory])fs.mkdirSync(dir,{recursive:true});
   fs.cpSync(path.dirname(path.dirname(packed)),path.join(installRoot,'desktop'),{recursive:true});
   fs.mkdirSync(path.join(installRoot,'native'));for(const file of ['Native Hover.exe','Start Native Preview.exe'])fs.copyFileSync(path.join(root,'native/windows/build/candidate',file),path.join(installRoot,'native',file));
   const archive=path.join(installRoot,'desktop/resources/app.asar'),baselineStage=path.join(directory,'baseline-stage');asar.extractAll(archive,baselineStage);
   const metadata=JSON.parse(fs.readFileSync(path.join(baselineStage,'package.json')));metadata.version+='-baseline-fixture';atomicJSON(path.join(baselineStage,'package.json'),metadata);await asar.createPackage(baselineStage,archive);
-  fs.copyFileSync(packed,path.join(packageDirectory,'app.asar'));
   const intentId='12345678-1234-1234-1234-123456789abc';
   atomicJSON(path.join(dataDirectory,'state.json'),{version:1,tasks:[],cards:{},done:{},groups:[],settings:{aiSummaries:false,corner:false}});
   atomicJSON(path.join(dataDirectory,'messages.json'),{version:1,entries:[{id:intentId,sourceId:'disposable-nonexistent-source',mode:'queue',status:'queued',text:'Synthetic retained update intent',textHash:'a'.repeat(64),createdAt:1}],barriers:{},receipts:{}});
   atomicJSON(path.join(dataDirectory,'drafts.json'),{version:3,drafts:{'disposable-nonexistent-source':'Synthetic retained draft'},intentIds:{'disposable-nonexistent-source':intentId},attachments:{}});
   const sourceRevision=execFileSync('git',['rev-parse','HEAD'],{cwd:root,encoding:'utf8'}).trim();
-  const manifest={schema:1,product:'Hyphen',sourceRevision,sourceHashes:{'main.cjs':digest(path.join(root,'main.cjs'))},candidate:identity(packed),baseline:identity(archive),components:[{role:'backend',path:'desktop/resources/app.asar',file:'app.asar',sha256:digest(packed),baselineSha256:digest(archive)}]};
-  const hooks=windowsHooks({installRoot,dataDirectory,demo:true});let primaryError;
-  try{
+  const manifest=await create({baseline:archive,candidate:packed,output:packageDirectory,sourceRoot:root});
+  hooks=windowsHooks({installRoot,dataDirectory,demo:true});
     const make=(value=hooks)=>new UpdateTransaction({installRoot,dataDirectory,packageDirectory,sourceRoot:root,hooks:value});
     await make().run(manifest);assert.equal(digest(archive),manifest.components[0].sha256);
     const successfulHash=digest(archive),failureStage=path.join(directory,'failure-stage');asar.uncache(archive);asar.extractAll(archive,failureStage);
@@ -43,7 +43,7 @@ async function audit(){
   }catch(error){primaryError=error;console.error('Packaged audit failed before cleanup:',error.stack);throw error;}
   finally{
     const cleanupErrors=[];
-    try{await hooks.stop();}catch(error){cleanupErrors.push(error);}
+    try{await hooks?.stop();}catch(error){cleanupErrors.push(error);}
     // The resolved target is the disposable directory created above, never an
     // installed profile or a path taken from a report or manifest.
     const target=path.resolve(directory),temporaryRoot=path.resolve(os.tmpdir());
