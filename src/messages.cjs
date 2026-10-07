@@ -89,13 +89,16 @@ class Messages extends EventEmitter {
     this.active.add(entry.sourceId);entry.status='sending';entry.attemptedAt=Date.now();
     try {
       require('./dispatch-deadline.cjs').admission({expiresAt:entry.expiresAt,beforeDispatch:()=>this.admission(entry)});
+      this.budgets?.reserve({id:entry.id,kind:'worker',provider:'connected-source',model:'unreported',sourceId:entry.sourceId,taskKey:entry.taskKey,estimate:{tokens:10000,costMicros:null}});
       this.save();this.record('dispatching',entry);
       const images=this.attachments.resolve(entry.attachmentIds||[]);
+      this.budgets?.started(entry.id);
       const result=await this.controller.send(input.id,entry.text,entry.sourceId,input.taskKey,{messageId:entry.id,images,beforeDispatch:()=>this.admission(entry),...(entry.expiresAt!==undefined?{expiresAt:entry.expiresAt}:{})});
       if(!result||typeof result.turnId!=='string'||!result.turnId.trim()||(result.messageId&&result.messageId!==entry.id)||(result.sourceId&&result.sourceId!==entry.sourceId))
         throw Object.assign(new Error('Codex did not return a matching acceptance receipt. Check this chat before retrying.'),{code:'DELIVERY_RECEIPT',delivery:'uncertain'});
       entry.status='sent';entry.receipt=result;entry.completedAt=Date.now();delete entry.text;
       entry.receiptIdentity={messageId:entry.id,sourceId:entry.sourceId,textHash:entry.textHash,turnId:result.turnId};
+      this.budgets?.workerAccepted(entry.id,result.turnId);
       for(const old of this.state.entries)if(old!==entry&&old.sourceId===entry.sourceId&&old.status==='failed'){clearedFailures.push({entry:old,status:old.status,text:old.text});old.status='cancelled';delete old.text;}
       const source=this.queue.feed.threads.find(s=>s.id===entry.sourceId);
       this.state.barriers[entry.sourceId]={turnId:result.turnId||'',fingerprint:source?.fingerprint||'',at:Date.now()};
@@ -104,6 +107,8 @@ class Messages extends EventEmitter {
     } catch(error) {
       // A lost acknowledgement can mean it was delivered. Never retry it
       // automatically or allow another queued message to pass that uncertainty.
+      const reservation=this.budgets?.state.entries.find(e=>e.id===entry.id);
+      if(reservation&&['reserved','running'].includes(reservation.status))try{this.budgets.finish(entry.id,{status:error.delivery==='not-sent'?'not_started':'unknown'});}catch{}
       entry.text=draft;
       for(const old of clearedFailures){old.entry.status=old.status;old.entry.text=old.text;}
       entry.status=['SCHEDULE_EXPIRED','SCHEDULE_CANCELLED'].includes(error.code)?'cancelled':error.code==='SCHEDULE_PAUSED'?'queued':unknown(error)||entry.status==='sent'?'uncertain':'failed';entry.code=error.code||'SEND_FAILED';
@@ -118,6 +123,7 @@ class Messages extends EventEmitter {
   schedule(){if(this.closed||this.scheduled)return;this.scheduled=setTimeout(()=>{this.scheduled=null;this.pump().catch(error=>this.log?.write('message.queue.error',{code:error.code||'QUEUE_ERROR'}));},100);this.scheduled.unref();}
   async pump(){
     if(maintenanceActive(this.queue.directory))return;
+    if(this.budgets)this.budgets.reconcile(this.budgets.options.snapshot?.()||this.queue.snapshot());
     const age=Date.now()/1000-this.queue.feed.collectedAt;
     if(this.closed||!this.queue.health.ok||!Number.isFinite(age)||age< -5||age>30)return;
     const sources=new Set(this.state.entries.filter(e=>e.status==='queued').map(e=>e.sourceId));
