@@ -66,6 +66,7 @@ jobs:
       - run: node scripts/outcome-contract-audit.cjs --require-clean
       - run: node scripts/browser-runtime-audit.cjs
       - run: node scripts/voice-runtime-audit.cjs
+      - run: node scripts/channel-runtime-audit.cjs
       - run: npm run test:shutdown
       - run: npm run test:ui
       - run: npm run test:devices
@@ -79,6 +80,13 @@ jobs:
         with:
           name: desktop-${{ matrix.target }}-${{ matrix.arch }}-synthetic-visuals
           path: artifacts/ui/*.png
+          if-no-files-found: error
+          retention-days: 14
+      - name: Synthetic private channel visual evidence
+        uses: actions/upload-artifact@v4
+        with:
+          name: channels-${{ matrix.target }}-${{ matrix.arch }}-synthetic-visuals
+          path: artifacts/channel-runtime/*.png
           if-no-files-found: error
           retention-days: 14
       - uses: actions/upload-artifact@v4
@@ -108,6 +116,7 @@ jobs:
             artifacts/outcome-audit/verification.json
             artifacts/browser-runtime/verification.json
             artifacts/voice-runtime/verification.json
+            artifacts/channel-runtime/verification.json
           if-no-files-found: error
           retention-days: 14
   release:

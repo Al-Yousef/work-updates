@@ -6,6 +6,7 @@ struct QueueView: View {
     @State private var selected:DisplayCard?
     @State private var showDevices=false
     @State private var showComposer=false
+    @State private var showAssistant=false
     @State private var view="Updates"
     @State private var showHidden=false
     private var visible:[DisplayCard] {
@@ -59,13 +60,15 @@ struct QueueView: View {
             }
             .navigationTitle("Hyphen").navigationBarTitleDisplayMode(.inline)
             .toolbar {
+                ToolbarItem(placement:.topBarLeading){Button{showAssistant=true}label:{Image(systemName:"bubble.left.and.bubble.right").frame(minWidth:44,minHeight:44)}.accessibilityLabel("Private assistant").accessibilityIdentifier("private-assistant")}
                 ToolbarItem(placement:.topBarLeading){Button{showDevices=true}label:{Image(systemName:"desktopcomputer").frame(minWidth:44,minHeight:44)}.accessibilityLabel("Your devices").accessibilityIdentifier("devices")}
                 ToolbarItem(placement:.topBarTrailing){Button{showComposer=true}label:{Image(systemName:"plus").frame(minWidth:44,minHeight:44)}.accessibilityLabel("New task").accessibilityIdentifier("new-task")}
             }
             .sheet(item:$selected){card in ChatView(selection:card).environmentObject(store).presentationDetents([.medium,.large]).presentationDragIndicator(.visible)}
             .sheet(isPresented:$showDevices){DevicesView().environmentObject(store)}
             .sheet(isPresented:$showComposer){ComposerView(onQueued:{start in view=start ? "Updates" : "Queued"}).environmentObject(store)}
-            .workErrorAlert(store,when:selected == nil && !showDevices && !showComposer)
+            .sheet(isPresented:$showAssistant){AssistantView()}
+            .workErrorAlert(store,when:selected == nil && !showDevices && !showComposer && !showAssistant)
         }.preferredColorScheme(.dark)
     }
 }

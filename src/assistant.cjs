@@ -167,6 +167,10 @@ class Assistant extends EventEmitter {
       if(browser){await browserControl.manage(this.options.browsers,message,browser);this.save();return;}
       const documentControl=require('./document-command.cjs'),document=documentControl.command(message.text);
       if(document){documentControl.manage(this.options.documents,message,document);this.save();return;}
+      if(/^\/channels open$/i.test(message.text)){
+        if(!this.options.openChannels)throw new Error('Private channel controls are unavailable.');
+        this.options.openChannels();message.answer='Opened private device grants. Existing task pairing does not grant assistant access.';message.status='completed';this.save();return;
+      }
       const voiceControl=message.text.match(/^\/voice (inspect|open|end)$/i);
       if(voiceControl){
         if(!this.options.voice)throw new Error('Voice is unavailable on this client.');

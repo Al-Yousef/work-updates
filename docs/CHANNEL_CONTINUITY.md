@@ -12,6 +12,6 @@ Validation uses disposable Swift journals, the actual WorkStore transport seam, 
 
 ## Remaining channel work
 
-The current negotiated protocol advertises `assistant: false` and `attachments: false`. Source-chat delivery does not establish desktop/iPhone assistant-history continuity. That needs independently authenticated channel actors, authorized audience transitions and per-destination assistant receipts before exposing assistant commands.
+The existing task protocol continues to advertise `assistant: false` and `attachments: false`. A separate, versioned [private iPhone assistant channel](PRIVATE_ASSISTANT_CHANNEL.md) now has its own finite human grant, pinned endpoint, separate conversation and per-message receiver receipts. It supports owner questions only; task pairing does not grant assistant access. Group/shared audiences, task actions and external adapters remain unsupported.
 
 Slack, Teams, SMS and telephone adapters remain unsupported. The [supported-API assessment](CHANNEL_API_ASSESSMENT.md) records their actual API routes, required actor/audience binding, credential and receipt boundaries, and remaining implementation evidence. Source text from another participant is evidence, never authority over the private assistant. The current host-level task bearer does not distinguish individual assistant recipients; no private assistant history or commands are exposed through it.

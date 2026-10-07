@@ -66,4 +66,18 @@ final class WorkUpdatesUITests:XCTestCase {
         app.swipeUp();app.buttons["reviewed"].tap()
         XCTAssertTrue(app.buttons["queue-menu"].waitForExistence(timeout:10))
     }
+    func testPrivateAssistantHasItsOwnNativeConversationAndAcceptedAnswer() throws {
+        let file=ProcessInfo.processInfo.environment["WU_TEST_CODE_FILE"] ?? "/tmp/work-updates-ios-pairing-code"
+        guard let code=try? String(contentsOfFile:file+".assistant",encoding:.utf8) else {throw XCTSkip("Owned assistant TLS fixture is not running.")}
+        let app=XCUIApplication();app.launchArguments=["--integration-test","--demo"]
+        app.launchEnvironment["WU_ASSISTANT_CODE"]=code;app.launch()
+        XCTAssertTrue(app.buttons["private-assistant"].waitForExistence(timeout:10));app.buttons["private-assistant"].tap()
+        let input=app.textViews["assistant-channel-input"]
+        XCTAssertTrue(input.waitForExistence(timeout:20));input.tap();input.typeText("Native phone private question")
+        app.buttons["assistant-channel-send"].tap()
+        XCTAssertTrue(app.staticTexts["Synthetic private answer: Native phone private question"].waitForExistence(timeout:20))
+        capture("Private assistant accepted answer")
+        app.navigationBars["Assistant"].buttons["Done"].tap()
+        XCTAssertTrue(app.buttons["queue-menu"].waitForExistence(timeout:5))
+    }
 }

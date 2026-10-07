@@ -196,7 +196,7 @@ responsibilities.options.outcomeAdmission=(entry,human)=>outcomes.admission(entr
 const assistant = new Assistant({directory:dataDir,snapshot:()=>devices.snapshot(),attachments,
   budgets,
   profile:assistantProfile,capabilities:()=>profileCapabilities({assistant,executors,documents,voice:assistant.options.voice,browsers:assistant.options.browsers,peerContract:require('./src/peer-contract.cjs').capabilities(),helper:client.status?.()}),
-  voice,openVoice,
+  voice,openVoice,openChannels,
   privacy:null,
   executors,
   outcomes,
@@ -218,6 +218,24 @@ const assistant = new Assistant({directory:dataDir,snapshot:()=>devices.snapshot
     request:targets=>Promise.allSettled(targets.map(target=>workControls.readAdmission(target)!=='allow'?Promise.resolve({skipped:true}):devices.command('details',{id:target.id,taskKey:target.taskKey,sourceId:target.sourceId}))),
   },targets),
   dispatch:(mode,input)=>devices.command(mode==='cancel'?'cancelMessage':mode==='queue'?'queueMessage':'send',input)});
+const assistantChannels=new (require('./src/assistant-channels.cjs').AssistantChannels)({directory:dataDir,actorId:authorization.actorId,
+  hostId:devices.local.id,epoch:crypto.randomUUID(),budgets,binary:queue.state.settings.codexBinary,
+  encrypt:v=>safeStorage.encryptString(v),decrypt:v=>safeStorage.decryptString(v),
+  available:()=>safeStorage.isEncryptionAvailable()&&safeStorage.getSelectedStorageBackend?.()!=='basic_text',
+  admission:()=>quitting||maintenanceActive(dataDir)||privacy?.activeRemoval||workControls.closed||workControls.storageFailed||workControls.active('all','all')?'deny':'allow',
+  snapshot:()=>devices.snapshot(),profile:()=>assistantProfile.snapshot(),notes:()=>assistant.state.notes,commitments});
+let channelWindow;
+function openChannels(){channelWindow??=new (require('./src/channel-window.cjs').ChannelWindow)({BrowserWindow,ipcMain,channels:assistantChannels,
+  invite:async(human,input)=>{
+    assistantChannels.checkInvitation(human,input);
+    if(!require('./src/peer.cjs').interfaces().includes(input.host))throw new Error('Choose an assigned private address.');
+    if(hostPeer&&hostPeer.host!==input.host)throw new Error('Use the existing host address; existing task clients remain connected.');
+    hostPeer??=new (require('./src/peer.cjs').HostPeer)({directory:dataDir,encrypt:v=>safeStorage.encryptString(v),decrypt:v=>safeStorage.decryptString(v),
+      state:()=>devices.localState(),assistantChannels,command:async(method,input)=>{const result=await performLocal(method,input);return result?.cards&&result?.done?devices.localState():result;}});
+    await hostPeer.start(input.host);
+    const endpoint=require('./src/peer.cjs').parseCode(hostPeer.code),grant=assistantChannels.invite(human,input);
+    return {code:'wua1:'+Buffer.from(JSON.stringify({...endpoint,token:grant.token,version:1,channelId:grant.id,hostId:devices.local.id,actorId:authorization.actorId,until:grant.until})).toString('base64url')};
+  }});channelWindow.open();}
 privacy=new (require('./src/privacy.cjs').Privacy)({directory:dataDir,actorId:authorization.actorId,
   localSource:sourceId=>queue.cards().some(c=>c.sources?.some(s=>s.id===sourceId)),
   disconnect:async sourceId=>{observer?.ignore?.(privacy.state.disconnected);summaries?.refresh();publish();},
@@ -225,6 +243,7 @@ privacy=new (require('./src/privacy.cjs').Privacy)({directory:dataDir,actorId:au
     sourceDependencies:sourceId=>[
       ...(research.snapshot().some(e=>e.scope.sourceId===sourceId&&research.pending.has(e.id))?['A selected source read is still running']:[]),
       ...(assistant.state.messages.some(m=>m.status==='thinking'&&!/^\/privacy(?:\s|$)/.test(m.text))?['An assistant answer is still using retained source context']:[]),
+      ...([...assistantChannels.live.values()].some(a=>a.active)?['A private client answer is still using retained source context']:[]),
     ],
     sourcePaused:async operation=>{const previous=observer;await previous?.closeAndWait?.();if(previous&&!previous.closeAndWait)throw new Error('Collector shutdown cannot be verified. Removal is held.');try{return await operation();}finally{if(previous&&!quitting)startCollection();}},
     forgetFeed:sourceId=>queue.setFeed({...queue.feed,threads:queue.feed.threads.filter(t=>t.id!==sourceId)},queue.health),
@@ -659,6 +678,7 @@ async function connectionAction(method, input) {
       throw new Error('Enable your operating system keychain before pairing.');
     hostPeer ??= new HostPeer({
       directory: dataDir,
+      assistantChannels,
       encrypt: (v) => safeStorage.encryptString(v),
       decrypt: (v) => safeStorage.decryptString(v),
       state: () => devices.localState(),
@@ -720,6 +740,7 @@ function restoreDevices() {
     const { HostPeer } = require('./src/peer.cjs');
     hostPeer = new HostPeer({
       directory: dataDir,
+      assistantChannels,
       encrypt: (v) => safeStorage.encryptString(v),
       decrypt: (v) => safeStorage.decryptString(v),
       state: () => devices.localState(),
@@ -754,7 +775,7 @@ app.whenReady().then(async () => {
         const result = await perform(method, input);
         return method === 'details' ? cardView(result, true,attachments) : ['send','queueMessage','assistantAsk','assistantUse','attachImages','openAttachment'].includes(method) ? result : {};
       },
-      status: () => ({activeWriters:Math.max(client.status?.().active ?? 0, client.status?.().pending ?? 0, queue.busy?.size ?? 0,messages.active.size,desktop?.pending.size||0,assistant.active?1:0,responsibilities.pending.size,schedules.pending.size,research.pending.size,workControls.pending.size,triage.pending.size),
+      status: () => ({activeWriters:Math.max(client.status?.().active ?? 0, client.status?.().pending ?? 0, queue.busy?.size ?? 0,messages.active.size,desktop?.pending.size||0,assistant.active?1:0,[...assistantChannels.live.values()].filter(a=>a.active).length,responsibilities.pending.size,schedules.pending.size,research.pending.size,workControls.pending.size,triage.pending.size),
         mode:'native-backend', windowCount:BrowserWindow.getAllWindows().length,
         rendererCount:app.getAppMetrics().filter(p => p.type === 'Tab').length}),
       quit: () => {quitting=true; app.quit();},
@@ -966,7 +987,7 @@ app.whenReady().then(async () => {
       status: () => ({
         cornerConfigured: !!queue.state.settings.corner,
         launcherActive: !!corner && !corner.isDestroyed(),
-        activeWriters: Math.max(client.status?.().active ?? 0,client.status?.().pending??0,queue.busy.size,messages.active.size,desktop?.pending.size||0,assistant.active?1:0,responsibilities.pending.size,schedules.pending.size,research.pending.size,workControls.pending.size,triage.pending.size),
+        activeWriters: Math.max(client.status?.().active ?? 0,client.status?.().pending??0,queue.busy.size,messages.active.size,desktop?.pending.size||0,assistant.active?1:0,[...assistantChannels.live.values()].filter(a=>a.active).length,responsibilities.pending.size,schedules.pending.size,research.pending.size,workControls.pending.size,triage.pending.size),
         windowMode: windowController.mode,
       }),
       quit: () => {quitting = true; app.quit();},
@@ -1046,7 +1067,7 @@ app.on('before-quit', () => {
   desktop?.close();
   messages.close();
   assistant.close();
-  voiceWindow?.close();voice.close();
+  voiceWindow?.close();voice.close();channelWindow?.close();assistantChannels.close();
   responsibilities.close();
   schedules.close();
   authorization.close();

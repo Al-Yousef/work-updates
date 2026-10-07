@@ -15,25 +15,64 @@ const codeFile =
 const queue = new Queue(directory),
   client = new DemoCodex(),
   controller = new Controller(queue, client);
-const messages = new Messages(queue,controller);
+const messages = new Messages(queue, controller);
 queue.setFeed(feed(), { ok: true });
 const publisher = new StatePublisher();
+const crypto = require('node:crypto'),
+  { AssistantChannels } = require('../src/assistant-channels.cjs');
+const key = crypto.randomBytes(32),
+  actorId = 'human:fixture',
+  hostId = '11111111-1111-4111-8111-111111111111';
+const assistantChannels = new AssistantChannels({
+  directory,
+  actorId,
+  hostId,
+  epoch: crypto.randomUUID(),
+  available: () => true,
+  admission: () => 'allow',
+  encrypt: (text) => {
+    const iv = crypto.randomBytes(12),
+      c = crypto.createCipheriv('aes-256-gcm', key, iv);
+    return Buffer.concat([iv, c.update(text), c.final(), c.getAuthTag()]);
+  },
+  decrypt: (bytes) => {
+    const c = crypto.createDecipheriv('aes-256-gcm', key, bytes.subarray(0, 12));
+    c.setAuthTag(bytes.subarray(-16));
+    return Buffer.concat([c.update(bytes.subarray(12, -16)), c.final()]).toString();
+  },
+  snapshot: () => queue.snapshot(),
+  profile: () => ({
+    schema: 1,
+    id: hostId,
+    displayName: 'Hyphen',
+    avatarStyle: 'initials',
+    initials: 'H',
+    reducedMotion: true,
+  }),
+  provider: () => ({
+    answer: async (context) => ({
+      answer: 'Synthetic private answer: ' + context.question,
+      links: [],
+    }),
+    close() {},
+  }),
+});
 const state = () =>
   publisher.stamp({
     ...messages.decorate(queue.snapshot()),
     host: { id: '11111111-1111-4111-8111-111111111111', name: 'Synthetic desktop', kind: 'mac' },
   });
 const host = new HostPeer({
-  commands:['create','start','send','action','undo','details','respond','refresh'],
+  commands: ['create', 'start', 'send', 'action', 'undo', 'details', 'respond', 'refresh'],
   directory,
+  assistantChannels,
   encrypt: (v) => Buffer.from(v),
   decrypt: (v) => v.toString(),
   state,
   command: async (method, input) => {
     if (method === 'create') return queue.create(input);
     if (method === 'start') return controller.start(input.id);
-    if (method === 'send')
-      return messages.send(input);
+    if (method === 'send') return messages.send(input);
     if (method === 'action') {
       queue.action(input.id, input.action, input.taskKey);
       return state();
@@ -52,6 +91,27 @@ queue.on('change', () => host.broadcast(state()));
 host
   .start('127.0.0.1')
   .then((code) => {
+    const endpoint = require('../src/peer.cjs').parseCode(code),
+      grant = assistantChannels.invite(
+        { role: 'human', authority: 'accepted_human', actorId, messageId: crypto.randomUUID() },
+        { label: 'Owned Swift fixture', days: 1, privateContextConfirmed: true },
+      );
+    fs.writeFileSync(
+      codeFile + '.assistant',
+      'wua1:' +
+        Buffer.from(
+          JSON.stringify({
+            ...endpoint,
+            token: grant.token,
+            version: 1,
+            channelId: grant.id,
+            hostId,
+            actorId,
+            until: grant.until,
+          }),
+        ).toString('base64url'),
+      { mode: 0o600 },
+    );
     fs.writeFileSync(codeFile, code, { mode: 0o600 });
     console.log('Synthetic iPhone TLS fixture ready. Pairing code is private and was not printed.');
   })
@@ -61,10 +121,12 @@ host
     close();
   });
 function close() {
+  assistantChannels.close();
   host.close();
   messages.close();
   client.close();
   fs.rmSync(codeFile, { force: true });
+  fs.rmSync(codeFile + '.assistant', { force: true });
   fs.rmSync(directory, { recursive: true, force: true });
 }
 process.once('SIGTERM', () => {

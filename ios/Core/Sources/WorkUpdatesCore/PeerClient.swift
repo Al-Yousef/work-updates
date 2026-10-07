@@ -4,7 +4,7 @@ import CryptoKit
 
 // The private endpoint and its exact certificate are validated before URLSession
 // can send the bearer token. Redirects never carry credentials to another endpoint.
-private final class PinnedDelegate: NSObject, URLSessionDelegate, URLSessionTaskDelegate, @unchecked Sendable {
+final class PinnedDelegate: NSObject, URLSessionDelegate, URLSessionTaskDelegate, @unchecked Sendable {
     let pairing: PairingCode
     init(_ pairing: PairingCode) {self.pairing=pairing}
     func urlSession(_ session: URLSession, didReceive challenge: URLAuthenticationChallenge,
