@@ -199,6 +199,8 @@ class Documents {
   }
   import(input, spec) {
     this.humanJSON(input, '/document import ', spec);
+    if (this.busy || this.options.admission?.() === 'deny')
+      throw held('Document changes are held by the current work/privacy control.');
     if (
       !spec ||
       Object.keys(spec).sort().join(',') !== 'file,title' ||
@@ -217,26 +219,30 @@ class Documents {
       stat.size > 512 * 1024
     )
       throw held('Only one bounded plain text or Markdown file is supported.');
-    const bytes = fs.readFileSync(spec.file);
-    if (bytes.length > 512 * 1024) throw held('Selected file changed beyond its bound.');
-    const text = new TextDecoder('utf-8', { fatal: true }).decode(bytes),
-      d = {
-        id: crypto.randomUUID(),
-        title: spec.title,
-        extension,
-        provider: 'local-private-text',
-        connectedAt: this.now(),
+    return this.resourceOutput(input.messageId, () => {
+      const bytes = fs.readFileSync(spec.file);
+      if (bytes.length > 512 * 1024) throw held('Selected file changed beyond its bound.');
+      const text = new TextDecoder('utf-8', { fatal: true }).decode(bytes),
+        d = {
+          id: crypto.randomUUID(),
+          title: spec.title,
+          extension,
+          provider: 'local-private-text',
+          connectedAt: this.now(),
+        };
+      this.write(d, text);
+      if (hash(fs.readFileSync(this.owned(d))) !== hash(Buffer.from(text)))
+        throw held('Imported document output was not confirmed.');
+      this.change((s) => s.documents.push(d));
+      return {
+        id: d.id,
+        title: d.title,
+        revision: hash(Buffer.from(text)),
+        location: 'Private local imported copy',
+        originalFileChanged: false,
+        scheduleCreated: false,
       };
-    this.write(d, text);
-    this.change((s) => s.documents.push(d));
-    return {
-      id: d.id,
-      title: d.title,
-      revision: hash(Buffer.from(text)),
-      location: 'Private local imported copy',
-      originalFileChanged: false,
-      scheduleCreated: false,
-    };
+    });
   }
   request(input, id, spec) {
     this.humanJSON(input, '/document request ' + id + ': ', spec);
@@ -323,6 +329,30 @@ class Documents {
       },
     );
   }
+  resourceOutput(requestId, operation) {
+    const budgets = this.options.budgets;
+    if (!budgets) return operation();
+    budgets.reserve({
+      id: requestId,
+      kind: 'worker',
+      provider: 'local-private-text',
+      model: 'none',
+      estimate: { tokens: 0, costMicros: 0 },
+    });
+    let started = false;
+    try {
+      budgets.started(requestId);
+      started = true;
+      const result = operation();
+      budgets.finish(requestId, { status: 'settled' });
+      return result;
+    } catch (error) {
+      try {
+        budgets.finish(requestId, { status: started ? 'unknown' : 'not_started' });
+      } catch {}
+      throw error;
+    }
+  }
   mutate(requestId, d, text, before = () => {}, after = () => {}) {
     if (this.busy || this.options.admission?.() === 'deny')
       throw held('Document changes are held by the current work/privacy control.');
@@ -331,6 +361,11 @@ class Documents {
       if (prior.documentId !== d.id) throw held('Request identity belongs to another document.');
       return { ...prior, noRetry: true };
     }
+    return this.resourceOutput(requestId, () =>
+      this.mutateOutput(requestId, d, text, before, after),
+    );
+  }
+  mutateOutput(requestId, d, text, before, after) {
     const targetRevision = hash(Buffer.from(text));
     this.change((s) => {
       s.receipts.push({

@@ -307,7 +307,9 @@ class ResourceBudgets {
       e.usage = u || e.usage;
       e.actual = u
         ? { tokens: u.totalTokens, costMicros }
-        : e.kind === 'read' && status === 'settled'
+        : (e.kind === 'read' ||
+              (e.kind === 'worker' && e.provider === 'local-private-text' && e.model === 'none')) &&
+            status === 'settled'
           ? { tokens: 0, costMicros: 0 }
           : e.actual;
       e.durationMs = Math.max(0, this.now() - e.at);

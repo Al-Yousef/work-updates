@@ -181,7 +181,7 @@ const browsers=new (require('./src/browser-sessions.cjs').BrowserSessions)({dire
   admission:()=>quitting||maintenanceActive(dataDir)||workControls.closed||workControls.storageFailed||workControls.active('all','all')?'deny':'allow',
   verifyBinding:async(taskId,grantId)=>{const entry=executors.state.entries.find(e=>e.taskId===taskId&&e.id===grantId);if(!entry)throw new Error('Choose an exact current owned local executor grant.');await client.connect();executors.assert(entry,await client.executorRuntime(),entry.workspace);},
   create:require('./src/browser-electron.cjs').createFactory({BrowserWindow,session})});
-const documents=new (require('./src/documents.cjs').Documents)({directory:dataDir,actorId:authorization.actorId,
+const documents=new (require('./src/documents.cjs').Documents)({directory:dataDir,actorId:authorization.actorId,budgets,
   admission:()=>quitting||maintenanceActive(dataDir)||privacy?.activeRemoval||workControls.closed||workControls.storageFailed||workControls.active('all','all')?'deny':'allow'});
 responsibilities.options.outcomeRequired=entry=>outcomes.required(entry);
 responsibilities.options.outcomeAdmission=(entry,human)=>outcomes.admission(entry,human);
