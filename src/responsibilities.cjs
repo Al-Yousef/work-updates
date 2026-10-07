@@ -46,6 +46,7 @@ function validate(value) {
       p = entry.currentStep;
     if (
       !uuid(entry.id) ||
+      (entry.delegationId!==undefined&&!uuid(entry.delegationId)) ||
       !uuid(entry.origin?.messageId) ||
       !string(entry.origin.text) ||
       !states.has(entry.state) ||
@@ -181,11 +182,11 @@ class Responsibilities extends EventEmitter {
       throw new Error('The step must be literal text from the current human instruction');
     return { human, instruction };
   }
-  create(input, scope, criteria) {
+  create(input, scope, criteria, prepared = {}) {
     const { human, instruction } = this.instruction(input),
       hash = crypto
         .createHash('sha256')
-        .update(JSON.stringify([human.text, instruction, scope, criteria]))
+        .update(JSON.stringify([human.text, instruction, scope, criteria, ...(Object.keys(prepared).length?[prepared]:[])]))
         .digest('hex');
     const prior = this.state.receipts[human.messageId];
     if (prior) {
@@ -195,7 +196,8 @@ class Responsibilities extends EventEmitter {
     }
     if (!['source_terminal', 'human_verified'].includes(criteria?.kind))
       throw new Error('Explicit completion criteria are required');
-    const id = crypto.randomUUID(),
+    if(Object.keys(prepared).length&&(!uuid(prepared.id)||!uuid(prepared.messageId)||!uuid(prepared.delegationId)||!Number.isSafeInteger(prepared.expiresAt)||prepared.expiresAt<=0))throw new Error('Invalid prepared delegation identity');
+    const id = prepared.id || crypto.randomUUID(),
       now = Date.now();
     this.change((next) => {
       next.entries.push({
@@ -205,15 +207,17 @@ class Responsibilities extends EventEmitter {
         scope: structuredClone(scope),
         ownerId: scope.ownerId,
         revision: 1,
-        state: 'running',
+        state: prepared.delegationId ? 'waiting_approval' : 'running',
+        ...(prepared.delegationId ? {delegationId:prepared.delegationId}:{}),
         currentStep: {
           id: crypto.randomUUID(),
-          messageId: crypto.randomUUID(),
+          messageId: prepared.messageId || crypto.randomUUID(),
           text: instruction,
           status: 'ready',
+          ...(prepared.delegationId?{expiresAt:prepared.expiresAt}:{}),
         },
         pastSteps: [],
-        wakeReason: { kind: 'human', messageId: human.messageId },
+        wakeReason: { kind: prepared.delegationId?'delegation_preparing':'human', messageId: human.messageId },
         completionCriteria: structuredClone(criteria),
         steering: [],
         createdAt: now,
