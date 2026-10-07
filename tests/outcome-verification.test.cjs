@@ -295,7 +295,7 @@ test('exact hash, relative-path bounds and linked roots are enforced without rea
       '/outcome require ' + f.id + ': ' + JSON.stringify(f.config({ root: link })),
     );
     assert.equal(m.status, 'failed');
-    assert.equal(f.outcomes.entry(f.id).spec.root, f.artifactDirectory);
+    assert.equal(f.outcomes.entry(f.id).spec.root, fs.realpathSync.native(f.artifactDirectory));
   } finally {
     f.close();
   }
