@@ -69,6 +69,21 @@ class FeedTests(unittest.TestCase):
         self.assertEqual(before, (self.home / 'state_5.sqlite').read_bytes())
         self.assertEqual(path.read_text().count('response_item'), 2)
 
+    def test_disconnect_excludes_future_rollout_reads_without_claiming_cache_deletion(self):
+        disconnected = self.add('disconnected', 'Original local source', [self.record('Previously retained private text')])
+        self.add('kept', 'Other local source', [self.record('Unrelated source remains')])
+        collector.collect(self.config)
+        self.assertIn('disconnected', collector.SOURCE_CACHE)
+        self.config['ignoredThreadIds'].append('disconnected')
+        original_tail = collector.rollout_tail
+        def checked_tail(filename, *args, **kwargs):
+            self.assertNotEqual(Path(filename), disconnected, 'Disconnect excludes future source reads')
+            return original_tail(filename, *args, **kwargs)
+        with patch.object(collector, 'rollout_tail', side_effect=checked_tail):
+            feed = collector.collect(self.config)
+        self.assertEqual([row['id'] for row in feed['threads']], ['kept'])
+        self.assertIn('disconnected', collector.SOURCE_CACHE, 'Disconnect does not erase cached text')
+
     def test_activity_metadata_distinguishes_catalogue_context_and_unchanged_cache_without_content(self):
         self.add('audit-source', 'SECRET chat name', [self.record('SECRET source content')])
         first = collector.collect(self.config)['activityAccess']
