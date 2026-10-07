@@ -164,12 +164,12 @@ class Privacy {
       kind,
       sourceId: p.sourceId,
       retainedBytes: p.bytes,
-      affected: this.options.adapters[kind].summary?.(data) || null,
       dependencies,
       expiresAt: new Date(p.expiresAt).toISOString(),
       confirmation: '/privacy delete ' + p.id,
       externalActionsReversed: false,
       kept: this.options.adapters[kind].kept || 'Original source chats, pinned notes or other unselected classes, action/replay receipts and external provider data remain.',
+      affected: this.options.adapters[kind].summary?.(data) || null,
     };
   }
   async remove(input, id) {

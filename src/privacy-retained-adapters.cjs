@@ -99,7 +99,15 @@ function retainedAdapters({
       ids = new Set(
         live.state.entries.filter((e) => e.scope.sourceId === sourceId).map((e) => e.id),
       );
-    const derived = reflections?.().state.checkpoints.some(
+    const reflectionState = reflections?.().state;
+    if (reflectionState) {
+      const disk = store.readStore(owned('reflections.json'), {
+        missing: () => reflectionState,
+      }).value;
+      if (!equal(disk, reflectionState))
+        throw new Error('Reflection dependencies changed independently.');
+    }
+    const derived = reflectionState?.checkpoints.some(
       (c) =>
         c.context?.records?.length &&
         (ids.has(c.context?.source?.researchId) || c.context?.source?.sourceId === sourceId),
@@ -154,13 +162,14 @@ function retainedAdapters({
     ['logs/app.log.1', 'logs/app.log.2'].map((name) => metadata(name, 512 * 1024)).filter(Boolean);
   const fileBytes = (files) => files.reduce((total, file) => total + file.bytes, 0);
   const fileSummary = (files) => ({
-    files: files.slice(0, 16).map(({ name, bytes, origin, title }) => ({
+    selectedFiles: files.length,
+    files: files.slice(0, 8).map(({ name, bytes, origin, title }) => ({
       name,
       bytes,
-      ...(origin ? { origin } : {}),
-      ...(title ? { title } : {}),
+      ...(origin ? { origin: origin.slice(0, 300), originTruncated: origin.length > 300 } : {}),
+      ...(title ? { title: title.slice(0, 96), titleTruncated: title.length > 96 } : {}),
     })),
-    omittedFiles: Math.max(0, files.length - 16),
+    omittedFiles: Math.max(0, files.length - 8),
   });
   function documentCopies() {
     const live = documents();

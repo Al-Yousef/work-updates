@@ -394,3 +394,21 @@ test('saved login preview selects the exact human owner without cookie values an
   assert.throws(() => f.preview('browser-logins'), /recovery/);
   assert.deepEqual(fs.readdirSync(outside), []);
 });
+
+test('large affected-file previews stay readable through the actual Assistant and retain their confirmation and omission counts', async (t) => {
+  const f = fixture(t),
+    file = f.seed('input.md', 'Owned output');
+  for (let index = 0; index < 18; index++) {
+    const spec = { file, title: ('Synthetic copy ' + index + ' ').padEnd(160, 'x') };
+    f.documents.import(f.input('/document import ' + JSON.stringify(spec)), spec);
+  }
+  const answer = await f.ask('/privacy preview document-copies');
+  assert.equal(answer.status, 'completed', answer.answer);
+  const preview = JSON.parse(answer.answer);
+  assert.equal(preview.affected.selectedFiles, 18);
+  assert.ok(preview.affected.omittedFiles > 0);
+  assert.equal(preview.confirmation, '/privacy delete ' + preview.previewId);
+  assert.equal(preview.retainedBytes, 18 * Buffer.byteLength('Owned output'));
+  assert.equal(f.documents.state.documents.length, 18);
+  assert.equal(f.calls, 0);
+});
