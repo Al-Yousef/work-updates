@@ -174,6 +174,8 @@ const browsers=new (require('./src/browser-sessions.cjs').BrowserSessions)({dire
   admission:()=>quitting||maintenanceActive(dataDir)||workControls.closed||workControls.storageFailed||workControls.active('all','all')?'deny':'allow',
   verifyBinding:async(taskId,grantId)=>{const entry=executors.state.entries.find(e=>e.taskId===taskId&&e.id===grantId);if(!entry)throw new Error('Choose an exact current owned local executor grant.');await client.connect();executors.assert(entry,await client.executorRuntime(),entry.workspace);},
   create:require('./src/browser-electron.cjs').createFactory({BrowserWindow,session})});
+const documents=new (require('./src/documents.cjs').Documents)({directory:dataDir,actorId:authorization.actorId,
+  admission:()=>quitting||maintenanceActive(dataDir)||privacy?.activeRemoval||workControls.closed||workControls.storageFailed||workControls.active('all','all')?'deny':'allow'});
 responsibilities.options.outcomeRequired=entry=>outcomes.required(entry);
 responsibilities.options.outcomeAdmission=(entry,human)=>outcomes.admission(entry,human);
 const assistant = new Assistant({directory:dataDir,snapshot:()=>devices.snapshot(),attachments,
@@ -191,6 +193,7 @@ const assistant = new Assistant({directory:dataDir,snapshot:()=>devices.snapshot
   delegations,
   workControls,
   browsers,
+  documents,
   binary:queue.state.settings.codexBinary,log:diagnostics,
   loadContext:targets=>require('./src/assistant-context.cjs').loadContext({
     snapshot:()=>devices.snapshot(),
@@ -269,6 +272,8 @@ const reflectionTimer=setInterval(driveReflections,60000);reflectionTimer.unref(
 function driveTriage(){void triage.pump().catch(()=>diagnostics.write('notification.recovery_failed',{code:'NOTIFICATION_STORAGE_FAILED',noResend:true}));}
 triage.on('change',()=>publish());
 const triageTimer=setInterval(driveTriage,60000);triageTimer.unref();queueMicrotask(driveTriage);
+function driveDocuments(){try{documents.tick();}catch{diagnostics.write('app.command.failed',{code:'DOCUMENT_STORAGE_FAILED',noResend:true});}}
+const documentTimer=setInterval(driveDocuments,60000);documentTimer.unref();queueMicrotask(driveDocuments);
 function driveDelegations(){void delegations.tick().catch(()=>diagnostics.write('delegation.recovery_failed',{code:'DELEGATION_RECOVERY_FAILED',noResend:true}));}
 delegations.on('change',()=>publish());
 const delegationTimer=setInterval(driveDelegations,60000);delegationTimer.unref();
@@ -1001,6 +1006,7 @@ app.on('window-all-closed', () => {});
 app.on('before-quit', () => {
   quitting = true;
   browsers.shutdown();
+  clearInterval(documentTimer);
   clearInterval(runtimeTimer);
   diagnostics.write('app.stopping', { pid: process.pid });
   queue.save();

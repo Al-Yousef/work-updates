@@ -2,7 +2,7 @@
 const fs=require('node:fs'),path=require('node:path'),crypto=require('node:crypto');
 const object=v=>v!==null&&typeof v==='object'&&!Array.isArray(v);
 const strings=(v,max=12000)=>object(v)&&Object.entries(v).every(([k,x])=>k.length>0&&k.length<512&&typeof x==='string'&&x.length<=max);
-const versions=Object.freeze({'state.json':1,'messages.json':1,'assistant.json':2,'device.json':1,'drafts.json':3,'responsibilities.json':1,'schedules.json':1,'authorizations.json':1,'commitments.json':1,'delegations.json':1,'research.json':1,'work-controls.json':1,'reflections.json':1,'triage.json':1,'activity.json':1,'outcomes.json':1,'executors.json':1,'browsers.json':1,'privacy.json':1,'voice.json':1});
+const versions=Object.freeze({'state.json':1,'messages.json':1,'assistant.json':2,'device.json':1,'drafts.json':3,'responsibilities.json':1,'schedules.json':1,'authorizations.json':1,'commitments.json':1,'delegations.json':1,'research.json':1,'work-controls.json':1,'reflections.json':1,'triage.json':1,'activity.json':1,'outcomes.json':1,'privacy.json':1,'executors.json':1,'browsers.json':1,'documents.json':1,'voice.json':1});
 class StorageRecoveryError extends Error {
   constructor(file,reason){super(`Hyphen cannot safely load ${path.basename(file)} (${reason}). The original file is preserved. Close Hyphen and repair a copy before restarting.`);this.code='PRIVATE_STORE_RECOVERY';this.store=path.basename(file);}
 }
@@ -26,6 +26,8 @@ function validate(name,value){
   if(!supported.includes(result.version))throw new Error('unsupported version');
   if(name==='browsers.json'){
     require('./browser-sessions.cjs').validate(result);
+  }else if(name==='documents.json'){
+    require('./documents.cjs').validate(result);
   }else if(name==='voice.json'){
     require('./voice-session.cjs').validate(result);
   }else if(name==='privacy.json'){
