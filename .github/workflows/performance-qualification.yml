@@ -32,14 +32,17 @@ jobs:
         run: |
           ./native/windows/bootstrap-toolchain.ps1
           ./native/windows/build.ps1 -OutputDirectory build/candidate
+      - name: Verify original process and exact press gates
+        shell: pwsh
+        run: |
+          ./scripts/owned-process-metrics.test.ps1
+          ./scripts/performance-press-proof.test.ps1
       - name: Ten-minute navigation and reconnect observation
         shell: pwsh
         run: ./scripts/native-performance-audit.ps1 -SecondsPerPhase 30 -ChatCounts @(1500) -SoakSeconds 600 -OutputDirectory "$pwd/artifacts/performance/qualification/soak"
       - name: Five fresh process trees on matching runner hardware
         shell: pwsh
         run: |
-          ./scripts/owned-process-metrics.test.ps1
-          ./scripts/performance-press-proof.test.ps1
           foreach ($taskRun in 1..5) {
             ./scripts/native-performance-audit.ps1 -SecondsPerPhase 30 -OutputDirectory "$pwd/artifacts/performance/qualification/baseline-$taskRun"
           }
