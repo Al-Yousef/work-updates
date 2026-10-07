@@ -60,6 +60,7 @@ jobs:
       - run: node scripts/research-contract-audit.cjs --require-clean
       - run: node scripts/reflection-contract-audit.cjs --require-clean
       - run: node scripts/triage-contract-audit.cjs --require-clean
+      - run: node scripts/activity-contract-audit.cjs --require-clean
       - run: node scripts/delegation-contract-audit.cjs --require-clean
       - run: node scripts/work-control-contract-audit.cjs --require-clean
       - run: npm run test:shutdown
@@ -90,6 +91,8 @@ jobs:
             artifacts/research-packaged/verification.json
             artifacts/reflection-audit/verification.json
             artifacts/triage-audit/verification.json
+            artifacts/activity-audit/verification.json
+            artifacts/activity-audit/synthetic-export.json
             artifacts/delegation-audit/verification.json
             artifacts/work-control-audit/verification.json
           if-no-files-found: error

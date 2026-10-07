@@ -174,6 +174,11 @@ const triage=new Triage({directory:dataDir,policy:authorization,responsibilities
   destination:require('./src/notification-destination.cjs').destination({assistant,deviceId:devices.local.id,Notification,show:()=>show(),
     systemEnabled:()=>queue.state.settings.attention&&(!windowController||windowController.mode==='hidden')})});
 assistant.options.triage=triage;
+const activity=new (require('./src/activity.cjs').Activity)({directory:dataDir,actorId:()=>authorization.actorId,snapshot:()=>devices.snapshot(),maintenance:()=>quitting||maintenanceActive(dataDir),collectorScope:sourceId=>{const card=devices.snapshot().cards.find(c=>c.sources?.some(s=>s.id===sourceId));return {sourceId,ownerId:card?.owner?.id||devices.local.id,deviceId:devices.local.id,taskKey:card?.taskKey};}});
+activity.attach({policy:authorization,responsibilities,schedules,research,delegations,triage,messages});
+research.options.reader=activity.reader(researchReader,research);
+responsibilities.options.dispatch=activity.dispatch(responsibilities.options.dispatch,responsibilities);
+assistant.options.activity=activity;
 const csp =
   "default-src 'self'; script-src 'self'; style-src 'self'; img-src 'self' data:; connect-src 'none'; base-uri 'none'; object-src 'none'; form-action 'none'; frame-ancestors 'none'";
 function snapshot() {
@@ -618,6 +623,7 @@ function startCollection() {
       { helper, helperScript, log: diagnostics },
       (feed, health) => {
         queue.setFeed(feed || queue.feed, health);
+        if(health.ok)activity.collector(feed?.activityAccess);else if(health.status==='error')activity.collector(health.activityAccess);
         if (feed && health.ok && !maintenanceActive(dataDir)) {
           summaries.refresh();
           if (retryFailedSummaries) {
@@ -965,6 +971,7 @@ app.on('before-quit', () => {
   authorization.close();
   commitments.close();
   research.close();clearInterval(researchTimer);
+  activity.close();
   reflections.close();clearInterval(reflectionTimer);
   triage.close();clearInterval(triageTimer);
   delegations.close();clearInterval(delegationTimer);
