@@ -151,7 +151,11 @@ const schedules=new Schedules({directory:dataDir,log:diagnostics,maintenance:()=
   probe:entry=>workControls&&workControls.scheduleAdmission(entry)!=='allow'?{eligible:false,reason:'work_control_hold'}:scheduledResponsibility.probe(responsibilities,entry),run:entry=>scheduledResponsibility.run(responsibilities,entry),outcome:(entry,run)=>scheduledResponsibility.outcome(responsibilities,entry,run)});
 delegations=new Delegations({directory:dataDir,policy:authorization,messages,responsibilities,snapshot:()=>devices.snapshot(),log:diagnostics,workAdmission:entry=>workControls?.responsibilityAdmission(entry)||'allow'});
 workControls=new WorkControls({directory:dataDir,policy:authorization,messages,responsibilities,schedules,delegations,snapshot:()=>devices.snapshot(),research:()=>research,interrupt:input=>controller.stopSource(input)});
-const assistant = new Assistant({directory:dataDir,snapshot:()=>devices.snapshot(),attachments,
+const budgets=new (require('./src/resource-budgets.cjs').ResourceBudgets)({directory:dataDir,actorId:authorization.actorId,responsibilities,snapshot:()=>devices.snapshot(),
+  scopes:(id,input)=>{const matches=input.kind==='read'?responsibilities.state.entries.filter(r=>r.scope.sourceId===input.sourceId):responsibilities.state.entries.filter(r=>r.currentStep.messageId===id);return matches.flatMap(r=>{const d=delegations.state.entries.find(d=>d.childId===r.id);return [r.id,...(d?[d.parentId]:[])];});}});
+messages.budgets=budgets;
+research.options.reader=budgets.reader(researchReader);
+const assistant = new Assistant({directory:dataDir,snapshot:()=>devices.snapshot(),attachments,budgets,
   responsibilities,
   schedules,
   authorization,
@@ -176,7 +180,7 @@ const triage=new Triage({directory:dataDir,policy:authorization,responsibilities
 assistant.options.triage=triage;
 const activity=new (require('./src/activity.cjs').Activity)({directory:dataDir,actorId:()=>authorization.actorId,snapshot:()=>devices.snapshot(),maintenance:()=>quitting||maintenanceActive(dataDir),collectorScope:sourceId=>{const card=devices.snapshot().cards.find(c=>c.sources?.some(s=>s.id===sourceId));return {sourceId,ownerId:card?.owner?.id||devices.local.id,deviceId:devices.local.id,taskKey:card?.taskKey};}});
 activity.attach({policy:authorization,responsibilities,schedules,research,delegations,triage,messages});
-research.options.reader=activity.reader(researchReader,research);
+research.options.reader=activity.reader(research.options.reader,research);
 responsibilities.options.dispatch=activity.dispatch(responsibilities.options.dispatch,responsibilities);
 assistant.options.activity=activity;
 const csp =
@@ -186,6 +190,7 @@ function snapshot() {
   return {
     ...state,
     assistant: assistant.snapshot(),
+    budgets:budgets.inspect(),
     connectionHealth:connectionHealth({collectedAt:state.collectedAt,collector:queue.health,helper:client.status?.(),desktopConnected:desktop?.status().connected,
       pipeListening:!!nativeControl?.server?.listening,nativeClients:nativeControl?.clients.size,devices:state.devices}),
     settings: {
@@ -976,6 +981,7 @@ app.on('before-quit', () => {
   triage.close();clearInterval(triageTimer);
   delegations.close();clearInterval(delegationTimer);
   workControls.close();
+  budgets.close();
   hostPeer?.close();
   devices.close();
   nativeControl?.close();

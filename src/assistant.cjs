@@ -43,7 +43,7 @@ class Assistant extends EventEmitter {
       if(recovered)this.save();
     }}catch{this.error='Assistant history could not be loaded. The original file is preserved.';}
     this.attachments=options.attachments||new Attachments(options.directory);
-    this.provider=options.provider||new AssistantProvider({directory:path.join(options.directory,'assistant-session'),binary:options.binary});
+    this.provider=options.provider||new AssistantProvider({directory:path.join(options.directory,'assistant-session'),binary:options.binary,budgets:options.budgets});
   }
   trim(){const kept=new Set([...this.state.messages.filter(conversation).slice(-500),...this.state.messages.filter(m=>m.kind==='update').slice(-40)]);this.state.messages=this.state.messages.filter(m=>kept.has(m));}
   save(){this.trim();if(Buffer.byteLength(JSON.stringify(this.state))>32*1024*1024)throw new Error('Hyphen history reached its local storage limit.');atomic(this.file,this.state);}
@@ -150,6 +150,7 @@ class Assistant extends EventEmitter {
   async generate(message) {
     const started=Date.now();
     try {
+      const budget=require('./budget-command.cjs').command(message.text);if(budget){require('./budget-command.cjs').manage(this.options.budgets,message,budget);this.save();return;}
       const work=workCommand(message.text);if(work){await require('./work-control.cjs').manage(this.options.workControls,message,work);this.save();return;}
       const reflection=reflectionCommand(message.text);if(reflection){require('./reflection-control.cjs').manage(this.options.reflections,message,reflection);this.save();return;}
       const activity=activityControl.command(message.text);if(activity){activityControl.manage(this.options.activity,message,activity);this.save();return;}
@@ -187,6 +188,7 @@ class Assistant extends EventEmitter {
         savedNotesProvenance:'explicit_pinned_notes',memoryCoverage:{retentionExchanges:500,retentionAlerts:40,pinnedNoteLimit:32,pinnedNoteCharacters:this.state.notes.join('').length},queue:current.data,
         responsibilities:this.options.responsibilities?.snapshot().slice(-8).map(r=>({id:r.id,origin:{text:clip(r.origin.text,600),provenance:'accepted_human_instruction'},instruction:clip(r.instruction,800),revision:r.revision,state:r.state,chatName:r.scope.chatName,ownerId:r.ownerId,stepStatus:r.currentStep.status,wakeReason:r.wakeReason.kind,completionCriteria:r.completionCriteria})),
         schedules:this.options.schedules?.snapshot().slice(-8).map(s=>({id:s.id,responsibilityId:s.responsibilityId,state:s.state,reason:s.reason,timeZone:s.schedule.timeZone,endAt:s.schedule.endAt,nextWake:s.nextWake,lastActualRun:s.lastActualRun,lastRun:s.runs.at(-1)?.status})),
+        budgets:this.options.budgets?.inspect(),
         commitments:this.options.commitments?.context(),
         research:this.options.research?.context(),
         workControls:this.options.workControls?{holds:this.options.workControls.state.holds.filter(h=>h.active).slice(-16).map(h=>({kind:h.kind,target:h.target})),recent:this.options.workControls.state.actions.slice(-5).map(a=>({kind:a.kind,status:a.status,checkpoints:a.resources.slice(0,8).map(r=>({kind:r.kind,status:r.status})),omittedCheckpoints:Math.max(0,a.resources.length-8)})),coverage:'Bounded private control summary; exact receipt and source verification remain distinct.'}:null,
