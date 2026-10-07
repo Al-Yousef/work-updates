@@ -5,13 +5,21 @@ import WorkUpdatesCore
 final class WorkStoreTests:XCTestCase {
     private let computer=PairedComputer(name:"Synthetic PC",code:"synthetic-test",id:"test-computer")
     private func snapshot(revision:Int64,epoch:String="11111111-1111-4111-8111-111111111111",
-                          text:String="Old reply",reviewed:Bool=false,done:Bool=false) throws -> QueueState {
-        let json: [String:Any]=[
+                          text:String="Old reply",reviewed:Bool=false,done:Bool=false,
+                          receiptCapable:Bool=false,outcomes:[[String:Any]]=[] ) throws -> QueueState {
+        var json: [String:Any]=[
             "protocolVersion":3,"host":["id":"33333333-3333-4333-8333-333333333333"],
             "stateVersion":["epoch":epoch,"revision":revision],"servedAt":100,
             "cards":done ? [] : [["id":"task","taskKey":"task","title":"Synthetic task","label":"Ready to review","status":"ready","kind":"local","sources":[["id":"source","body":text]],"reviewed":reviewed]],
             "done":done ? [["id":"task","taskKey":"task","title":"Synthetic task","label":"Done","status":"done","kind":"local","sources":[["id":"source","body":text]],"done":true,"reviewed":reviewed]] : [],
             "approvals":[],"settings":[:],"undo":true]
+        if receiptCapable {
+            json["peerContract"]=["schema":1,"version":2,"minimumVersion":1,"commands":["send","details"],"receiptVersion":1,"attachments":false,"assistant":false,"orderedSnapshots":true,"sourceBoundMessages":true]
+            var cards=json["cards"] as! [[String:Any]]
+            cards[0]["contextRevision"]="context-1"
+            cards[0]["sources"]=[["id":"source","body":text,"deliveryOutcomes":outcomes]]
+            json["cards"]=cards
+        }
         return try QueueState.decode(JSONSerialization.data(withJSONObject:json))
     }
     @MainActor private func waitUntil(_ condition:()->Bool) async throws {
@@ -82,6 +90,50 @@ final class WorkStoreTests:XCTestCase {
         XCTAssertEqual(peer.commandCount,1);XCTAssertEqual(peer.readCount,1)
         XCTAssertEqual(store.cards.first?.task.sources.first?.body,"Fresh recorded context")
     }
+    @MainActor func testPersistedPhoneAttemptRecoversThroughAuthenticatedStateAfterRestart() async throws {
+        let directory=FileManager.default.temporaryDirectory.appendingPathComponent(UUID().uuidString)
+        defer {try? FileManager.default.removeItem(at:directory)}
+        let file=directory.appendingPathComponent("drafts.json"),journal=try ChannelDrafts(file:file)
+        let peer=ControlledPeer(try snapshot(revision:1,receiptCapable:true));peer.commandFailure = .uncertainDelivery
+        let store=WorkStore(computers:[computer],clientFactory:{_ in peer},persist:{_ in},channelDrafts:journal)
+        store.setActive(true);try await waitUntil{store.online(self.computer.id) && peer.streamReady}
+        let card=try XCTUnwrap(store.cards.first),binding=try store.channelBinding(card,sourceID:"source")
+        try store.saveDraft(binding,text:"Synthetic saved follow-up")
+        do {_ = try await store.sendDraft(card,sourceID:"source");XCTFail("Lost acknowledgement must be surfaced")} catch PeerError.uncertainDelivery {}
+        let id=try XCTUnwrap(journal.draft(binding)?.messageID)
+        XCTAssertEqual(peer.lastInput?["messageId"]?.string,id)
+        XCTAssertEqual(journal.draft(binding)?.status,"unconfirmed");XCTAssertEqual(peer.commandCount,1)
+        store.setActive(false)
+        let recovered=try ChannelDrafts(file:file)
+        XCTAssertEqual(recovered.draft(binding)?.text,"Synthetic saved follow-up")
+        let next=ControlledPeer(try snapshot(revision:2,receiptCapable:true,outcomes:[["messageId":id,"sourceId":"source","status":"sent","turnId":"accepted-turn"]]))
+        let restarted=WorkStore(computers:[computer],clientFactory:{_ in next},persist:{_ in},channelDrafts:recovered)
+        defer {restarted.setActive(false)}
+        restarted.setActive(true);try await waitUntil{restarted.online(self.computer.id) && next.streamReady}
+        XCTAssertEqual(recovered.draft(binding)?.text,"")
+        XCTAssertEqual(recovered.receipts(computerID:computer.id).first?.turnID,"accepted-turn")
+        XCTAssertEqual(next.commandCount,0,"Recovery never resends the original message")
+    }
+    @MainActor func testWrongPhoneAcknowledgementCannotClearSavedDraft() async throws {
+        let directory=FileManager.default.temporaryDirectory.appendingPathComponent(UUID().uuidString)
+        defer {try? FileManager.default.removeItem(at:directory)}
+        let journal=try ChannelDrafts(file:directory.appendingPathComponent("drafts.json"))
+        let peer=ControlledPeer(try snapshot(revision:1,receiptCapable:true))
+        let store=WorkStore(computers:[computer],clientFactory:{_ in peer},persist:{_ in},channelDrafts:journal)
+        defer {store.setActive(false)}
+        store.setActive(true);try await waitUntil{store.online(self.computer.id) && peer.streamReady}
+        let card=try XCTUnwrap(store.cards.first),binding=try store.channelBinding(card,sourceID:"source")
+        try store.saveDraft(binding,text:"Retained message")
+        let send=Task{try await store.sendDraft(card,sourceID:"source")}
+        try await waitUntil{peer.pendingCommand}
+        let id=try XCTUnwrap(peer.lastInput?["messageId"]?.string)
+        peer.completeCommand(.object(["messageId":.string(id),"sourceId":.string("different-source"),"delivery":.string("sent"),"turnId":.string("wrong-turn")]))
+        try await waitUntil{peer.pendingRead};peer.completeRead(try snapshot(revision:2,receiptCapable:true))
+        do {_ = try await send.value;XCTFail("Wrong source must be refused")} catch PeerError.uncertainDelivery {}
+        XCTAssertEqual(journal.draft(binding)?.text,"Retained message")
+        XCTAssertEqual(journal.draft(binding)?.status,"unconfirmed")
+        XCTAssertEqual(peer.commandCount,1)
+    }
 }
 
 // This deliberately permits a late command acknowledgement after close: transport
@@ -94,6 +146,7 @@ private final class ControlledPeer:PeerConnection,@unchecked Sendable {
     private var reply:CheckedContinuation<JSONValue,Error>?
     private var stream:CheckedContinuation<Void,Error>?
     private var receive:(@Sendable (QueueState) async throws -> Void)?
+    private var input:[String:JSONValue]?
     var commandFailure:PeerError?
     init(_ state:QueueState) {initial=state}
     private func locked<T>(_ body:()->T)->T {lock.lock();defer{lock.unlock()};return body()}
@@ -102,13 +155,14 @@ private final class ControlledPeer:PeerConnection,@unchecked Sendable {
     var streamReady:Bool {locked{receive != nil}}
     var pendingCommand:Bool {locked{reply != nil}}
     var pendingRead:Bool {locked{read != nil}}
+    var lastInput:[String:JSONValue]? {locked{input}}
     func state() async throws -> QueueState {
         let first=locked{reads+=1;return reads==1}
         if first {return initial}
         return try await withCheckedThrowingContinuation{continuation in locked{read=continuation}}
     }
     func command(_ method:String,input:[String:JSONValue]) async throws -> JSONValue {
-        locked{commands+=1}
+        locked{commands+=1;self.input=input}
         if let commandFailure {throw commandFailure}
         return try await withCheckedThrowingContinuation{continuation in locked{reply=continuation}}
     }

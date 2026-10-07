@@ -30,6 +30,7 @@ function execute(
       bytes = 0,
       finished = false,
       stopping = false,
+      stopRequested = null,
       storageFailureCode = null;
     const storageFailure = (error) => {
       failure ||= 'storage_failed';
@@ -66,6 +67,7 @@ function execute(
         startedAt,
         completedAt: new Date().toISOString(),
         durationMs: Math.round(performance.now() - started),
+        stopDurationMs: stopRequested === null ? null : Math.round(performance.now() - stopRequested),
         exitCode,
         terminationSignal,
         exitObserved,
@@ -79,6 +81,7 @@ function execute(
       if (!child?.pid || child.exitCode !== null || child.signalCode !== null) return;
       if (stopping) return;
       stopping = true;
+      stopRequested = performance.now();
       cleanup = 'forced_owned_tree';
       if (process.platform === 'win32') {
         const killer = spawn('taskkill', ['/PID', String(child.pid), '/T', '/F'], {

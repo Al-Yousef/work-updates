@@ -29,12 +29,21 @@ struct LinkState {
     private let persist:([PairedComputer]) throws -> Void
     private var active=false
     let demo:Bool
+    private(set) var channelDrafts:ChannelDrafts?
     init(computers:[PairedComputer]?=nil,
          clientFactory:@escaping (String) throws -> any PeerConnection = {try PeerClient(code:$0)},
-         persist:@escaping ([PairedComputer]) throws -> Void = {try PairingVault.save($0)}) {
+         persist:@escaping ([PairedComputer]) throws -> Void = {try PairingVault.save($0)},
+         channelDrafts:ChannelDrafts?=nil) {
         self.clientFactory=clientFactory;self.persist=persist
         demo=ProcessInfo.processInfo.arguments.contains("--demo")
         if demo {loadDemo();return}
+        do {
+            if let channelDrafts {self.channelDrafts=channelDrafts}
+            else {
+                let directory=try FileManager.default.url(for:.applicationSupportDirectory,in:.userDomainMask,appropriateFor:nil,create:true)
+                self.channelDrafts=try ChannelDrafts(file:directory.appendingPathComponent("private-channel-drafts-v1.json"))
+            }
+        } catch {self.error="Phone draft storage needs recovery. "+error.localizedDescription}
         if let computers {self.computers=computers}
         else {do {self.computers=try PairingVault.load()} catch {self.error=error.localizedDescription}}
         #if DEBUG
@@ -97,6 +106,10 @@ struct LinkState {
         guard try order.accept(state.stateVersion) else {return}
         orders[id]=order
         if let actual=state.host?.id {expectedHosts[id]=actual}
+        if let hostID=state.host?.id {
+            do {try channelDrafts?.reconcile(computerID:id,hostID:hostID,sources:(state.cards+state.done).flatMap{$0.sources})}
+            catch {self.error="Phone delivery recovery is held. "+error.localizedDescription}
+        }
         states[id]=state
         links[id]=LinkState(online:true,lastSeen:Date(),message:state.health?.ok == false ?
             "Chat watcher paused: " + (state.health?.message ?? "Check the computer") : "Connected")
@@ -160,6 +173,41 @@ struct LinkState {
         if lastUndoComputer==id {lastUndoComputer=nil}
     }
     func reconnect() {if !demo && active {for computer in computers {start(computer)}}}
+    func channelBinding(_ card:DisplayCard,sourceID:String) throws -> DraftBinding {
+        guard computers.contains(where:{$0.id==card.computerID}),let current=current(card),
+              current.task.sources.contains(where:{$0.id==sourceID}),let host=states[card.computerID]?.host?.id,!host.isEmpty else {throw PeerError.server("The saved draft requires its original paired owner and source.")}
+        guard current.task.contextRevision==card.task.contextRevision else {throw PeerError.server("This chat context changed. Open its latest update before sending.")}
+        return DraftBinding(computerID:card.computerID,hostID:host,sourceID:sourceID,taskKey:current.task.taskKey,contextRevision:current.task.contextRevision)
+    }
+    func draftText(_ binding:DraftBinding) throws -> String {
+        if demo {return ""}
+        guard let channelDrafts else {throw PeerError.server("Phone draft storage is unavailable. Sending is held.")}
+        return channelDrafts.draft(binding)?.text ?? ""
+    }
+    func saveDraft(_ binding:DraftBinding,text:String) throws {
+        if demo {return}
+        guard let channelDrafts else {throw PeerError.server("Phone draft storage is unavailable. Keep this draft before leaving the chat.")}
+        try channelDrafts.save(binding,text:text)
+    }
+    func sendDraft(_ card:DisplayCard,sourceID:String) async throws -> JSONValue {
+        guard !demo,online(card.computerID),states[card.computerID]?.peerContract?.receiptVersion==1,
+              states[card.computerID]?.supports("send")==true else {throw PeerError.server("Reconnect the current receipt-capable owner before sending.")}
+        guard let channelDrafts else {throw PeerError.server("Phone draft storage is unavailable. Sending is held.")}
+        let binding=try channelBinding(card,sourceID:sourceID),intent=try channelDrafts.prepare(binding)
+        guard let messageID=intent.messageID,let text=intent.submittedText else {throw PeerError.uncertainDelivery}
+        try channelDrafts.sending(binding,messageID:messageID)
+        var input:[String:JSONValue]=["id":.string(card.task.id),"taskKey":.string(binding.taskKey),"sourceId":.string(sourceID),"messageId":.string(messageID),"text":.string(text)]
+        if let revision=binding.contextRevision {input["contextRevision"] = .string(revision)}
+        do {
+            let result=try await command("send",computerID:card.computerID,input:input,lock:card.task.id)
+            try channelDrafts.accepted(binding,messageID:messageID,result:result)
+            return result
+        } catch {
+            // An error after the persisted attempt cannot prove no delivery.
+            if channelDrafts.draft(binding)?.status != "accepted" {try? channelDrafts.failed(binding,messageID:messageID,notSent:false)}
+            throw error
+        }
+    }
     private func isCurrent(_ id:String,generation:UUID?,connection:UUID?) -> Bool {
         generation != nil && connection != nil && generations[id]==generation && connections[id]==connection && computers.contains{$0.id==id}
     }
