@@ -108,6 +108,7 @@ EVENTS.add('message.cleared');
 EVENTS.add('responsibility.recovery_failed');
 EVENTS.add('schedule.recovery_failed');
 EVENTS.add('authorization.recovery_failed');
+EVENTS.add('research.recovery_failed');
 EVENTS.add('delegation.recovery_failed');
 const FLAGS = new Set(['demo', 'intentional', 'truncated', 'local', 'connected', 'noResend']);
 const methods = new Set([

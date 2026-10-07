@@ -72,15 +72,34 @@ assert.ok(
   ),
   'The observer must be bundled',
 );
+assert.ok(
+  fs
+    .readFileSync(path.join(resources, 'helper', 'collector.py'))
+    .equals(fs.readFileSync(path.join(root, 'bridge', 'collector.py'))),
+  'Stale packaged original-reader source',
+);
 process.stdout.write('Packaged contents audit passed: source allowlist and bundled observer.\n');
-if (process.argv.includes('--ui')) {
-  const { spawnSync } = require('node:child_process');
-  const result = spawnSync(process.execPath, [path.join(__dirname, 'ui-audit.cjs')], {
-    env: { ...process.env, WORK_UPDATES_EXECUTABLE: executable },
-    stdio: 'inherit',
-    timeout: 180000,
-    killSignal: 'SIGTERM',
+async function finish() {
+  await require('./research-contract-audit.cjs').audit({
+    helper: path.join(
+      resources,
+      'helper',
+      process.platform === 'win32' ? 'collector.exe' : 'collector',
+    ),
   });
-  if (result.error) throw result.error;
-  process.exit(result.status === null ? 1 : result.status);
+  if (process.argv.includes('--ui')) {
+    const { spawnSync } = require('node:child_process');
+    const result = spawnSync(process.execPath, [path.join(__dirname, 'ui-audit.cjs')], {
+      env: { ...process.env, WORK_UPDATES_EXECUTABLE: executable },
+      stdio: 'inherit',
+      timeout: 180000,
+      killSignal: 'SIGTERM',
+    });
+    if (result.error) throw result.error;
+    process.exit(result.status === null ? 1 : result.status);
+  }
 }
+finish().catch((error) => {
+  console.error(error.stack);
+  process.exitCode = 1;
+});

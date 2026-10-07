@@ -57,7 +57,12 @@ jobs:
       - run: node scripts/schedule-contract-audit.cjs --require-clean
       - run: node scripts/authorization-contract-audit.cjs --require-clean
       - run: node scripts/commitment-contract-audit.cjs --require-clean
+      - run: node scripts/research-contract-audit.cjs --require-clean
+      - run: node scripts/reflection-contract-audit.cjs --require-clean
+      - run: node scripts/triage-contract-audit.cjs --require-clean
+      - run: node scripts/activity-contract-audit.cjs --require-clean
       - run: node scripts/delegation-contract-audit.cjs --require-clean
+      - run: node scripts/work-control-contract-audit.cjs --require-clean
       - run: npm run test:shutdown
       - run: npm run test:ui
       - run: npm run test:devices
@@ -82,7 +87,14 @@ jobs:
             artifacts/schedule-audit/verification.json
             artifacts/authorization-audit/verification.json
             artifacts/commitment-audit/verification.json
+            artifacts/research-audit/verification.json
+            artifacts/research-packaged/verification.json
+            artifacts/reflection-audit/verification.json
+            artifacts/triage-audit/verification.json
+            artifacts/activity-audit/verification.json
+            artifacts/activity-audit/synthetic-export.json
             artifacts/delegation-audit/verification.json
+            artifacts/work-control-audit/verification.json
           if-no-files-found: error
           retention-days: 14
   release:

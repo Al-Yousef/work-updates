@@ -35,7 +35,20 @@ const wait = async (predicate, health = () => ({})) => {
 };
 function source(t) {
   const dir = fs.mkdtempSync(path.join(os.tmpdir(), 'wu-freshness-'));
-  t.after(() => fs.rmSync(dir, { recursive: true, force: true }));
+  const resources = [];
+  t.after(async () => {
+    // Node runs after hooks in registration order. Close helpers before
+    // removing their database; a failed deletion must not skip their close.
+    for (const { resource, pid } of resources.reverse()) {
+      const ownedPid = pid();
+      await resource.close();
+      if (ownedPid) await wait(() => {
+        try { process.kill(ownedPid, 0); return false; }
+        catch (error) { if (error.code === 'ESRCH') return true; throw error; }
+      });
+    }
+    fs.rmSync(dir, { recursive: true, force: true, maxRetries: 5, retryDelay: 50 });
+  });
   const home = path.join(dir, 'codex');
   fs.mkdirSync(home);
   execFileSync(
@@ -47,7 +60,8 @@ function source(t) {
     ],
     { windowsHide: true },
   );
-  return { dir, home, before: fs.readFileSync(path.join(home, 'state_5.sqlite')) };
+  return { dir, home, before: fs.readFileSync(path.join(home, 'state_5.sqlite')),
+    own(resource, pid = () => resource.pid) { resources.push({ resource, pid }); } };
 }
 test('heartbeat renews without chat changes and expires using elapsed time', () => {
   let wall = 1000000,
@@ -174,7 +188,7 @@ test('actual in-memory Python collector reads unchanged chats, restarts after ex
         });
     },
   );
-  t.after(() => watcher.close());
+  s.own(watcher);
   await wait(() => receipts.length >= 3, watcher.health);
   assert.equal(new Set(receipts.map((r) => r.updatedAt)).size, 1);
   const pid = watcher.pid;
@@ -204,7 +218,7 @@ test('file watcher ignores historical OK and automatically restarts a stopped he
     { codexHome: s.home, python, pollSeconds: 1, checkMs: 40, retryMs: 40 },
     (feed, health) => events.push({ feed, health }),
   );
-  t.after(() => watcher.close());
+  s.own(watcher);
   assert.equal(events[0].health.ok, false);
   await wait(() => events.some((e) => e.health.ok));
   const pid = watcher.pid;
@@ -243,7 +257,7 @@ test('candidate keeps exact owner/source draft and receipts across stopped/read-
     recoveryRoot: path.join(s.dir, 'recovery'),
     collectorOptions: { python, pollSeconds: 0.1 },
   });
-  t.after(() => f.close());
+  s.own(f, () => f.collector.pid);
   f.choose('active');
   await wait(() => f.collector.health().ok, f.collector.health);
   const model = new InboxModel();
@@ -335,7 +349,7 @@ test('a silent live process is replaced and late pipe data from its old generati
     },
     () => {},
   );
-  t.after(() => watcher.close());
+  s.own(watcher, () => null);
   await wait(() => watcher.health().ok);
   clock = 101;
   await wait(() => children.length === 2 && watcher.health().ok);

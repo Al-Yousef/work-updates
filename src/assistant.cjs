@@ -14,10 +14,15 @@ const {currentScope}=require('./responsibility-target.cjs');
 const {command:authorizationCommand}=require('./authorization-command.cjs');
 const {command:scheduleCommand}=require('./schedule-command.cjs');
 const {command:commitmentCommand}=require('./commitment-command.cjs');
+const {command:researchCommand}=require('./research-command.cjs');
+const {command:reflectionCommand}=require('./reflection-command.cjs');
+const {command:triageCommand}=require('./triage-command.cjs');
+const activityControl=require('./activity-command.cjs');
 const {command:delegationCommand}=require('./delegation-command.cjs');
+const {command:workCommand}=require('./work-command.cjs');
 class Assistant extends EventEmitter {
   constructor(options) {
-    super();this.options=options;this.file=path.join(options.directory,'assistant.json');this.active=false;this.closed=false;this.error='';
+    super();this.options=options;this.file=path.join(options.directory,'assistant.json');this.active=false;this.generations=new Set();this.closed=false;this.error='';
     this.state={version:2,messages:[],notes:[],receipts:{},seen:null,focus:null};
     try {if(fs.existsSync(this.file)) {
       if(fs.statSync(this.file).size>32*1024*1024)throw new Error();
@@ -60,7 +65,7 @@ class Assistant extends EventEmitter {
       const descriptions={accepted:'Codex accepted the queued message for',completed:'The requested pass completed in',failed:'The requested pass failed or was stopped in',cancelled:'Cancelled the queued message for','not-sent':'The queued message was not sent to',unconfirmed:'Delivery is unconfirmed for'};
       next.link.coordinationId=message.id;arrived.push({id:crypto.randomUUID(),text:'',kind:'update',status:'completed',at:Date.now(),coordinationId:message.id,answer:descriptions[next.status]+' '+message.action.chatName+'.',links:[next.link]});}
     if(!baseline)for(const card of cards) {
-      if(progress.some(p=>p.next.link.id===card.id))continue;
+      if(progress.some(p=>p.next.link.id===card.id)||this.options.triage?.managedCard(card))continue;
       if(this.state.seen[card.id]===seen[card.id]||card.done||card.reviewed||card.snoozed||card.owner?.online===false||
         (card.at||0)<(snapshot.settings?.queueSince||0)||!['needs','ready','blocked','waiting'].includes(card.status)||
         !(card.urgent||card.status==='needs'||card.status==='ready'||card.waitingOn?.kind==='you'||(card.status==='blocked'&&card.waitingOn?.kind!=='other')))continue;
@@ -83,7 +88,8 @@ class Assistant extends EventEmitter {
     if(!/^[a-f0-9-]{36}$/i.test(input.messageId||''))throw new Error('A message identity is required.');
     const existing=this.state.receipts[input.messageId];
     if(existing){if(existing!==messageHash(text,ids))throw new Error('That message identity belongs to a different message.');return {accepted:true,messageId:input.messageId};}
-    if(this.active)throw new Error('Hyphen is answering. You can send another message when it finishes.');
+    const workControl=workCommand(text),priorityControl=workControl&&['pause-main','stop-child','disable-schedule','revoke-executor','stop-all','list','inspect'].includes(workControl.kind);
+    if(this.active&&!priorityControl)throw new Error('Hyphen is answering. You can send another message when it finishes. Stop and pause controls remain available.');
     if(Object.keys(this.state.receipts).length>=5000)throw new Error('Assistant history reached its message limit.');
     const prior=structuredClone(this.state);
     const message={id:input.messageId,text,images:this.attachments.resolve(ids),focus:this.state.focus?{...this.state.focus}:null,status:'thinking',at:Date.now(),links:[]};
@@ -92,7 +98,7 @@ class Assistant extends EventEmitter {
     if(local!==null){message.answer=local;message.status='completed';if(/^\/memory(?:\s|$)/i.test(text))message.kind='memory_inspection';}
     try {this.save();}catch{this.state=prior;throw new Error('Your message could not be saved. It was not submitted.');}
     this.log('accepted',{messageId:message.id,local:local!==null,characters:text.length});
-    if(local===null){this.active=true;this.work=this.generate(message);}
+    if(local===null){this.generations.add(message.id);this.active=true;this.work=this.generate(message);}
     this.emit('change');return {accepted:true,messageId:message.id};
   }
   local(text) {
@@ -144,8 +150,13 @@ class Assistant extends EventEmitter {
   async generate(message) {
     const started=Date.now();
     try {
+      const work=workCommand(message.text);if(work){await require('./work-control.cjs').manage(this.options.workControls,message,work);this.save();return;}
+      const reflection=reflectionCommand(message.text);if(reflection){require('./reflection-control.cjs').manage(this.options.reflections,message,reflection);this.save();return;}
+      const activity=activityControl.command(message.text);if(activity){activityControl.manage(this.options.activity,message,activity);this.save();return;}
+      const notice=triageCommand(message.text);if(notice){require('./triage-control.cjs').manage(this.options.triage,message,notice);this.save();return;}
       const authorization=authorizationCommand(message.text);
       if(authorization){await this.manageAuthorization(message,authorization);this.save();return;}
+      const research=researchCommand(message.text);if(research){await require('./research-control.cjs').manage(this.options.research,message,research,this.options.snapshot());this.save();return;}
       const delegated=delegationCommand(message.text);if(delegated){await require('./delegation-control.cjs').manage(this.options.delegations,message,delegated,this.options.snapshot());this.save();return;}
       const recorded=commitmentCommand(message.text);if(recorded){require('./commitment-control.cjs').manage(this.options.commitments,message,recorded,this.options.snapshot());this.save();return;}
       const planned=scheduleCommand(message.text);if(planned){await this.manageSchedule(message,planned);this.save();return;}
@@ -177,6 +188,11 @@ class Assistant extends EventEmitter {
         responsibilities:this.options.responsibilities?.snapshot().slice(-8).map(r=>({id:r.id,origin:{text:clip(r.origin.text,600),provenance:'accepted_human_instruction'},instruction:clip(r.instruction,800),revision:r.revision,state:r.state,chatName:r.scope.chatName,ownerId:r.ownerId,stepStatus:r.currentStep.status,wakeReason:r.wakeReason.kind,completionCriteria:r.completionCriteria})),
         schedules:this.options.schedules?.snapshot().slice(-8).map(s=>({id:s.id,responsibilityId:s.responsibilityId,state:s.state,reason:s.reason,timeZone:s.schedule.timeZone,endAt:s.schedule.endAt,nextWake:s.nextWake,lastActualRun:s.lastActualRun,lastRun:s.runs.at(-1)?.status})),
         commitments:this.options.commitments?.context(),
+        research:this.options.research?.context(),
+        workControls:this.options.workControls?{holds:this.options.workControls.state.holds.filter(h=>h.active).slice(-16).map(h=>({kind:h.kind,target:h.target})),recent:this.options.workControls.state.actions.slice(-5).map(a=>({kind:a.kind,status:a.status,checkpoints:a.resources.slice(0,8).map(r=>({kind:r.kind,status:r.status})),omittedCheckpoints:Math.max(0,a.resources.length-8)})),coverage:'Bounded private control summary; exact receipt and source verification remain distinct.'}:null,
+        reflections:this.options.reflections?.context(),
+        notifications:this.options.triage?.context(),
+        activity:this.options.activity?.context(),
         delegations:this.options.delegations?.snapshot().slice(-8).map(e=>({id:e.id,parentId:e.parentId,parentRevision:e.parentRevision,childId:e.childId,chatName:e.scope.chatName,ownerId:e.scope.ownerId,purpose:clip(e.purpose,500),phase:e.phase,limits:e.limits,cancelRequested:e.cancelRequested,review:e.review?{kind:e.review.kind,text:clip(e.review.text,300)}:null,missingEvidence:e.missingEvidence,parentGoalVerification:'Tracked separately on the parent responsibility'})),
         canRequestChatMessage:!!this.options.dispatch&&!!requestedRef,requestedChatRef:requestedRef,requestedMessage:requested?.proposal||null});
       if(this.closed)return;
@@ -216,7 +232,7 @@ class Assistant extends EventEmitter {
       message.error=error.message||'Hyphen could not answer.';
       try {this.save();}catch{this.error='Assistant history could not be saved. Keep the app open.';}
       this.log('failed',{messageId:message.id,elapsedMs:Date.now()-started,code:error.code||'ASSISTANT_FAILED'});
-    } finally {this.active=false;this.emit('change');}
+    } finally {this.generations.delete(message.id);this.active=this.generations.size>0;this.emit('change');}
   }
   use(input) {
     const message=this.state.messages.find(m=>m.id===input.messageId&&m.status==='completed');
@@ -248,7 +264,7 @@ class Assistant extends EventEmitter {
       }
       else if(command.kind==='approve'){
         const store=this.options.responsibilities,entry=store?.state.entries.find(e=>e.currentStep.messageId===command.id);
-        const request=entry?bridge.request(entry,this.options.snapshot()):this.options.authorizationRequest?.(command.id);
+        const request=entry?bridge.request(entry,this.options.snapshot()):this.options.research?.approvalRequest(command.id)||this.options.authorizationRequest?.(command.id);
         if(!request)throw new Error('Open the owning source for this operation. It cannot be approved from an unrelated chat.');
         policy.approve(command.id,human,request);
         if(entry?.state==='waiting_approval'&&entry.wakeReason.kind==='authorization_ask'){store.wake(entry.id,{role:'human',messageId:message.id,text:message.text,kind:'approval'});await store.dispatch(entry.id);}

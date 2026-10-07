@@ -102,6 +102,8 @@ function messageAdmission(policy, responsibilities, snapshot, message, schedules
     [e.currentStep, ...(e.pastSteps || [])].some((s) => s.messageId === message.id),
   );
   if (!entry) return directAdmission(policy, message, snapshot);
+  if(['completed','cancelled'].includes(entry.state))return 'deny';
+  if(['sleeping','waiting_approval'].includes(entry.state)||entry.wakeReason.kind===entry.state)return 'wait';
   const step = [entry.currentStep, ...(entry.pastSteps || [])].find(
     (s) => s.messageId === message.id,
   );

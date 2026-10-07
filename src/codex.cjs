@@ -6,7 +6,7 @@ const { spawn } = require('node:child_process');
 const readline = require('node:readline');
 const { EventEmitter } = require('node:events');
 
-const messageMutation = (method) => ['turn/start', 'turn/steer'].includes(method);
+const messageMutation = (method) => ['turn/start', 'turn/steer', 'turn/interrupt'].includes(method);
 const rpcPhase = (method) => messageMutation(method) ? 'awaiting-receipt' : 'preparing-chat';
 
 function findCodex(override) {
@@ -393,9 +393,11 @@ class Codex extends EventEmitter {
       });
     return this.call('turn/start', { threadId, input,...(messageId?{clientUserMessageId:messageId}:{}) });
   }
-  async stop(threadId) {
-    if (this.active.has(threadId))
-      await this.call('turn/interrupt', { threadId, turnId: this.active.get(threadId) });
+  async stop(threadId,expectedTurnId=this.active.get(threadId)) {
+    if(!expectedTurnId||this.active.get(threadId)!==expectedTurnId||!this.loaded.has(threadId))
+      throw Object.assign(new Error('The exact active turn is unavailable; no interrupt was sent.'),{delivery:'not-sent',code:'STOP_TURN_UNCONFIRMED'});
+    await this.call('turn/interrupt', {threadId,turnId:expectedTurnId});
+    return {sourceId:threadId,turnId:expectedTurnId,delivery:'interrupt_requested'};
   }
   close() {
     const connection = this.connection;

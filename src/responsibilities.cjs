@@ -420,6 +420,7 @@ class Responsibilities extends EventEmitter {
       entry.currentStep.status !== 'ready'
     )
       return false;
+    if(this.options.admission&&this.options.admission(entry)!=='allow')return false;
     // The host resolves a fresh exact source/owner/device/revision before admission.
     this.options.validateTarget(entry.scope, this.options.snapshot());
     if(this.options.authorize){
