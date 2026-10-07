@@ -465,6 +465,8 @@ async function performBound(method, input = {}) {
   return performLocal(method, input);
 }
 async function performLocal(method, input = {}) {
+  if (!['state','details'].includes(method) && maintenanceActive(dataDir))
+    throw Object.assign(new Error('Hyphen is completing an update. Wait before changing tasks.'),{code:'UPDATE_IN_PROGRESS',delivery:'not-sent'});
   if (method === 'state') return snapshot();
   if (method === 'attachImages') return {images:attachments.import(input.paths)};
   if (method === 'openAttachment') {
