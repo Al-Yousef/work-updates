@@ -1,5 +1,6 @@
 'use strict';
 const policy = {
+  'browsers.json':['Private browser ownership, origins and save-consent metadata','128 finite journal entries; restart holds ownership','Private export; close browser separately; encrypted logins are separate'],
   'documents.json':['Imported local copies, edit drafts and explicit output schedules','128 copies/drafts, 32 finite schedules and 1000 receipts','Private export; cancel schedule separately; output files and receipts retained'],
   'voice.json':['Voice session and accepted response metadata; no recordings/transcripts','64 sessions and 128 responses/session; usage separate from unknown bill','Private export; ending voice does not erase metadata'],
   'state.json':['Task metadata, status, preferences and groups','Component bounds; no automatic age expiry','Private export; original task controls; no blanket deletion'],
@@ -30,6 +31,7 @@ function inventory(versions) {
   return local.concat([
     {name:'observer/data/source-cache.json + feed.json + details-request.json',location:'local app data',retention:'Collector cache; disconnect retains prior records',access:'local collector; connected snapshots',removal:'Exact disconnected source preview; derivatives remain'},
     {name:'voice-provider.enc',location:'OS-encrypted local app data',retention:'Until owner removes voice configuration',access:'Configured local voice provider; secret never exported',removal:'Explicit provider key removal pending'},
+    {name:'browser-vault/',location:'OS-encrypted local app data',retention:'Explicitly saved origin-bound cookies until owner removes them',access:'Current human confirmation in original private browser; no plaintext export',removal:'Exact login removal adapter pending'},
     {name:'attachments/',location:'local app data',retention:'No automatic expiry; referenced by drafts/history/receipts',access:'local app; explicitly selected dispatch',removal:'Dependency-aware removal adapter pending'},
     {name:'logs/',location:'local app data',retention:'Each logger: 512 KiB plus two backups maximum',access:'local app; explicit redacted diagnostic export',removal:'Explicit diagnostic file cleanup pending'},
     {name:'exports/',location:'local app data',retention:'Until explicitly removed by owner; no automatic sharing',access:'local owner; exported files remain private',removal:'Original files; export copies do not track later deletion'},

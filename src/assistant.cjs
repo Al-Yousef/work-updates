@@ -152,6 +152,8 @@ class Assistant extends EventEmitter {
     const started=Date.now();
     try {
       const budget=require('./budget-command.cjs').command(message.text);if(budget){require('./budget-command.cjs').manage(this.options.budgets,message,budget);this.save();return;}
+      const browserControl=require('./browser-command.cjs'),browser=browserControl.command(message.text);
+      if(browser){await browserControl.manage(this.options.browsers,message,browser);this.save();return;}
       const documentControl=require('./document-command.cjs'),document=documentControl.command(message.text);
       if(document){documentControl.manage(this.options.documents,message,document);this.save();return;}
       const voiceControl=message.text.match(/^\/voice (inspect|open|end)$/i);
