@@ -57,7 +57,7 @@ test('receipt identities from another source, owner, intent or an empty turn rem
   }
 });
 test('device or context movement during inference refuses dispatch rather than changing its execution owner',async t=>{
-  const f=fixture(t);f.setAnswer(input=>{f.queue.feed.device={kind:'mac',label:'Other device'};return {answer:'Doing it.',links:[],action:{ref:input.requestedChatRef,text:input.requestedMessage.text,mode:'send'}};});
+  const f=fixture(t),replacement=f.snapshot().cards[0].device.kind==='mac'?'pc':'mac';f.setAnswer(input=>{f.queue.feed.device={kind:replacement,label:'Other device'};return {answer:'Doing it.',links:[],action:{ref:input.requestedChatRef,text:input.requestedMessage.text,mode:'send'}};});
   const result=await f.ask('Tell this chat to fix the layout.');assert.equal(result.status,'failed');assert.equal(f.dispatches.length,0);
 });
 test('accepted and terminal coordination survive restart without delivering again',async t=>{
