@@ -721,6 +721,7 @@ struct App {
     RECT triggerRect{}, workArea{};
     POINT savedPosition{};
     std::filesystem::path tracePath,capturePath,draftPath,auditCapturePath;
+    Json lastPressAudit=Json::object();
     std::vector<std::filesystem::path> temporaryImages;
     bool saveDrafts() {
         if(draftPath.empty()){renderer.model.message="Saved drafts need recovery. The original file is preserved.";return false;}
@@ -1060,7 +1061,7 @@ struct App {
         updateTooltip();
     }
     void cancelPress() {
-        if(!pointerPressed)return;pointerPressed=false;pressOutsideMenu=false;composerPressKey.clear();renderer.pressedKey.clear();renderer.paint();log("ui-press-cancelled");
+        if(!pointerPressed)return;lastPressAudit["disposition"]="cancelled";pointerPressed=false;pressOutsideMenu=false;composerPressKey.clear();renderer.pressedKey.clear();renderer.paint();log("ui-press-cancelled");
     }
     bool composerAt(float x,float y) const {
         return renderer.popover.empty()&&IsWindowVisible(editor)&&renderer.model.canDraft()&&x>=chatlayout::composerLeft&&x<chatlayout::sendTargetLeft&&y>=renderer.composeY()&&y<=HEIGHT-22;
@@ -1078,6 +1079,7 @@ struct App {
     }
     void pointerDown(float x,float y) {
         pin();renderer.pointerX=x;renderer.pointerY=y;renderer.pointerInside=x>=0&&y>=0&&x<=WIDTH&&y<=HEIGHT;pointerPressed=true;renderer.pressedKey=renderer.pointerKey();pressOutsideMenu=!renderer.popover.empty()&&renderer.pressedKey.empty();
+        lastPressAudit={{"expectedKey",renderer.pressedKey},{"selectedBefore",renderer.model.selectedId},{"sourceBefore",renderer.model.sourceId},{"disposition","down"}};
         composerPressKey=renderer.pressedKey.empty()&&composerAt(x,y)?renderer.model.composerKey():std::string();
         if(!composerPressKey.empty())SetFocus(editor);
         SetCapture(panel);if(composerPressKey.empty())renderer.paint();log("ui-press");
@@ -1085,6 +1087,7 @@ struct App {
     void pointerUp(float x,float y) {
         if(!pointerPressed)return;renderer.pointerX=x;renderer.pointerY=y;renderer.pointerInside=x>=0&&y>=0&&x<=WIDTH&&y<=HEIGHT;
         const auto expected=renderer.pressedKey;const bool same=!expected.empty()&&expected==renderer.pointerKey();const bool dismiss=pressOutsideMenu&&renderer.pointerKey().empty();
+        lastPressAudit["actualKey"]=renderer.pointerKey();lastPressAudit["disposition"]=same?"accepted":"cancelled";
         const bool composer=!composerPressKey.empty()&&composerPressKey==renderer.model.composerKey()&&renderer.pointerKey().empty()&&composerAt(x,y);
         pointerPressed=false;pressOutsideMenu=false;composerPressKey.clear();renderer.pressedKey.clear();if(GetCapture()==panel)ReleaseCapture();
         const auto before=renderer.draws;
@@ -1378,6 +1381,7 @@ LRESULT CALLBACK panelProc(HWND window, UINT message, WPARAM wp, LPARAM lp) {
             if(app.auditCapturePath.empty())return 0;
             Json report={{"dpi",app.renderer.dpi},{"focused",app.renderer.focused},{"connected",app.renderer.model.connected},{"canDraft",app.renderer.model.canDraft()},{"canReply",app.renderer.model.canReply()},{"notice",app.renderer.notice},{"noticeHeight",app.renderer.noticeHeight},{"transcriptBottom",app.renderer.transcriptBottom()},{"reducedMotion",app.reducedMotion()},{"hits",Json::array()}};
             auto& m=app.renderer.model;report["selected"]=m.selectedId;report["detailPending"]=m.detailPending;report["pending"]=m.pending;report["source"]=m.sourceId;report["detailMatchesSelection"]=m.detail.value("id","")==m.selectedId&&m.detail.value("taskKey","")==m.selectedKey;
+            report["lastPress"]=app.lastPressAudit;
             report["paintMs"]=app.renderer.paintMs;report["bubbleLayouts"]=app.renderer.bubbleLayouts.size();report["loadingImages"]=app.renderer.loadingImages.size();report["imageBitmaps"]=app.renderer.images.size();report["detailOffset"]=m.detailOffset;report["detailFollow"]=m.detailFollow;report["cachedChats"]=m.recent.size();
             report["composerHeight"]=app.renderer.composerHeight;report["composerLines"]=app.composerLines;report["composerLinePixels"]=app.composerLinePixels;
             RECT editBounds{},format{};GetWindowRect(app.editor,&editBounds);MapWindowPoints(nullptr,app.panel,reinterpret_cast<POINT*>(&editBounds),2);SendMessageW(app.editor,EM_GETRECT,0,reinterpret_cast<LPARAM>(&format));

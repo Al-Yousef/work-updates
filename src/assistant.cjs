@@ -152,6 +152,8 @@ class Assistant extends EventEmitter {
     const started=Date.now();
     try {
       const budget=require('./budget-command.cjs').command(message.text);if(budget){require('./budget-command.cjs').manage(this.options.budgets,message,budget);this.save();return;}
+      const documentControl=require('./document-command.cjs'),document=documentControl.command(message.text);
+      if(document){documentControl.manage(this.options.documents,message,document);this.save();return;}
       const voiceControl=message.text.match(/^\/voice (inspect|open|end)$/i);
       if(voiceControl){
         if(!this.options.voice)throw new Error('Voice is unavailable on this client.');
