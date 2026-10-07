@@ -9,6 +9,11 @@ const {context,history,conversation,revision,messageTarget}=require('./assistant
 const hash=value=>crypto.createHash('sha256').update(value).digest('hex');
 const clip=(value,n)=>String(value??'').toWellFormed().slice(0,n);
 const coordination=require('./assistant-coordination.cjs');
+const {command:responsibilityCommand}=require('./responsibility-command.cjs');
+const {currentScope}=require('./responsibility-target.cjs');
+const {command:authorizationCommand}=require('./authorization-command.cjs');
+const {command:scheduleCommand}=require('./schedule-command.cjs');
+const {command:commitmentCommand}=require('./commitment-command.cjs');
 class Assistant extends EventEmitter {
   constructor(options) {
     super();this.options=options;this.file=path.join(options.directory,'assistant.json');this.active=false;this.closed=false;this.error='';
@@ -41,7 +46,7 @@ class Assistant extends EventEmitter {
     if(JSON.stringify(next)===JSON.stringify(this.state.focus))return;const prior=this.state.focus;this.state.focus=next;
     try{this.save();}catch{this.state.focus=prior;this.log('focus_save_failed',{code:'ASSISTANT_STORAGE_FAILED'});}}
   snapshot(){const visible=new Set([...this.state.messages.filter(conversation).slice(-27),...this.state.messages.filter(m=>m.kind==='update').slice(-3)]);
-    return {responding:this.active,error:this.error,model:this.provider.model||null,memoryCount:this.state.notes.length,
+    return {responding:this.active,error:this.error,model:this.provider.model||null,memoryCount:this.state.notes.length,scheduleCount:this.options.schedules?.snapshot().filter(s=>!['cancelled','expired'].includes(s.state)).length||0,responsibilityCount:this.options.responsibilities?.snapshot().filter(r=>!['completed','cancelled'].includes(r.state)).length||0,
     messages:this.state.messages.filter(m=>visible.has(m)).map(m=>({...m,focus:undefined,action:undefined,links:m.links.map(({chatName,draft},index)=>({chatName,draft:clip(draft,12000),index}))}))};}
   log(event,details){this.options.log?.write('assistant.'+event,details);}
   observe(snapshot) {
@@ -138,6 +143,12 @@ class Assistant extends EventEmitter {
   async generate(message) {
     const started=Date.now();
     try {
+      const authorization=authorizationCommand(message.text);
+      if(authorization){await this.manageAuthorization(message,authorization);this.save();return;}
+      const recorded=commitmentCommand(message.text);if(recorded){require('./commitment-control.cjs').manage(this.options.commitments,message,recorded,this.options.snapshot());this.save();return;}
+      const planned=scheduleCommand(message.text);if(planned){await this.manageSchedule(message,planned);this.save();return;}
+      const ongoing=responsibilityCommand(message.text);
+      if(ongoing){await this.manageResponsibility(message,ongoing);this.save();return;}
       const cancel=coordination.cancellation(this.state.messages,message);
       if(cancel){
         if(!cancel.target){message.status='completed';message.answer='Which queued message should I cancel? Name its chat. The queue is unchanged.';this.save();return;}
@@ -153,14 +164,18 @@ class Assistant extends EventEmitter {
       const recalled=history(this.state.messages,message),recent=recalled.recent;
       const selection={focus:message.focus,history:recalled.messages};
       let current=context(this.options.snapshot(),message.text,selection);
-      if(this.options.loadContext&&current.data.fresh) {const refreshed=await this.options.loadContext(current.targets);if(this.closed)return;current=context(refreshed||this.options.snapshot(),message.text,selection);}
+      if(this.options.loadContext&&current.data.fresh&&this.options.commitments?.preferenceSnapshot().research?.value!=='off') {const refreshed=await this.options.loadContext(current.targets);if(this.closed)return;current=context(refreshed||this.options.snapshot(),message.text,selection);}
       const requested=coordination.request(this.state.messages,message,current,selection),requestedRef=requested?.ref||null;
       if(requested&&!requestedRef){message.proposal=requested.proposal;message.pendingDestination=true;message.status='completed';message.answer='Which chat should receive this message? I’ve kept the text:\n'+message.proposal.text;
         message.links=current.data.cards.filter(c=>c.hasChat&&!c.done).slice(0,3).map(c=>({...current.refs.get(c.ref),draft:message.proposal.text}));this.save();return;}
       let images=message.images||[];
       if(!images.length&&/\b(image|photo|picture|screenshot|attachment|shown|left|right|colou?r|previous|earlier|that|this)\b/i.test(message.text)){const prior=recent.findLast(m=>m.imageIds.length);if(prior){try{images=this.attachments.resolve(prior.imageIds);}catch{prior.imagesUnavailable=true;}}}
       const value=await this.provider.answer({question:message.text||'Describe the attached image and help me understand it.',images,imagesFromHistory:!(message.images||[]).length&&!!images.length,history:recent,recalledHistory:recalled.recalled,userEvidence:recalled.userEvidence,historyCoverage:recalled.coverage,savedNotes:this.state.notes,
-        savedNotesProvenance:'explicit_pinned_notes',memoryCoverage:{retentionExchanges:500,retentionAlerts:40,pinnedNoteLimit:32,pinnedNoteCharacters:this.state.notes.join('').length},queue:current.data,canRequestChatMessage:!!this.options.dispatch&&!!requestedRef,requestedChatRef:requestedRef,requestedMessage:requested?.proposal||null});
+        savedNotesProvenance:'explicit_pinned_notes',memoryCoverage:{retentionExchanges:500,retentionAlerts:40,pinnedNoteLimit:32,pinnedNoteCharacters:this.state.notes.join('').length},queue:current.data,
+        responsibilities:this.options.responsibilities?.snapshot().slice(-8).map(r=>({id:r.id,origin:{text:clip(r.origin.text,600),provenance:'accepted_human_instruction'},instruction:clip(r.instruction,800),revision:r.revision,state:r.state,chatName:r.scope.chatName,ownerId:r.ownerId,stepStatus:r.currentStep.status,wakeReason:r.wakeReason.kind,completionCriteria:r.completionCriteria})),
+        schedules:this.options.schedules?.snapshot().slice(-8).map(s=>({id:s.id,responsibilityId:s.responsibilityId,state:s.state,reason:s.reason,timeZone:s.schedule.timeZone,endAt:s.schedule.endAt,nextWake:s.nextWake,lastActualRun:s.lastActualRun,lastRun:s.runs.at(-1)?.status})),
+        commitments:this.options.commitments?.context(),
+        canRequestChatMessage:!!this.options.dispatch&&!!requestedRef,requestedChatRef:requestedRef,requestedMessage:requested?.proposal||null});
       if(this.closed)return;
       if(typeof value.answer!=='string'||!value.answer.trim()||value.answer.length>6000||!Array.isArray(value.links)||value.links.length>3)
         throw new Error('Hyphen returned an invalid answer.');
@@ -204,6 +219,7 @@ class Assistant extends EventEmitter {
     const message=this.state.messages.find(m=>m.id===input.messageId&&m.status==='completed');
     if(!Number.isInteger(input.index)||input.index<0)throw new Error('Choose a related update from Hyphen’s answer.');
     const link=message?.links[input.index];if(!link)throw new Error('That related update is unavailable.');
+    if(link.responsibilityId){const entry=this.options.responsibilities?.entry(link.responsibilityId),match=entry&&coordination.sourceFor(this.options.snapshot(),entry.scope);if(!match)throw new Error('The responsibility source is unavailable on its original device.');return {card:match.card,sourceId:entry.scope.sourceId,draft:''};}
     if(link.coordinationId){const action=this.state.messages.find(m=>m.id===link.coordinationId)?.action;const match=action&&coordination.sourceFor(this.options.snapshot(),action);if(!match)throw new Error('The source chat is unavailable on its original device.');return {card:match.card,sourceId:action.sourceId,draft:''};}
     const state=this.options.snapshot();const card=[...(state.cards||[]),...(state.done||[])].find(c=>c.id===link.id&&c.taskKey===link.taskKey&&
       (c.owner?.id||'local')===link.ownerId&&revision(c)===link.revision);
@@ -211,5 +227,68 @@ class Assistant extends EventEmitter {
     return {card,sourceId:link.sourceId,draft:link.draft};
   }
   close(){this.closed=true;this.provider.close();}
+  async manageAuthorization(message,command){
+    const policy=this.options.authorization;if(!policy)throw new Error('Authorization controls are unavailable in this session.');
+    const bridge=require('./responsibility-authorization.cjs'),human=bridge.human(policy,{messageId:message.id,text:message.text});
+    if(command.kind==='list'){
+      const state=policy.snapshot(),grants=state.grants.slice(-12),pending=state.operations.filter(o=>o.state==='waiting_human').slice(-12);
+      message.answer=grants.length?grants.map(g=>g.action+' · '+g.mode+' · '+g.state+'\n'+g.id+'\nDestination: '+g.scope.destination+'\nAccount: '+g.scope.accountKind+' / '+g.scope.accountId+'\nDuration: '+(g.duration.kind==='until'?new Date(g.duration.endAt).toISOString():'until the responsibility ends')+' · uses '+state.operations.filter(o=>o.grantId===g.id).length+'/'+g.maxUses).join('\n\n'):'No authorization grants yet.';
+      if(pending.length)message.answer+='\n\nWaiting for your approval:\n'+pending.map(o=>o.action+' · '+o.id).join('\n');
+    }else if(command.kind==='inspect'){
+      const grant=policy.grant(command.id);message.answer=grant.action+' · '+grant.mode+' · '+grant.state+'\n'+grant.id+'\n'+Object.entries(grant.scope).map(([key,value])=>key+': '+value).join('\n')+'\nDuration: '+(grant.duration.kind==='until'?new Date(grant.duration.endAt).toISOString():'until this responsibility ends')+' · maximum uses '+grant.maxUses+'\nHuman instruction: '+clip(grant.instruction,1800)+(grant.instruction.length>1800?'\nInstruction preview is truncated. Review its full draft in the source queue.':'')+'\nAttachments: '+(grant.attachmentIds.length?grant.attachmentIds.join(', '):'none');
+    }else{
+      if(command.kind==='revoke')policy.revoke(command.id,human);
+      else if(command.kind==='mode')policy.setMode(command.id,command.mode,human);
+      else if(command.kind==='account'){
+        if(command.operation==='revoke')policy.revokeAccount(command.accountKind,command.accountId,human);
+        else{const snapshot=this.options.snapshot(),owner=snapshot.cards.find(c=>c.owner?.id===command.accountId)?.owner;policy.restoreAccount(command.accountKind,command.accountId,human,{id:owner?.id,local:owner?.local===true,fresh:coordination.fresh(snapshot),online:owner?.online!==false});}
+      }
+      else if(command.kind==='approve'){
+        const store=this.options.responsibilities,entry=store?.state.entries.find(e=>e.currentStep.messageId===command.id);
+        const request=entry?bridge.request(entry,this.options.snapshot()):this.options.authorizationRequest?.(command.id);
+        if(!request)throw new Error('Open the owning source for this operation. It cannot be approved from an unrelated chat.');
+        policy.approve(command.id,human,request);
+        if(entry?.state==='waiting_approval'&&entry.wakeReason.kind==='authorization_ask'){store.wake(entry.id,{role:'human',messageId:message.id,text:message.text,kind:'approval'});await store.dispatch(entry.id);}
+      }
+      message.answer='Saved your authorization '+command.kind+' control. Accepted work keeps its existing source receipt.';
+    }
+    message.answer=clip(message.answer,5800);message.status='completed';
+  }
+  async manageResponsibility(message,command){
+    const store=this.options.responsibilities;if(!store)throw new Error('Responsibilities are unavailable in this session.');
+    const human={role:'human',messageId:message.id,text:message.text};let id=command.id;
+    if(command.kind==='list'){
+      const entries=store.snapshot().slice(-12);message.answer=entries.length?entries.map(r=>r.scope.chatName+' · '+r.state.replaceAll('_',' ')+'\n'+r.id+'\n'+clip(r.instruction,180)).join('\n\n'):'No responsibilities yet. Open a source chat, then use /responsibility start INSTRUCTION.';
+    }else{
+      if(command.kind==='start'){
+        if(!message.focus?.sourceId)throw new Error('Open the source chat first, then start its responsibility. Your instruction is saved; nothing was dispatched.');
+        const scope=currentScope(message.focus,this.options.snapshot());
+        id=store.create({...human,instruction:command.instruction},scope,{kind:command.completionKind,description:command.completionKind==='source_terminal'?'The requested source pass reaches its matching terminal completion.':'The human verifies the requested result against the originating instruction.'});
+        await store.dispatch(id);
+      }else if(command.kind==='steer'){store.steer(id,{...human,instruction:command.instruction});await store.dispatch(id);}
+      else if(command.kind==='wait')store.wait(id,command.state,command.reason,human);
+      else if(command.kind==='wake'||command.kind==='approve'){store.wake(id,{...human,kind:command.kind==='approve'?'approval':'wake'});await store.dispatch(id);}
+      else if(command.kind==='cancel')await store.cancel(id,human);
+      else if(command.kind==='verify')store.confirm(id,human);
+      const entry=store.entry(id);message.responsibilityId=id;message.answer=entry.scope.chatName+' · '+entry.state.replaceAll('_',' ')+'\nResponsibility '+id+'\n'+clip(entry.instruction,3500)+'\nStep: '+entry.currentStep.status+'.';
+      if(entry.wakeReason.kind==='source_finished_outcome_unverified')message.answer+=' The source pass finished; the broader requested result still needs verification.';
+      const match=coordination.sourceFor(this.options.snapshot(),entry.scope);message.links=match?[{...coordination.link(match.card,entry.scope.sourceId),responsibilityId:id}]:[];
+    }
+    message.status='completed';
+  }
+  async manageSchedule(message,command){
+    const store=this.options.schedules,responsibilities=this.options.responsibilities;if(!store||!responsibilities)throw new Error('Schedules are unavailable in this session.');
+    const human={role:'human',messageId:message.id,text:message.text};let id=command.id;
+    if(command.kind==='list')message.answer=store.snapshot().slice(-12).map(s=>s.grant.chatName+' · '+s.state+'\n'+s.id+'\nNext planned: '+(s.nextWake?new Date(s.nextWake).toISOString():'none')+' · Last actual: '+(s.lastActualRun?new Date(s.lastActualRun).toISOString():'none')).join('\n\n')||'No schedules yet. Create one for an unfinished responsibility with an explicit timezone, end date and run limit.';
+    else{
+      if(command.kind==='start'){
+        const entry=responsibilities.entry(id);require('./scheduled-responsibility.cjs').target(responsibilities,{responsibilityId:id,grant:{instruction:entry.instruction,responsibilityRevision:entry.revision,...entry.scope}});
+        id=store.create(human,entry,command.schedule,command.limits);
+      }else store.control(id,command.kind,human,command.schedule,command.limits);
+      await store.tick();
+      const entry=store.entry(id);message.scheduleId=id;message.answer=entry.grant.chatName+' · '+entry.state+'\nSchedule '+id+'\nTimezone: '+entry.schedule.timeZone+'\nNext planned: '+(entry.nextWake?new Date(entry.nextWake).toISOString():'none')+'\nLast actual: '+(entry.lastActualRun?new Date(entry.lastActualRun).toISOString():'none')+'\nEnds: '+new Date(entry.schedule.endAt).toISOString()+'. Source acceptance and the requested result are tracked separately.';
+    }
+    message.status='completed';
+  }
 }
 module.exports={Assistant,context,revision};

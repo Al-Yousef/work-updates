@@ -2,7 +2,7 @@
 const fs=require('node:fs'),path=require('node:path'),crypto=require('node:crypto');
 const object=v=>v!==null&&typeof v==='object'&&!Array.isArray(v);
 const strings=(v,max=12000)=>object(v)&&Object.entries(v).every(([k,x])=>k.length>0&&k.length<512&&typeof x==='string'&&x.length<=max);
-const versions=Object.freeze({'state.json':1,'messages.json':1,'assistant.json':2,'device.json':1,'drafts.json':3});
+const versions=Object.freeze({'state.json':1,'messages.json':1,'assistant.json':2,'device.json':1,'drafts.json':3,'responsibilities.json':1,'schedules.json':1,'authorizations.json':1,'commitments.json':1});
 class StorageRecoveryError extends Error {
   constructor(file,reason){super(`Hyphen cannot safely load ${path.basename(file)} (${reason}). The original file is preserved. Close Hyphen and repair a copy before restarting.`);this.code='PRIVATE_STORE_RECOVERY';this.store=path.basename(file);}
 }
@@ -24,12 +24,20 @@ function validate(name,value){
   }
   const supported=name==='assistant.json'?[1,2]:name==='drafts.json'?[1,2,3]:[versions[name]];
   if(!supported.includes(result.version))throw new Error('unsupported version');
-  if(name==='state.json'){
-    if(!Array.isArray(result.tasks)||result.tasks.length>10000||result.tasks.some(t=>!object(t)||typeof t.id!=='string'||!t.id||!['queued','starting','working','ready','needs','blocked','waiting','unknown','done'].includes(t.status))||
+  if(name==='authorizations.json'){
+    require('./authorization.cjs').validate(result);
+  }else if(name==='commitments.json'){
+    require('./commitments.cjs').validate(result);
+  }else if(name==='schedules.json'){
+    require('./schedules.cjs').validate(result);
+  }else if(name==='responsibilities.json'){
+    require('./responsibilities.cjs').validate(result);
+  }else if(name==='state.json'){
+    if(!Array.isArray(result.tasks)||result.tasks.length>10000||result.tasks.some(t=>!object(t)||typeof t.id!=='string'||!t.id||!['queued','starting','working','ready','needs','blocked','waiting','unknown','done'].includes(t.status)||(t.adoptedTaskKey!==undefined&&(typeof t.adoptedTaskKey!=='string'||!t.adoptedTaskKey||t.adoptedTaskKey.length>512)))||
       ['cards','done','settings'].some(k=>result[k]!==undefined&&!object(result[k]))||(result.groups!==undefined&&!Array.isArray(result.groups)))throw new Error('invalid queue');
   }else if(name==='messages.json'){
     if(!Array.isArray(result.entries)||result.entries.length>10000||!object(result.barriers)||result.entries.some(e=>!object(e)||typeof e.id!=='string'||!e.id||typeof e.sourceId!=='string'||!e.sourceId||!['queued','sending','sent','cancelled','uncertain','failed'].includes(e.status)||
-      (e.text!==undefined&&(typeof e.text!=='string'||e.text.length>12000)))||(result.receipts!==undefined&&!object(result.receipts)))throw new Error('invalid message intents');
+      (e.text!==undefined&&(typeof e.text!=='string'||e.text.length>12000))||(e.expiresAt!==undefined&&(!Number.isSafeInteger(e.expiresAt)||e.expiresAt<=0||e.expiresAt>8640000000000000)))||(result.receipts!==undefined&&!object(result.receipts)))throw new Error('invalid message intents');
     result.receipts??={};
     if(Object.entries(result.receipts).some(([id,r])=>!object(r)||r.id!==id||typeof r.sourceId!=='string'||!['sent','cancelled'].includes(r.status)))throw new Error('invalid receipts');
   }else if(name==='assistant.json'){

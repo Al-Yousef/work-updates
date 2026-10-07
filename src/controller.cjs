@@ -1,4 +1,5 @@
 'use strict';
+const {admission:checkDeadline}=require('./dispatch-deadline.cjs');
 const fs = require('node:fs');
 const path = require('node:path');
 const { EventEmitter } = require('node:events');
@@ -117,6 +118,7 @@ class Controller extends EventEmitter {
     return this.log?.scope?this.log.scope(correlation,run):run();
   }
   async sendBound(id, input, sourceId, expectedTaskKey, options = {}) {
+    checkDeadline(options);
     const q = this.queue,
       card = q.get(id, expectedTaskKey),
       value = text(input, 12000);
@@ -144,11 +146,12 @@ class Controller extends EventEmitter {
         // Ask the existing desktop owner to submit the reply. Observed chats
         // remain observed; do not create a local task or claim their writer.
         const owner = await this.desktop.owner(source.id);
+        checkDeadline(options);
         if (owner) {
           this.log?.write('dispatch.owner',{owner:'desktop',ownerId:owner,route:'desktop'});
           dispatchStarted = true;
           const receipt=await this.desktop.send(source.id, value, {
-            owner, working: source.lifecycle === 'working', messageId: options.messageId, images,
+            owner, working: source.lifecycle === 'working', messageId: options.messageId, images,expiresAt:options.expiresAt,beforeDispatch:options.beforeDispatch,
           });
           if(task?.error)q.patch(task.id,{error:''});
           this.log?.write('dispatch.accepted',{route:'desktop',turnId:receipt.turnId,delivery:receipt.delivery,elapsedMs:Date.now()-started});
@@ -160,10 +163,11 @@ class Controller extends EventEmitter {
       // Resume must succeed before an observed chat becomes an app-owned task.
       // A writer-lock rejection leaves its update and context intact.
       if (this.client.prepare) await this.client.prepare(source.id);
+      checkDeadline(options);
       this.log?.write('dispatch.owner',{owner:'app-server',route:'app-server'});
       if (!task) {
-        task = q.create({ title: card.title, prompt: value, cwd: source.cwd });
-        q.patch(task.id, { threadId: source.id, adopted: true });
+        task = q.create({ title: card.title, prompt: value||'Image attachment', cwd: source.cwd });
+        q.patch(task.id, { threadId: source.id, adopted: true,adoptedTaskKey:card.taskKey });
         if (source.body) q.message(task.id, 'assistant', source.body);
       }
       q.ownedThreads.add(source.id);
@@ -177,7 +181,7 @@ class Controller extends EventEmitter {
       });
       dispatchStarted = true;
       this.awaitingAcceptance.set(task.id, { events: [] });
-      const result = await this.client.send(task.threadId, value, images,{messageId:options.messageId});
+      const result = await this.client.send(task.threadId, value, images,{messageId:options.messageId,expiresAt:options.expiresAt,beforeDispatch:options.beforeDispatch});
       const turnId=result?.turn?.id||result?.turnId;
       if(typeof turnId!=='string'||!turnId.trim())throw Object.assign(new Error('Codex did not return an acceptance receipt. Check the chat before retrying.'),{code:'DELIVERY_RECEIPT',delivery:'uncertain'});
       // Acceptance may precede turn/started. Bind presentation to the same
