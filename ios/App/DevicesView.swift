@@ -1,5 +1,6 @@
 import SwiftUI
 import WorkUpdatesCore
+import WorkUpdatesCore
 struct DevicesView:View {
     @EnvironmentObject private var store:WorkStore
     @Environment(\.dismiss) private var dismiss
@@ -7,6 +8,7 @@ struct DevicesView:View {
     @State private var name=""
     @State private var connecting=false
     @State private var forget:PairedComputer?
+    @State private var draftRemoval:PhoneDraftRemovalPreview?
     var body:some View {
         NavigationStack {
             Form {
@@ -36,12 +38,45 @@ struct DevicesView:View {
                     Link("Tailscale device setup",destination:URL(string:"https://tailscale.com/docs/quickstart")!)
                 }
                 Section("Phone updates") {Text("Updates stream while this app is open and refresh when it returns to the foreground. Continuous background push is not enabled in this build.")}
+                Section {
+                    if store.retainedDraftComputers.isEmpty {Text("No saved phone drafts.").foregroundStyle(.secondary)}
+                    ForEach(store.retainedDraftComputers,id:\.self) {computerID in
+                        VStack(alignment:.leading,spacing:6) {
+                            Text(store.name(computerID)).font(.headline)
+                            Text("Computer ID: "+computerID).font(.caption).textSelection(.enabled)
+                            Button("Preview draft removal") {do{draftRemoval=try store.previewDraftRemoval(computerID)}catch{store.error=error.localizedDescription}}
+                                .frame(minHeight:44).accessibilityIdentifier("preview-phone-draft-removal")
+                        }
+                    }
+                } header:{Text("Saved phone drafts")} footer:{Text("Drafts stay on this phone after a pairing is forgotten. Removal keeps delivery receipts and never deletes computer chats or reverses an accepted send.")}
             }.navigationTitle("Your devices").navigationBarTitleDisplayMode(.inline)
                 .workErrorAlert(store)
                 .toolbar{ToolbarItem(placement:.topBarTrailing){Button("Done"){dismiss()}}}
                 .confirmationDialog("Forget this connection?",isPresented:Binding(get:{forget != nil},set:{if !$0{forget=nil}}),titleVisibility:.visible) {
                     Button("Forget computer",role:.destructive){if let computer=forget{do{try store.forget(computer.id)}catch{store.error=error.localizedDescription}};forget=nil}
                 } message:{Text("This removes this iPhone’s saved pairing. Chats and tasks on the computer are preserved.")}
+                .sheet(item:$draftRemoval) {preview in
+                    NavigationStack {
+                        Form {
+                            Section("Affected phone data") {
+                                Text(store.name(preview.computerID))
+                                Text("Computer ID: "+preview.computerID).font(.caption).textSelection(.enabled)
+                                Text("Saved drafts: \(preview.draftCount)")
+                                Text("Retained text bytes: \(preview.retainedTextBytes)")
+                                Text("Delivery receipts kept: \(preview.retainedReceipts)")
+                                Text("Uncertain sends: \(preview.uncertainCount)")
+                                Text("Preview expires after ten minutes; changes require a fresh preview.").font(.caption)
+                            }
+                            Section {
+                                Button("Remove these phone drafts",role:.destructive) {
+                                    do{try store.removeDrafts(preview);draftRemoval=nil}catch{store.error=error.localizedDescription;draftRemoval=nil}
+                                }.frame(minHeight:44).disabled(preview.uncertainCount>0 || preview.draftCount==0)
+                                    .accessibilityIdentifier("confirm-phone-draft-removal")
+                            } footer:{Text("Uncertain sends must be reconciled first. Computer chats, pairing credentials, delivery receipts, other computers and previously exported copies remain.")}
+                        }.navigationTitle("Draft removal").navigationBarTitleDisplayMode(.inline)
+                            .toolbar{ToolbarItem(placement:.topBarTrailing){Button("Cancel"){draftRemoval=nil}}}
+                    }
+                }
         }
     }
 }

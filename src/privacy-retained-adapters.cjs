@@ -124,6 +124,53 @@ function retainedAdapters({
         : []),
     ];
   }
+  function currentReflections() {
+    const live = reflections?.();
+    if (!live?.change || !live.options?.policy?.actorId)
+      throw new Error('Reflection retention controls are unavailable.');
+    const disk = store.readStore(owned('reflections.json'), {
+      missing: () => ({
+        version: 1,
+        entries: [],
+        checkpoints: [],
+        leads: [],
+        decisions: [],
+        receipts: {},
+      }),
+    }).value;
+    if (!equal(disk, live.state)) throw new Error('Reflection dependencies changed independently.');
+    return live;
+  }
+  function reflectionSelection(sourceId) {
+    const live = currentReflections();
+    const ids = new Set(
+      live.state.entries
+        .filter(
+          (e) =>
+            e.binding.sourceId === sourceId && e.origin.actorId === live.options.policy.actorId,
+        )
+        .map((e) => e.id),
+    );
+    return {
+      scopeIds: [...ids],
+      checkpoints: live.state.checkpoints.filter((c) => ids.has(c.reflectionId)),
+      leads: live.state.leads.filter((c) => ids.has(c.reflectionId)),
+      decisions: live.state.decisions.filter((c) => ids.has(c.reflectionId)),
+    };
+  }
+  function reflectionDependencies(sourceId) {
+    const live = currentReflections(),
+      researchLive = currentResearch();
+    return [
+      ...otherAnswer(),
+      ...(live.pumping ? ['A reflection review is still running'] : []),
+      ...(researchLive.state.entries.some(
+        (e) => e.scope.sourceId === sourceId && (researchLive.pending.has(e.id) || e.pending),
+      )
+        ? ['A selected source read is still running']
+        : []),
+    ];
+  }
   function orphanImages() {
     const folder = owned('attachments');
     if (!fs.existsSync(folder)) return { files: [], referencedFiles: 0 };
@@ -200,6 +247,33 @@ function retainedAdapters({
   const loginDependencies = () =>
     browsers().live.size ? ['Close private browser sessions before removing saved login keys'] : [];
   return {
+    'source-reflections': {
+      read: reflectionSelection,
+      dependencies: reflectionDependencies,
+      summary: (value) => ({
+        scopes: value.scopeIds.length,
+        checkpoints: value.checkpoints.length,
+        carriedLeads: value.leads.length,
+        decisions: value.decisions.length,
+      }),
+      remove: (sourceId, selected) => {
+        if (
+          reflectionDependencies(sourceId).length ||
+          !equal(reflectionSelection(sourceId), selected)
+        )
+          throw new Error('Reflection dependencies changed.');
+        const ids = new Set(selected.scopeIds),
+          live = currentReflections();
+        live.change((next) => {
+          for (const key of ['checkpoints', 'leads', 'decisions'])
+            next[key] = next[key].filter((record) => !ids.has(record.reflectionId));
+        });
+        currentReflections();
+      },
+      removed: (value) =>
+        ['checkpoints', 'leads', 'decisions'].every((key) => value[key].length === 0),
+      kept: 'Review configuration, identity, finite counters and replay receipts remain. Other owners, source extracts, conversation, pinned notes, commitments and previous exports remain. No source is reconnected.',
+    },
     'source-extracts': {
       requiresDisconnectedSource: true,
       read: extracts,

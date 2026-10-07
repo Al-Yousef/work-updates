@@ -29,7 +29,7 @@ test('legacy privacy journals preserve original bytes until a human change and n
     actorId: 'human:local',
     adapters: { notes: { read: () => [] } },
   });
-  assert.equal(privacy.state.version, 2);
+  assert.equal(privacy.state.version, 3);
   assert.equal(privacy.disconnected(sourceId), true);
   assert.equal(fs.readFileSync(file, 'utf8'), bytes);
   privacy.preview(
@@ -42,9 +42,9 @@ test('legacy privacy journals preserve original bytes until a human change and n
     },
     'notes',
   );
-  assert.equal(JSON.parse(fs.readFileSync(file, 'utf8')).version, 2);
+  assert.equal(JSON.parse(fs.readFileSync(file, 'utf8')).version, 3);
   const { inspectStores } = require('../src/private-store.cjs');
-  const old = { ...require('../src/update-compatibility.json').stores, 'privacy.json': [1] };
+  const old = { ...require('../src/update-compatibility.json').stores, 'privacy.json': [1,2] };
   assert.throws(() => inspectStores(directory, old), {
     code: 'PRIVATE_STORE_RECOVERY',
     store: 'privacy.json',

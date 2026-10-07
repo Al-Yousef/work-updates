@@ -15,7 +15,7 @@ const policy = {
   'delegations.json':['Child scopes, accepted turns and parent reviews','Component bounds; restart/replay checkpoints retained','Private export; stop does not erase accepted external work'],
   'research.json':['Read grants and retained source extracts','64 statements and 32 scans per scope; grants bounded','Exact disconnected source-extracts preview; active reads/retained reflection dependencies hold removal; grants and receipts remain'],
   'work-controls.json':['Stop/resume holds and resource checkpoints','Component bounds; replay guards retained','Private export; no deletion that silently resumes work'],
-  'reflections.json':['Review scopes, source statements and suggestions','Configured 1..365 days for old review checkpoints','Private export; original review controls; pinned notes separate'],
+  'reflections.json':['Review scopes, source statements and suggestions','Configured 1..365 days for old review checkpoints','Exact disconnected source-reflections preview removes current-owner checkpoints, carried leads and decisions; scopes, counters, receipts and pinned notes remain'],
   'triage.json':['Notification rules, findings and delivery decisions','256 findings and 512 decisions; finite rules','Private export; disable notifications separately'],
   'activity.json':['Content-free action/access event metadata','Default 30 days/2048 events; explicit configurable limits','Existing redacted activity export and retention controls'],
   'outcomes.json':['Outcome requirements and verification evidence','Finite freshness scope; saved verification checkpoints','Private export; original outcome controls'],
@@ -37,7 +37,7 @@ function inventory(versions) {
     {name:'document-library/',location:'local app data',retention:'Explicitly imported private copies; originals and retained drafts/receipts separate',access:'Local document provider; explicit current human request',removal:'Exact document-copies preview; active/unconfirmed writes or schedules hold removal; imports and metadata remain'},
     {name:'exports/',location:'local app data',retention:'Until explicitly removed by owner; no automatic sharing',access:'local owner; exported files remain private',removal:'Original files; export copies do not track later deletion'},
     {name:'paired-devices.enc / paired-host.enc',location:'OS-encrypted local app data',retention:'Until forgotten/revoked; invalid encryption is held',access:'local OS protected app; never plaintext export',removal:'Forget/revoke pairing; remote retained content is separate'},
-    {name:'iPhone draft journal / Keychain',location:'paired phone only',retention:'128 drafts and 512 receipts; credential until forgotten',access:'phone file protection/Keychain and paired authenticated host',removal:'Phone-owned controls; desktop cannot erase it'},
+    {name:'iPhone draft journal / Keychain',location:'paired phone only',retention:'128 drafts and 512 receipts; credential until forgotten',access:'phone file protection/Keychain and paired authenticated host',removal:'Phone Devices previews exact computer drafts before deletion; uncertain sends hold; receipts/other computers remain; forget pairing separately; desktop cannot erase it'},
     {name:'Codex chats / provider storage',location:'original provider',retention:'Provider policy; app does not control remote retention',access:'exact connected source/account grants',removal:'Original provider controls; does not reverse external actions'},
   ]);
 }
