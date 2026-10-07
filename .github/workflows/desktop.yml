@@ -64,6 +64,7 @@ jobs:
       - run: node scripts/delegation-contract-audit.cjs --require-clean
       - run: node scripts/work-control-contract-audit.cjs --require-clean
       - run: node scripts/outcome-contract-audit.cjs --require-clean
+      - run: node scripts/voice-runtime-audit.cjs
       - run: npm run test:shutdown
       - run: npm run test:ui
       - run: npm run test:devices
@@ -97,6 +98,7 @@ jobs:
             artifacts/delegation-audit/verification.json
             artifacts/work-control-audit/verification.json
             artifacts/outcome-audit/verification.json
+            artifacts/voice-runtime/verification.json
           if-no-files-found: error
           retention-days: 14
   release:
