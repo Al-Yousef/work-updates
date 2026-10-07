@@ -39,6 +39,9 @@ ETW evidence and remain null here.
 CI uses six seconds per phase as an initial pilot. The script's default is
 thirty seconds, with an explicit sample interval. Metadata includes source
 revision, Windows build, hardware, logical CPUs and physical memory. Reports
+also retain the exposed processor model, core topology and maximum clock. The
+hardware fingerprint canonicalizes nested object fields so PowerShell JSON
+field ordering cannot turn the same runner into an incomparable machine. Reports
 must show the backend, native shell and collector, exercise every required
 phase and respect native cache bounds: twelve recent chats, 512 text layouts
 and 32 decoded images. Normal process exit is required. Forced cleanup is

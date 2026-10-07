@@ -1,9 +1,8 @@
 'use strict';
 const fs = require('node:fs'),
-  path = require('node:path'),
-  crypto = require('node:crypto');
+  path = require('node:path');
 const assert = require('node:assert/strict');
-const { summary, percentile } = require('../src/performance-report.cjs');
+const { summary, percentile, hardwareKey: fingerprint } = require('../src/performance-report.cjs');
 const { growth, phases } = require('../src/performance-qualification.cjs');
 const read = (file) => JSON.parse(fs.readFileSync(file, 'utf8').replace(/^\uFEFF/, ''));
 function report(directory) {
@@ -12,10 +11,7 @@ function report(directory) {
   assert.equal(metadata.synthetic, true);
   assert.equal(metadata.accountsUsed, 0);
   assert.equal(metadata.modelCalls, 0);
-  const hardwareKey = crypto
-    .createHash('sha256')
-    .update(JSON.stringify([metadata.hardware, metadata.windows]))
-    .digest('hex');
+  const hardwareKey = fingerprint(metadata);
   const cases = [];
   for (const count of metadata.counts || [100, 500, 1500]) {
     const root = path.join(directory, String(count)),

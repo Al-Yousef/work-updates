@@ -122,4 +122,13 @@ function comparison(current, baselines) {
 function hash(file) {
   return crypto.createHash('sha256').update(fs.readFileSync(file)).digest('hex');
 }
-module.exports = { percentile, summary, comparison, hash };
+function hardwareKey(metadata) {
+  if (!metadata?.hardware || !metadata.windows)
+    throw new Error('Hardware and Windows metadata are required');
+  // PowerShell hashtable enumeration order differs between shell processes.
+  // Hash the same recorded values independently of JSON object field order.
+  const canonical = value => Array.isArray(value) ? value.map(canonical) :
+    value && typeof value === 'object' ? Object.fromEntries(Object.keys(value).sort().map(key => [key, canonical(value[key])])) : value;
+  return crypto.createHash('sha256').update(JSON.stringify(canonical([metadata.hardware, metadata.windows]))).digest('hex');
+}
+module.exports = { percentile, summary, comparison, hash, hardwareKey };

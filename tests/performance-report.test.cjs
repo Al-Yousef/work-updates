@@ -69,3 +69,19 @@ test('regressions need comparable independent baselines and an explicit noise al
   );
   assert.equal(percentile([], 0.95), null);
 });
+test('matching hardware fingerprints ignore field order and retain CPU, memory and Windows differences', () => {
+  const { hardwareKey } = require('../src/performance-report.cjs');
+  const first = {hardware:{manufacturer:'Synthetic VM', model:'Synthetic model', logicalCores:4,
+    physicalMemoryBytes:16000000000, processors:[{model:'Synthetic CPU', cores:4, maxClockMHz:2800}]},
+    windows:{caption:'Synthetic Windows', version:'10.0', build:'26100'}};
+  const reordered = {windows:{build:'26100', version:'10.0', caption:'Synthetic Windows'},
+    hardware:{processors:[{maxClockMHz:2800, cores:4, model:'Synthetic CPU'}], physicalMemoryBytes:16000000000,
+      logicalCores:4, model:'Synthetic model', manufacturer:'Synthetic VM'}};
+  assert.equal(hardwareKey(first), hardwareKey(reordered));
+  for (const change of [m => {m.hardware.processors[0].model='Other CPU';},
+    m => {m.hardware.physicalMemoryBytes++;}, m => {m.windows.build='different';}]) {
+    const different = structuredClone(first); change(different);
+    assert.notEqual(hardwareKey(first), hardwareKey(different));
+  }
+  assert.throws(() => hardwareKey({hardware:first.hardware}), /metadata/);
+});
