@@ -304,12 +304,12 @@ class ResourceBudgets {
         throw new Error('Usage needs the exact accepted turn');
       const u = reported ? usage(reported) : null;
       e.status = status;
-      e.usage = u;
+      e.usage = u || e.usage;
       e.actual = u
         ? { tokens: u.totalTokens, costMicros }
         : e.kind === 'read' && status === 'settled'
           ? { tokens: 0, costMicros: 0 }
-          : null;
+          : e.actual;
       e.durationMs = Math.max(0, this.now() - e.at);
     });
   }
@@ -317,6 +317,21 @@ class ResourceBudgets {
     if (typeof turnId !== 'string' || !turnId)
       throw new Error('Worker acceptance needs a turn receipt');
     this.started(id, turnId);
+  }
+  reportTokens(id, turnId, tokens) {
+    if (!integer(tokens)) throw new Error('Invalid reported token total');
+    this.update(id, (e) => {
+      if (!active(e) || !turnId || e.turnId !== turnId || (e.actual?.tokens || 0) > tokens)
+        throw new Error('Usage needs the current accepted resource identity and monotonic total');
+      e.actual = { tokens, costMicros: null };
+    });
+  }
+  tokenLimitReached(id) {
+    const entry = this.state.entries.find((e) => e.id === id);
+    if (!entry) throw new Error('Unknown budget reservation');
+    return entry.scopes.some(
+      (scope) => this.policy(scope) && this.accounting(scope).tokens >= this.policy(scope).tokens,
+    );
   }
   reconcile(snapshot) {
     if (

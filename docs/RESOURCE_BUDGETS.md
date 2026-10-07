@@ -73,3 +73,9 @@ actual-versus-estimated counts, parent/child limits, missing prices, concurrency
 restart uncertainty, connector throttling, unchanged backoff, exhausted dispatch
 and write failure. A live model/account audit has not been authorized for this
 candidate. Whole-app metrics and integrated acceptance remain required.
+
+## Voice and private browsers
+
+Voice reserves shared model capacity before microphone access or a provider handshake. Its current human chooses a finite token reservation in addition to the duration and separate API-billing consent. This is an admission estimate, not an asserted price or hard provider ceiling. Unpriced voice is refused under a finite cost cap. Accepted response IDs contribute cumulative reported tokens; duplicate completions do not charge twice, missing usage stays explicit, and cost remains unknown. Reaching the reservation or global token limit stops local audio. A session that never attempted a provider handshake releases only its own reservation; closing or losing an attempted transport retains uncertainty across restart because server termination and final billing are unverified. No automatic retry, credit purchase or replacement provider is added.
+
+Private-browser reads and navigation reserve shared read/concurrency capacity before their adapter runs. Confirmed local reads have zero model tokens; browser content stays untrusted and gains no authority. An exact responsibility task ID also consumes its configured responsibility and parent budgets. Exhausted connector limits prevent I/O. Failed or invalidated operations retain their uncertain reservation; resource accounting cannot return control, widen origins or restore a stale lease.

@@ -68,6 +68,7 @@ $('start').onclick = async () => {
   try {
     const info = await invoke('begin', {
       maxSeconds: Number($('seconds').value),
+      tokenReservation: Number($('tokens').value),
       billingConfirmed: $('billing').checked,
       microphoneConfirmed: $('microphone').checked,
     });

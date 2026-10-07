@@ -42,3 +42,5 @@ Synthetic tests inject the transport and use disposable files. They consume no
 account quota and do not prove microphone/device behavior, authenticated API
 access, bill amounts, phone parity or outbound telephony. Actual hardware/audio
 and any paid provider check remain separate acceptance work for #30.
+
+The production voice client reserves shared resource capacity before requesting the microphone. The human chooses an estimated token reservation; finite cost caps refuse unpriced calls. Reported tokens accumulate across accepted response identities, with missing responses/usage shown separately and actual cost left unknown. At the reservation or global token limit, local audio stops; unrelated tasks continue. A never-started call releases its local slot. Once a provider handshake was attempted, End/disconnection keeps an uncertain resource checkpoint because transport closure alone is not verified server termination or a final bill. These controls do not place outbound calls, run paid audits or enable a fallback provider.
