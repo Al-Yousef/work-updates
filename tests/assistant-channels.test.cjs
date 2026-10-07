@@ -320,3 +320,17 @@ test('unavailable encryption, future metadata and replaced grants preserve bytes
   assert.deepEqual(fs.readFileSync(f.channels.file), changed);
   assert.equal(f.calls, 0);
 });
+
+test('an unsupported private conversation exposes a recovery hold, preserves its bytes and refuses questions without holding another channel', async (t) => {
+  const f = await fixture(t), file = f.channels.assistant(f.one.id).file;
+  const bytes = Buffer.from('{"version":99,"messages":[],"notes":[],"receipts":{}}');
+  fs.writeFileSync(file, bytes); f.restart();
+  const state = await f.request(f.one.token, '/assistant/state');
+  assert.equal(state.status, 200); assert.equal(state.value.error, true);
+  const input = { messageId: crypto.randomUUID(), text: 'Do not accept this into a held conversation' };
+  assert.equal((await f.ask(f.one, input)).status, 409);
+  const receipt = await f.request(f.one.token, '/assistant/receipt/' + input.messageId);
+  assert.equal(receipt.status, 409); assert.equal(receipt.value.delivery, undefined);
+  assert.equal((await f.request(f.two.token, '/assistant/state')).value.error, false);
+  assert.deepEqual(fs.readFileSync(file), bytes); assert.equal(f.calls, 0);
+});

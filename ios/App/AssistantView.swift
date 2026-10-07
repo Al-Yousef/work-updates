@@ -30,10 +30,10 @@ import WorkUpdatesCore
             pending=journal?.pending(next.code)
             while !Task.isCancelled,generation==current {
                 do {let snapshot=try await next.state();guard generation==current else {return}
-                    if try order.accept(snapshot.stateVersion) {state=snapshot;message=snapshot.responding ? "Hyphen is answering":"Connected to your private assistant"}
+                    if try order.accept(snapshot.stateVersion) {state=snapshot;message=snapshot.error ? "Private conversation needs recovery on your computer. Saved questions will not be resent.":snapshot.responding ? "Hyphen is answering":"Connected to your private assistant"}
                     if let draft=pending {let receipt=try await next.receipt(id:draft.id,text:draft.text)
                         guard generation==current else {return}
-                        if receipt.delivery=="accepted" {try journal?.accepted(next.code,receipt:receipt);pending=journal?.pending(next.code);message="Message accepted. Its answer is tracked separately."}
+                        if receipt.delivery=="accepted" {try journal?.accepted(next.code,receipt:receipt);pending=journal?.pending(next.code);if !snapshot.error {message="Message accepted. Its answer is tracked separately."}}
                     }
                 }catch PeerError.hostRestarted {order=StateOrder();state=nil;message="Computer restarted. Reading this channel again; no message was resent."}
                 catch {next.close();guard generation==current else {return};state=nil;client=nil;message="Unavailable or revoked. Draft and receipt checks remain saved. "+error.localizedDescription;return}
@@ -43,7 +43,7 @@ import WorkUpdatesCore
         }catch{owned?.close();if generation==current {message=error.localizedDescription;state=nil;client=nil}}
     }
     func send(_ text:String) async -> Bool {
-        guard !busy,pending==nil,let client,let state,let journal else {return false}
+        guard !busy,pending==nil,let client,let state,!state.error,let journal else {return false}
         let current=generation
         busy=true;defer{busy=false}
         var draft:AssistantDraft?
@@ -102,7 +102,7 @@ struct AssistantView:View {
                         if let pending=assistant.pending {Text("Saved message awaiting acceptance check: "+pending.text).font(.footnote).textSelection(.enabled)}
                         TextField("Ask your assistant",text:$text,axis:.vertical).lineLimit(3...8).textFieldStyle(.roundedBorder).focused($focusedField,equals:.question).accessibilityIdentifier("assistant-channel-input")
                         Button("Send question") {let submitted=text;Task{if await assistant.send(submitted),text==submitted {text="";focusedField=nil}}}.buttonStyle(.borderedProminent)
-                            .disabled(assistant.busy || assistant.pending != nil || state.responding || text.trimmingCharacters(in:.whitespacesAndNewlines).isEmpty)
+                            .disabled(state.error || assistant.busy || assistant.pending != nil || state.responding || text.trimmingCharacters(in:.whitespacesAndNewlines).isEmpty)
                             .accessibilityIdentifier("assistant-channel-send")
                     }
                     DisclosureGroup("Private device connection") {
