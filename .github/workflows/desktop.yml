@@ -51,6 +51,7 @@ jobs:
           WORK_UPDATES_PYTHON: ${{ steps.python.outputs.python-path }}
       - run: python -m unittest discover -s tests -p "test_*.py"
       - run: node scripts/diagnostic-bundle-audit.cjs
+      - run: node scripts/update-fault-audit.cjs
       - run: npm run test:shutdown
       - run: npm run test:ui
       - run: npm run test:devices
@@ -69,6 +70,7 @@ jobs:
             dist/SHA256-*.txt
             artifacts/diagnostic-audit/diagnostic-bundle.json
             artifacts/diagnostic-audit/verification.json
+            artifacts/update-faults/verification.json
           if-no-files-found: error
           retention-days: 14
   release:

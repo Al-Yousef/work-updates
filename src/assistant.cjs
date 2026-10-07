@@ -2,6 +2,7 @@
 const fs=require('node:fs'),path=require('node:path'),crypto=require('node:crypto');
 const {EventEmitter}=require('node:events');
 const {atomic}=require('./queue.cjs');
+const {readStore}=require('./private-store.cjs');
 const {AssistantProvider}=require('./assistant-provider.cjs');
 const {Attachments,attachmentIds,messageHash}=require('./attachments.cjs');
 const {context,history,conversation,revision,messageTarget}=require('./assistant-context.cjs');
@@ -14,7 +15,7 @@ class Assistant extends EventEmitter {
     this.state={version:2,messages:[],notes:[],receipts:{},seen:null,focus:null};
     try {if(fs.existsSync(this.file)) {
       if(fs.statSync(this.file).size>32*1024*1024)throw new Error();
-      const value=JSON.parse(fs.readFileSync(this.file,'utf8'));
+      const value=readStore(this.file).value;
       if(![1,2].includes(value.version)||!Array.isArray(value.messages)||value.messages.length>(value.version===1?100:540)||!Array.isArray(value.notes)||value.notes.length>32||
         value.notes.some(n=>typeof n!=='string'||n.length>1000)||!value.receipts||typeof value.receipts!=='object'||Array.isArray(value.receipts)||
         value.messages.some(m=>typeof m.id!=='string'||typeof m.text!=='string'||m.text.length>4000||!['thinking','completed','failed'].includes(m.status)||

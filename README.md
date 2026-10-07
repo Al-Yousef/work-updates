@@ -1,5 +1,7 @@
 # Hyphen
 
+Portable program maintenance uses [transactional updates](docs/UPDATES.md), with durable recovery, private-store validation and program-only rollback. Historical install entry points require the same reviewed update manifest.
+
 Hyphen brings work across local Codex chats into a desktop queue and conversation. The current Windows interface is a C++ Win32 app with a tray, a floating Messages-style chat panel, and a guarded adapter for the existing weather tile. Its background services still run in Electron/Node; collection uses Python. This repository contains those components together.
 
 Current source identifies backend version **0.6.9**. This baseline is not a new installed release. See the [installed-component ledger](docs/BASELINE.md), [development roadmap](https://github.com/Al-Yousef/work-updates/issues/1), and [contribution workflow](CONTRIBUTING.md).
