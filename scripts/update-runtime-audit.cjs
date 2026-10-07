@@ -3,6 +3,10 @@
 // synthetic chats, no collector/model/account calls or Explorer attachment.
 const fs=require('node:fs'),path=require('node:path'),os=require('node:os'),assert=require('node:assert/strict'),asar=require('@electron/asar');
 const {execFileSync}=require('node:child_process');
+const {finished}=require('node:stream/promises');
+// Wait for the locked ASAR writer, including its final flush, before reading
+// identity or starting a backend from the disposable candidate.
+const pack=async (...args)=>finished(await asar.createPackage(...args),{cleanup:true});
 const {packCandidate}=require('./package-transactional-update.cjs'),{identity,create}=require('./create-update-manifest.cjs'),{windowsHooks}=require('./update-host.cjs');
 const {UpdateTransaction,digest}=require('../src/update-transaction.cjs'),{atomicJSON}=require('../src/private-store.cjs');
 const root=path.resolve(__dirname,'..');
@@ -18,7 +22,7 @@ async function audit(){
   fs.cpSync(path.dirname(path.dirname(packed)),path.join(installRoot,'desktop'),{recursive:true});
   fs.mkdirSync(path.join(installRoot,'native'));for(const file of ['Native Hover.exe','Start Native Preview.exe'])fs.copyFileSync(path.join(root,'native/windows/build/candidate',file),path.join(installRoot,'native',file));
   const archive=path.join(installRoot,'desktop/resources/app.asar'),baselineStage=path.join(directory,'baseline-stage');asar.extractAll(archive,baselineStage);
-  const metadata=JSON.parse(fs.readFileSync(path.join(baselineStage,'package.json')));metadata.version+='-baseline-fixture';atomicJSON(path.join(baselineStage,'package.json'),metadata);await asar.createPackage(baselineStage,archive);
+  const metadata=JSON.parse(fs.readFileSync(path.join(baselineStage,'package.json')));metadata.version+='-baseline-fixture';atomicJSON(path.join(baselineStage,'package.json'),metadata);await pack(baselineStage,archive);
   const intentId='12345678-1234-1234-1234-123456789abc';
   atomicJSON(path.join(dataDirectory,'state.json'),{version:1,tasks:[],cards:{},done:{},groups:[],settings:{aiSummaries:false,corner:false}});
   atomicJSON(path.join(dataDirectory,'messages.json'),{version:1,entries:[{id:intentId,sourceId:'disposable-nonexistent-source',mode:'queue',status:'queued',text:'Synthetic retained update intent',textHash:'a'.repeat(64),createdAt:1}],barriers:{},receipts:{}});
@@ -29,7 +33,7 @@ async function audit(){
     const make=(value=hooks)=>new UpdateTransaction({installRoot,dataDirectory,packageDirectory,sourceRoot:root,hooks:value});
     await make().run(manifest);assert.equal(digest(archive),manifest.components[0].sha256);
     const successfulHash=digest(archive),failureStage=path.join(directory,'failure-stage');asar.uncache(archive);asar.extractAll(archive,failureStage);
-    const failureMetadata=JSON.parse(fs.readFileSync(path.join(failureStage,'package.json')));failureMetadata.version+='-startup-fixture';atomicJSON(path.join(failureStage,'package.json'),failureMetadata);await asar.createPackage(failureStage,path.join(packageDirectory,'app.asar'));
+    const failureMetadata=JSON.parse(fs.readFileSync(path.join(failureStage,'package.json')));failureMetadata.version+='-startup-fixture';atomicJSON(path.join(failureStage,'package.json'),failureMetadata);await pack(failureStage,path.join(packageDirectory,'app.asar'));
     const rollbackManifest={...manifest,baseline:manifest.candidate,candidate:identity(path.join(packageDirectory,'app.asar')),components:[{...manifest.components[0],baselineSha256:successfulHash,sha256:digest(path.join(packageDirectory,'app.asar'))}]};
     const failedHooks={...hooks,async launch(input){if(!input.baseline)throw new Error('Injected launcher failure');return hooks.launch(input);}};
     await assert.rejects(make(failedHooks).run(rollbackManifest),/Injected launcher failure/);
