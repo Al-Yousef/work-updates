@@ -15,6 +15,7 @@ const releaseFiles = [
 const testFiles = [
   'motion-tests.exe',
   'input-tests.exe',
+  'accessibility-ids-tests.exe',
   'queue-tests.exe',
   'adapter-tests.exe',
   'native-adapter-tests.exe',
