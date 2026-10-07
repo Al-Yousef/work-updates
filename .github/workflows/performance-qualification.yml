@@ -1,0 +1,64 @@
+name: Repeated whole-process performance qualification
+on:
+  workflow_dispatch:
+  pull_request:
+    paths:
+      - '.github/workflows/performance-qualification.yml'
+      - 'src/performance-qualification.cjs'
+      - 'scripts/native-performance-audit.ps1'
+      - 'scripts/performance-qualification-report.cjs'
+permissions:
+  contents: read
+jobs:
+  qualification:
+    name: Five baselines and bounded native reconnect growth
+    runs-on: windows-2025
+    timeout-minutes: 95
+    steps:
+      - uses: actions/checkout@v4
+      - uses: actions/setup-node@v4
+        with:
+          node-version: '24'
+          cache: npm
+      - uses: actions/setup-python@v5
+        with:
+          python-version: '3.12'
+      - run: npm ci --no-fund
+      - run: node node_modules/electron/install.js
+      - run: npm run audit:release
+      - run: python -m pip install -r requirements-qa.txt
+      - name: Build the digest-verified native source
+        shell: pwsh
+        run: |
+          ./native/windows/bootstrap-toolchain.ps1
+          ./native/windows/build.ps1 -OutputDirectory build/candidate
+      - name: Five fresh process trees on matching runner hardware
+        shell: pwsh
+        run: |
+          ./scripts/owned-process-metrics.test.ps1
+          ./scripts/performance-press-proof.test.ps1
+          foreach ($taskRun in 1..5) {
+            ./scripts/native-performance-audit.ps1 -SecondsPerPhase 30 -OutputDirectory "$pwd/artifacts/performance/qualification/baseline-$taskRun"
+          }
+          ./scripts/native-performance-audit.ps1 -SecondsPerPhase 30 -OutputDirectory "$pwd/artifacts/performance/qualification/current"
+      - name: Ten-minute navigation and reconnect observation
+        shell: pwsh
+        run: ./scripts/native-performance-audit.ps1 -SecondsPerPhase 30 -ChatCounts @(1500) -SoakSeconds 600 -OutputDirectory "$pwd/artifacts/performance/qualification/soak"
+      - name: Enforce comparable baseline and bounded growth
+        if: always()
+        run: node scripts/performance-qualification-report.cjs artifacts/performance/qualification
+      - name: Publish only synthetic JSON metrics
+        if: always()
+        uses: actions/upload-artifact@v4
+        with:
+          name: performance-qualification-synthetic-metrics
+          path: |
+            artifacts/performance/qualification/**/verification.json
+            artifacts/performance/qualification/**/metadata.json
+            artifacts/performance/qualification/**/*.samples.json
+            artifacts/performance/qualification/**/*.workload.json
+            artifacts/performance/qualification/**/cleanup.json
+            artifacts/performance/qualification/**/selection-failure.json
+            artifacts/performance/qualification/qualification.json
+          if-no-files-found: error
+          retention-days: 14

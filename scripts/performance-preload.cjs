@@ -26,6 +26,8 @@ AssistantProvider.prototype.answer = async () => ({
 });
 let queue,
   stream = null,
+  reconnect = null,
+  control = null,
   watch = null,
   overlay = {},
   lastId = '';
@@ -57,6 +59,7 @@ demo.startDemoObserver = function (value) {
   const close = observer.close.bind(observer);
   observer.close = () => {
     clearInterval(stream);
+    clearInterval(reconnect);
     watch?.close();
     close();
   };
@@ -73,9 +76,11 @@ demo.startDemoObserver = function (value) {
     if (!command.id || command.id === lastId) return;
     lastId = command.id;
     clearInterval(stream);
+    clearInterval(reconnect);
     stream = null;
+    reconnect = null;
     overlay = {};
-    if (command.phase === 'active_stream')
+    if (['active_stream', 'navigation_reconnect_soak'].includes(command.phase))
       stream = setInterval(() => {
         const feed = structuredClone(queue.feed);
         feed.collectedAt = Date.now() / 1000;
@@ -88,6 +93,28 @@ demo.startDemoObserver = function (value) {
           });
         queue.setFeed(feed, { ok: true, synthetic: true });
       }, 200);
+    if (command.phase === 'navigation_reconnect_soak') {
+      let cycles = 0;
+      reconnect = setInterval(() => {
+        // Only sockets of this exact disposable backend are disrupted. The
+        // production native shell must reconnect through its ordinary path.
+        if (!control) return;
+        const subscribers = control.subscribers.size;
+        for (const socket of control.clients) socket.destroy();
+        fs.writeFileSync(
+          path.join(directory, 'performance-soak.json'),
+          JSON.stringify({
+            reconnectCycles: ++cycles,
+            subscribersBeforeLastDisconnect: subscribers,
+            boundedLatestFrames: [...control.subscribers].every(
+              (s) => !s.latestState || Buffer.byteLength(s.latestState) <= 2 * 1024 * 1024,
+            ),
+            clients: control.clients.size,
+            subscribers: control.subscribers.size,
+          }),
+        );
+      }, 15000);
+    }
     if (command.phase === 'image_decode')
       overlay = {
         assistant: {
@@ -125,6 +152,7 @@ NativeControl.prototype.broadcast = function (state) {
   return broadcast.call(this, { ...state, ...overlay });
 };
 NativeControl.prototype.start = async function () {
+  control = this;
   const state = this.state;
   this.state = () => ({ ...state(), ...overlay });
   return start.call(this);

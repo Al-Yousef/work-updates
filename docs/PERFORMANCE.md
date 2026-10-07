@@ -59,3 +59,30 @@ Source validation covers CPU normalization, complete process sums, missing
 metrics/PID reuse, noisy/incomparable baselines, the actual owned two-process
 sampler, and the existing actual-child interruption/timeout/storage-failure
 cases. Live account/model/installed data checks are not part of this pilot.
+
+The separate `Repeated whole-process performance qualification` workflow now
+launches five independent complete baselines, a sixth comparison, and a ten-minute
+1,500-source navigation/reconnect observation. All run sequentially on the same
+Windows runner with thirty seconds per ordinary phase. Run UUIDs and original
+backend/native/collector creation identities prevent copied runs from counting as
+independent. Missing process measurements, changed hardware/workloads, short raw
+measurements, missing accepted interactions, cache overflows, uncertain shutdown
+and regression thresholds fail qualification. The reconnect fixture destroys only
+its own backend sockets; the production native shell uses its normal recovery.
+
+The growth gate compares five equal sample windows using final versus first median
+private/working memory, handle and thread totals. Its explicit allowance is the
+largest of three first-window IQRs, ten percent, or a per-metric floor of 16 MiB
+private memory, 32 MiB working memory, 64 handles or eight threads. Those floors are
+measurement policy, not savings. Native cache bounds are checked at every soak
+sample, and navigation must visit more than the twelve-chat cache capacity. A
+passing ten-minute observation cannot prove indefinite leak freedom. The report
+retains all local handler exceptions to the 100 ms goal and separates Electron
+backend/helpers from native shell and collector metrics. JSON-only CI artifacts
+allow reviewing evidence without downloading a native executable or package.
+
+The workflow establishes candidate resource thresholds from five observed runs;
+it does not compare two different implementations or establish ETW wakeups/energy,
+physical interaction, installed-app behavior or real-account delivery. Each future
+optimization needs its own matching before/after comparison and appropriate
+physical scheduling/rendering checks before performance improvements are claimed.

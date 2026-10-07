@@ -4,6 +4,7 @@ const fs = require('node:fs'),
   crypto = require('node:crypto');
 const assert = require('node:assert/strict');
 const { summary, percentile } = require('../src/performance-report.cjs');
+const { growth, phases } = require('../src/performance-qualification.cjs');
 const read = (file) => JSON.parse(fs.readFileSync(file, 'utf8').replace(/^\uFEFF/, ''));
 function report(directory) {
   const metadata = read(path.join(directory, 'metadata.json'));
@@ -16,7 +17,7 @@ function report(directory) {
     .update(JSON.stringify([metadata.hardware, metadata.windows]))
     .digest('hex');
   const cases = [];
-  for (const count of [100, 500, 1500]) {
+  for (const count of metadata.counts || [100, 500, 1500]) {
     const root = path.join(directory, String(count)),
       ready = read(path.join(root, 'performance-ready.json')),
       cleanup = read(path.join(root, 'cleanup.json'));
@@ -24,12 +25,8 @@ function report(directory) {
     assert.ok(ready.backendPid && ready.collectorPid);
     assert.equal(cleanup.normalExit, true);
     for (const phase of [
-      'warm_idle',
-      'hidden_idle',
-      'active_stream',
-      'chat_switching',
-      'image_decode',
-      'messaging',
+      ...phases,
+      ...(metadata.soakSeconds ? ['navigation_reconnect_soak'] : []),
     ]) {
       const samples = read(path.join(root, phase + '.samples.json')),
         workload = read(path.join(root, phase + '.workload.json'));
@@ -80,13 +77,75 @@ function report(directory) {
         assert.ok(latencies.send_handler?.count > 0, 'Messaging path was not exercised');
       if (phase === 'image_decode')
         assert.ok(workload.native.imageBitmaps > 0, 'Native image decode was not exercised');
+      const ownedRoots = [cleanup.backendPid, cleanup.nativePid, cleanup.collectorPid].map(
+        (pid) => {
+          const root = samples[0].processes.find((p) => p.pid === pid && !p.unavailable);
+          assert.ok(root?.creationTicks, 'Original process identity missing at phase start');
+          assert.ok(
+            samples.every((s) =>
+              s.processes.some(
+                (p) => p.pid === pid && p.creationTicks === root.creationTicks && !p.unavailable,
+              ),
+            ),
+            'Original process measurement gap',
+          );
+          return pid + ':' + root.creationTicks;
+        },
+      );
+      if (phase === 'navigation_reconnect_soak') {
+        assert.ok(
+          workload.nativeSamples.length === samples.length,
+          'Native bounds were not sampled throughout the soak',
+        );
+        assert.ok(
+          workload.nativeSamples.every(
+            (s) =>
+              s.cachedChats <= 12 &&
+              s.bubbleLayouts <= 512 &&
+              s.imageBitmaps <= 32 &&
+              s.loadingImages <= 32,
+          ),
+          'A transient native cache bound was exceeded',
+        );
+        assert.ok(
+          workload.nativeSamples.at(-1).connected,
+          'The native shell did not recover its connection',
+        );
+      }
+      const measured = summary(samples, Number(metadata.hardware.logicalCores));
+      const components = Object.fromEntries(
+        ['backend', 'native', 'collector', 'helpers'].map((name, index) => {
+          const rootPids = [cleanup.backendPid, cleanup.nativePid, cleanup.collectorPid];
+          return [
+            name,
+            summary(
+              samples.map((s) => ({
+                ...s,
+                processes: s.processes.filter((p) =>
+                  name === 'helpers' ? !rootPids.includes(p.pid) : p.pid === rootPids[index],
+                ),
+              })),
+              Number(metadata.hardware.logicalCores),
+            ),
+          ];
+        }),
+      );
       cases.push({
         count,
         phase,
         hardwareKey,
-        summary: summary(samples, Number(metadata.hardware.logicalCores)),
+        summary: measured,
+        components,
         latencies,
         native: workload.native,
+        ownedRoots,
+        ...(phase === 'navigation_reconnect_soak'
+          ? {
+              growth: growth(samples, metadata.soakSeconds),
+              fixture: workload.fixture,
+              distinctSelectedSources: workload.distinctSelectedSources,
+            }
+          : {}),
         baselineState: 'pilot_only; five independent comparable runs required',
       });
     }

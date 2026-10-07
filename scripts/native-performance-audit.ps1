@@ -1,4 +1,6 @@
-param([ValidateRange(6,120)][int]$SecondsPerPhase=30,[ValidateRange(500,5000)][int]$SampleIntervalMs=1000)
+param([ValidateRange(6,120)][int]$SecondsPerPhase=30,[ValidateRange(500,5000)][int]$SampleIntervalMs=1000,
+    [ValidateSet(100,500,1500)][int[]]$ChatCounts=@(100,500,1500),
+    [ValidateRange(0,3600)][int]$SoakSeconds=0,[string]$OutputDirectory='')
 $ErrorActionPreference='Stop'
 if($env:CI -ne 'true' -or $env:RUNNER_OS -ne 'Windows'){throw 'This isolated native pilot runs only on the Windows CI runner. Do not work around a local executable-policy block.'}
 $taskRepo=[IO.Path]::GetFullPath((Join-Path $PSScriptRoot '..'))
@@ -11,11 +13,15 @@ $taskCandidate=Join-Path $taskRepo 'native/windows/build/candidate'
 $taskNative=Join-Path $taskCandidate 'Native Hover.exe'
 & $taskNode -e "require('./scripts/native-build-audit.cjs').verifyCandidate(process.argv[1])" $taskCandidate
 if($LASTEXITCODE -ne 0){throw 'A current verified native candidate is required'}
-$taskOutput=Join-Path $taskRepo ('artifacts/performance/'+(Get-Date -Format 'yyyyMMdd-HHmmss'))
+$taskAllowedOutput=[IO.Path]::GetFullPath((Join-Path $taskRepo 'artifacts/performance'))+[IO.Path]::DirectorySeparatorChar
+$taskOutput=if($OutputDirectory){[IO.Path]::GetFullPath($OutputDirectory)}else{Join-Path $taskAllowedOutput ([Guid]::NewGuid().ToString())}
+if(-not $taskOutput.StartsWith($taskAllowedOutput,[StringComparison]::OrdinalIgnoreCase) -or (Test-Path -LiteralPath $taskOutput)){throw 'Performance output must be a new directory inside this checkout artifacts/performance'}
+if($SoakSeconds -gt 0 -and $SoakSeconds -lt 300){throw 'A growth check requires at least five minutes'}
+if(@($ChatCounts|Select-Object -Unique).Count -ne $ChatCounts.Count){throw 'Repeated workload counts are not independent runs'}
 New-Item -ItemType Directory -Path $taskOutput | Out-Null
 $taskHardware=Get-CimInstance Win32_ComputerSystem -Property Manufacturer,Model,NumberOfLogicalProcessors,TotalPhysicalMemory
 $taskWindows=Get-CimInstance Win32_OperatingSystem -Property Caption,Version,BuildNumber
-@{schema=1;synthetic=$true;accountsUsed=0;modelCalls=0;installedAppChanged=$false;revision=(& git -C $taskRepo rev-parse HEAD);hardware=@{manufacturer=$taskHardware.Manufacturer;model=$taskHardware.Model;logicalCores=$taskHardware.NumberOfLogicalProcessors;physicalMemoryBytes=$taskHardware.TotalPhysicalMemory};windows=@{caption=$taskWindows.Caption;version=$taskWindows.Version;build=$taskWindows.BuildNumber};sampleIntervalMs=$SampleIntervalMs;secondsPerPhase=$SecondsPerPhase;input='simulated Win32 messages to owned isolated windows';wakeups='unavailable without ETW'} | ConvertTo-Json -Depth 8 | Set-Content (Join-Path $taskOutput 'metadata.json') -Encoding utf8
+@{schema=1;runId=[Guid]::NewGuid().ToString();startedAt=(Get-Date).ToUniversalTime().ToString('o');counts=@($ChatCounts);soakSeconds=$SoakSeconds;synthetic=$true;accountsUsed=0;modelCalls=0;installedAppChanged=$false;revision=(& git -C $taskRepo rev-parse HEAD);hardware=@{manufacturer=$taskHardware.Manufacturer;model=$taskHardware.Model;logicalCores=$taskHardware.NumberOfLogicalProcessors;physicalMemoryBytes=$taskHardware.TotalPhysicalMemory};windows=@{caption=$taskWindows.Caption;version=$taskWindows.Version;build=$taskWindows.BuildNumber};sampleIntervalMs=$SampleIntervalMs;secondsPerPhase=$SecondsPerPhase;input='simulated Win32 messages to owned isolated windows';wakeups='unavailable without ETW'} | ConvertTo-Json -Depth 8 | Set-Content (Join-Path $taskOutput 'metadata.json') -Encoding utf8
 Add-Type @'
 using System;
 using System.Text;
@@ -27,6 +33,8 @@ public static class HyphenPerfWindows {
  [DllImport("user32.dll",CharSet=CharSet.Unicode)] public static extern int GetClassName(IntPtr w,StringBuilder n,int c);
  [DllImport("user32.dll")] public static extern IntPtr GetDlgItem(IntPtr w,int id);
  [DllImport("user32.dll")] public static extern bool ShowWindow(IntPtr w,int show);
+ [StructLayout(LayoutKind.Sequential)] public struct Point { public int x; public int y; }
+ [DllImport("user32.dll")] public static extern bool ClientToScreen(IntPtr w,ref Point p);
  [DllImport("user32.dll")] public static extern IntPtr SendMessageTimeout(IntPtr w,uint m,IntPtr a,IntPtr b,uint flags,uint timeout,out UIntPtr result);
  [DllImport("user32.dll",CharSet=CharSet.Unicode,EntryPoint="SendMessageTimeoutW")] public static extern IntPtr SendText(IntPtr w,uint m,IntPtr a,string b,uint flags,uint timeout,out UIntPtr result);
 }
@@ -42,7 +50,7 @@ function Click-PerfHit([IntPtr]$Panel,$Hit){
     $taskPoint=[IntPtr](($taskY -shl 16) -bor ($taskX -band 65535))
     $taskWatch=[Diagnostics.Stopwatch]::StartNew();Send-PerfMessage $Panel 0x201 ([IntPtr]1) $taskPoint;Send-PerfMessage $Panel 0x202 ([IntPtr]::Zero) $taskPoint;$taskWatch.Stop();return $taskWatch.Elapsed.TotalMilliseconds
 }
-foreach($taskCount in @(100,500,1500)){
+foreach($taskCount in $ChatCounts){
     $taskRun=Join-Path $taskOutput ([string]$taskCount);New-Item -ItemType Directory -Path $taskRun | Out-Null
     & python (Join-Path $PSScriptRoot 'performance-source-fixture.py') (Join-Path $taskRun 'source') $taskCount
     if($LASTEXITCODE -ne 0){throw 'Synthetic source creation failed'}
@@ -77,18 +85,28 @@ foreach($taskCount in @(100,500,1500)){
         $taskRoots=@{};$taskSeen=@{}
         foreach($taskProcess in @($taskBackend,$taskShell)){$taskCim=Get-CimInstance Win32_Process -Filter ('ProcessId='+$taskProcess.Id) -Property ProcessId,CreationDate;$taskRoots[[string]$taskProcess.Id]=$taskCim.CreationDate.ToUniversalTime().Ticks}
         Start-Sleep -Seconds 2
-        foreach($taskPhase in @('warm_idle','hidden_idle','active_stream','chat_switching','image_decode','messaging')){
+        $taskPhases=@('warm_idle','hidden_idle','active_stream','chat_switching','image_decode','messaging')
+        if($SoakSeconds){$taskPhases+='navigation_reconnect_soak'}
+        foreach($taskPhase in $taskPhases){
             $taskRequest=[Guid]::NewGuid().ToString();@{id=$taskRequest;phase=$taskPhase}|ConvertTo-Json -Compress|Set-Content -LiteralPath (Join-Path $taskRun 'performance-command.json') -Encoding utf8
             for($taskTry=0;$taskTry -lt 50;$taskTry++){try{$taskAck=Get-Content -LiteralPath (Join-Path $taskRun 'performance-result.json') -Raw|ConvertFrom-Json;if($taskAck.id -eq $taskRequest){break}}catch{};Start-Sleep -Milliseconds 100}
             if($taskAck.id -ne $taskRequest){throw 'Performance phase was not acknowledged'}
             [void][HyphenPerfWindows]::ShowWindow($taskPanel, $(if($taskPhase -eq 'hidden_idle'){0}else{5}))
             if($taskPhase -eq 'image_decode'){$taskState=Get-PerfState $taskPanel $taskRun;$taskHit=$taskState.hits|Where-Object {$_.action -eq 'assistant'}|Select-Object -First 1;if(-not $taskHit){throw 'Assistant image surface absent'};[void](Click-PerfHit $taskPanel $taskHit)}
-            $taskSamples=@();$taskLatencies=@();$taskWatch=[Diagnostics.Stopwatch]::StartNew();$taskIteration=0
-            while($taskWatch.Elapsed.TotalSeconds -lt $SecondsPerPhase){
+            $taskSamples=@();$taskLatencies=@();$taskNativeSamples=@();$taskSelectedSources=@{};$taskWatch=[Diagnostics.Stopwatch]::StartNew();$taskIteration=0
+            $taskPhaseSeconds=if($taskPhase -eq 'navigation_reconnect_soak'){$SoakSeconds}else{$SecondsPerPhase}
+            while($taskWatch.Elapsed.TotalSeconds -lt $taskPhaseSeconds){
                 $taskLoop=[Diagnostics.Stopwatch]::StartNew()
-                if($taskPhase -in @('chat_switching','messaging')){
+                if($taskPhase -in @('chat_switching','messaging','navigation_reconnect_soak')){
+                    if($taskPhase -eq 'navigation_reconnect_soak'){
+                        $taskPoint=[HyphenPerfWindows+Point]::new();$taskPoint.x=20;$taskPoint.y=200
+                        if(-not [HyphenPerfWindows]::ClientToScreen($taskPanel,[ref]$taskPoint)){throw 'Owned panel position is unavailable'}
+                        $taskWheel=if([int][Math]::Floor($taskIteration/40)%2 -eq 0){-120}else{120}
+                        Send-PerfMessage $taskPanel 0x20A ([IntPtr]($taskWheel -shl 16)) ([IntPtr](($taskPoint.y -shl 16) -bor ($taskPoint.x -band 65535)))
+                    }
                     $taskState=Get-PerfState $taskPanel $taskRun;$taskCards=@($taskState.hits|Where-Object {$_.action -eq 'card'});if($taskCards.Count -lt 2){throw 'Two visible source cards are required'}
-                    $taskHit=$taskCards[$taskIteration%2];$taskLatency=Click-PerfHit $taskPanel $taskHit
+                    # Exercise different original sources throughout the soak, not only two cached chats.
+                    $taskHit=$taskCards[$taskIteration%$taskCards.Count];$taskLatency=Click-PerfHit $taskPanel $taskHit
                     $taskLive=Get-PerfState $taskPanel $taskRun
                     $taskProof=Get-HyphenSelectionProof $taskState $taskLive $taskHit
                     $taskSelectionAccepted=$taskProof -eq 'accepted'
@@ -104,7 +122,7 @@ foreach($taskCount in @(100,500,1500)){
                             @{count=$taskCount;phase=$taskPhase;iteration=$taskIteration;expected=$taskHit;before=$taskState;after=$taskLive}|ConvertTo-Json -Depth 12|Set-Content -LiteralPath (Join-Path $taskRun 'selection-failure.json') -Encoding utf8
                             throw 'Source changed during the benchmark click without a verified cancelled press'
                         }
-                    }else{$taskLatencies+=@{operation='chat_selection_handler';ms=$taskLatency;detailPending=$taskLive.detailPending;selectionAccepted=$true}}
+                    }else{$taskSelectedSources[[string]$taskLive.source]=$true;$taskLatencies+=@{operation='chat_selection_handler';ms=$taskLatency;detailPending=$taskLive.detailPending;selectionAccepted=$true}}
                     if($taskSelectionAccepted -and $taskPhase -eq 'messaging' -and -not $taskLive.pending){
                         $taskEditor=[HyphenPerfWindows]::GetDlgItem($taskPanel,201);$taskTextResult=[UIntPtr]::Zero
                         if([HyphenPerfWindows]::SendText($taskEditor,0xC,[IntPtr]::Zero,'Synthetic benchmark follow-up',2,2000,[ref]$taskTextResult) -eq [IntPtr]::Zero){throw 'Owned composer did not accept the fixture text'}
@@ -114,12 +132,17 @@ foreach($taskCount in @(100,500,1500)){
                 }
                 $taskSample=Get-OwnedProcessSample -Roots $taskRoots -Seen $taskSeen
                 $taskSamples+=,$taskSample;$taskIteration++
+                if($taskPhase -eq 'navigation_reconnect_soak'){
+                    $taskState=Get-PerfState $taskPanel $taskRun
+                    $taskNativeSamples+=@{at=$taskSample.at;connected=$taskState.connected;cachedChats=$taskState.cachedChats;bubbleLayouts=$taskState.bubbleLayouts;imageBitmaps=$taskState.imageBitmaps;loadingImages=$taskState.loadingImages}
+                }
                 $taskWait=$SampleIntervalMs-[int]$taskLoop.Elapsed.TotalMilliseconds;if($taskWait -gt 0){Start-Sleep -Milliseconds $taskWait}
             }
             $taskSamples|ConvertTo-Json -Depth 8|Set-Content -LiteralPath (Join-Path $taskRun ($taskPhase+'.samples.json')) -Encoding utf8
-            if($taskPhase -in @('chat_switching','messaging') -and @($taskLatencies|Where-Object {$_.operation -eq 'chat_selection_handler'}).Count -eq 0){throw 'Performance phase had no accepted source selections'}
+            if($taskPhase -in @('chat_switching','messaging','navigation_reconnect_soak') -and @($taskLatencies|Where-Object {$_.operation -eq 'chat_selection_handler'}).Count -eq 0){throw 'Performance phase had no accepted source selections'}
             $taskState=Get-PerfState $taskPanel $taskRun
-            @{count=$taskCount;phase=$taskPhase;latencies=$taskLatencies;native=@{paintMs=$taskState.paintMs;cachedChats=$taskState.cachedChats;bubbleLayouts=$taskState.bubbleLayouts;imageBitmaps=$taskState.imageBitmaps;loadingImages=$taskState.loadingImages};measurementOverheadIncluded=$true}|ConvertTo-Json -Depth 8|Set-Content -LiteralPath (Join-Path $taskRun ($taskPhase+'.workload.json')) -Encoding utf8
+            $taskFixtureState=if(Test-Path -LiteralPath (Join-Path $taskRun 'performance-soak.json')){Get-Content -LiteralPath (Join-Path $taskRun 'performance-soak.json') -Raw|ConvertFrom-Json}else{$null}
+            @{count=$taskCount;phase=$taskPhase;latencies=$taskLatencies;distinctSelectedSources=$taskSelectedSources.Count;nativeSamples=$taskNativeSamples;fixture=$taskFixtureState;native=@{paintMs=$taskState.paintMs;cachedChats=$taskState.cachedChats;bubbleLayouts=$taskState.bubbleLayouts;imageBitmaps=$taskState.imageBitmaps;loadingImages=$taskState.loadingImages};measurementOverheadIncluded=$true}|ConvertTo-Json -Depth 8|Set-Content -LiteralPath (Join-Path $taskRun ($taskPhase+'.workload.json')) -Encoding utf8
         }
     } finally {
         $taskCleanupErrors=@()
