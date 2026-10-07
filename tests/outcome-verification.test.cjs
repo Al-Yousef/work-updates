@@ -499,3 +499,59 @@ test('exact accepted/completed source-pass evidence is distinct from output veri
     f.close();
   }
 });
+
+test('missing source history and a misleading done summary cannot replace exact acceptance or completion evidence', async (t) => {
+  const f = setup();
+  t.after(() => f.close());
+  await f.start();
+  const criterion = {
+    kind: 'source_pass',
+    stage: 'completed',
+    description: 'Verify the exact source pass',
+    target: 'synthetic-source',
+    targetRevision: 'synthetic-source-revision',
+    maxAgeSeconds: 60,
+    until: Date.now() + 3600000,
+  };
+  assert.equal(
+    (await f.ask('/outcome require ' + f.id + ': ' + JSON.stringify(criterion))).status,
+    'completed',
+  );
+  f.complete();
+  const snapshot = f.outcomes.options.snapshot;
+  f.outcomes.options.snapshot = () => ({
+    ...snapshot(),
+    cards: snapshot().cards.map((c) => ({
+      ...c,
+      summary: 'Everything is finished and delivered',
+      summaryOrigin: 'ai',
+      sources: c.sources.map((s) =>
+        s.id === f.source.id
+          ? {
+              ...s,
+              contextLoaded: false,
+              conversationLoaded: false,
+              body: '',
+              conversation: [],
+              deliveryOutcomes: [],
+              turnId: null,
+              turnOutcome: null,
+            }
+          : s,
+      ),
+    })),
+  });
+  await f.check();
+  assert.equal(f.outcomes.entry(f.id).result.status, 'awaiting_proof');
+  assert.equal(f.outcomes.context().records[0].independent, false);
+  assert.equal((await f.ask('/responsibility verify ' + f.id)).status, 'failed');
+  assert.equal(f.responsibilities.entry(f.id).state, 'waiting_user');
+  f.outcomes.options.snapshot = () => ({ ...snapshot(), cards: [] });
+  await f.check();
+  assert.equal(f.outcomes.entry(f.id).result.status, 'inaccessible');
+  assert.equal((await f.ask('/responsibility verify ' + f.id)).status, 'failed');
+  f.outcomes.options.snapshot = snapshot;
+  await f.check();
+  assert.equal(f.outcomes.entry(f.id).result.status, 'verified');
+  assert.equal((await f.ask('/responsibility verify ' + f.id)).status, 'completed');
+});
