@@ -28,7 +28,7 @@ async function audit(){
   try{
     const make=(value=hooks)=>new UpdateTransaction({installRoot,dataDirectory,packageDirectory,sourceRoot:root,hooks:value});
     await make().run(manifest);assert.equal(digest(archive),manifest.components[0].sha256);
-    const successfulHash=digest(archive),failureStage=path.join(directory,'failure-stage');asar.extractAll(archive,failureStage);
+    const successfulHash=digest(archive),failureStage=path.join(directory,'failure-stage');asar.uncache(archive);asar.extractAll(archive,failureStage);
     const failureMetadata=JSON.parse(fs.readFileSync(path.join(failureStage,'package.json')));failureMetadata.version+='-startup-fixture';atomicJSON(path.join(failureStage,'package.json'),failureMetadata);await asar.createPackage(failureStage,path.join(packageDirectory,'app.asar'));
     const rollbackManifest={...manifest,baseline:manifest.candidate,candidate:identity(path.join(packageDirectory,'app.asar')),components:[{...manifest.components[0],baselineSha256:successfulHash,sha256:digest(path.join(packageDirectory,'app.asar'))}]};
     const failedHooks={...hooks,async launch(input){if(!input.baseline)throw new Error('Injected launcher failure');return hooks.launch(input);}};
