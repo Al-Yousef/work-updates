@@ -1,4 +1,4 @@
-param([int[]]$Scales=@(96,120,144,192))
+param([int[]]$Scales=@(96,120,144,192),[switch]$HighContrast)
 $ErrorActionPreference='Stop'
 $taskNative=Split-Path -Parent $PSScriptRoot
 $taskRepo=[IO.Path]::GetFullPath((Join-Path $taskNative '../..'))
@@ -16,10 +16,12 @@ foreach($taskScale in $Scales){
         for($taskAttempt=0;$taskAttempt -lt 50 -and -not(Test-Path -LiteralPath $taskReady);$taskAttempt++){Start-Sleep -Milliseconds 100}
         if(-not(Test-Path -LiteralPath $taskReady)){throw 'Synthetic fixture did not start'}
         $taskLog=Join-Path $taskNative ('build/artifacts/ux-audit-'+$taskRunId+'-'+$taskScale+'.log')
-        & (Join-Path $taskNative 'build/candidate/native-ux-tests.exe') (Join-Path $taskFixture 'native-control.info') $taskScale *> $taskLog
+        $taskArguments=@((Join-Path $taskFixture 'native-control.info'),$taskScale)
+        if($HighContrast){$taskArguments+='--high-contrast'}
+        & (Join-Path $taskNative 'build/candidate/native-ux-tests.exe') @taskArguments *> $taskLog
         $taskExit=$LASTEXITCODE
         Get-Content -LiteralPath $taskLog -Tail 3
-        $taskResults+=@{scale=$taskScale;exit=$taskExit;log=$taskLog;fixture=$taskFixture}
+        $taskResults+=@{scale=$taskScale;highContrast=[bool]$HighContrast;exit=$taskExit;log=$taskLog;fixture=$taskFixture}
         if($taskExit -ne 0){throw ('Native UX audit failed at '+$taskScale)}
     } finally {
         if(Test-Path -LiteralPath (Join-Path $taskFixture 'native-control.info')){& $taskNode (Join-Path $taskRepo 'scripts/native-control.cjs') (Join-Path $taskFixture 'native-control.info') quitIfIdle | Out-Null}

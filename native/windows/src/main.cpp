@@ -225,15 +225,15 @@ struct Renderer {
             canvas->FillRoundedRectangle(D2D1::RoundedRect(D2D1::RectF(12-padding, 14-padding,
                 WIDTH-12+padding, HEIGHT-10+padding), 32+padding, 32+padding), brush.get());
         }
-        brush->SetColor(D2D1::ColorF(1,1,1));canvas->FillRoundedRectangle(panel,brush.get());
+        brush->SetColor(chatstyle::inverse());canvas->FillRoundedRectangle(panel,brush.get());
         Com<ID2D1RoundedRectangleGeometry> clip; require(factory->CreateRoundedRectangleGeometry(panel,clip.put()),"Panel clip");
         Com<ID2D1Layer> layer;require(canvas->CreateLayer(layer.put()),"Panel layer");
         canvas->PushLayer(D2D1::LayerParameters(D2D1::InfiniteRect(),clip.get()),layer.get());
         brush->SetColor(chatstyle::sidebar());canvas->FillRectangle(D2D1::RectF(12,12,SIDEBAR_RIGHT,HEIGHT-12),brush.get());
         brush->SetColor(chatstyle::separator());canvas->DrawLine(D2D1::Point2F(SIDEBAR_RIGHT,12),D2D1::Point2F(SIDEBAR_RIGHT,HEIGHT-12),brush.get(),.5f);
-        brush->SetColor(D2D1::ColorF(.76f,.76f,.78f));canvas->DrawRoundedRectangle(panel,brush.get(),.6f);
+        brush->SetColor(chatstyle::separator());canvas->DrawRoundedRectangle(panel,brush.get(),.6f);
         write(L"Hyphen",26,D2D1::RectF(32,28,218,67),chatstyle::ink(),DWRITE_FONT_WEIGHT_SEMI_BOLD);
-        brush->SetColor(D2D1::ColorF(.97f,.97f,.98f));canvas->FillEllipse(D2D1::Ellipse(D2D1::Point2F(WIDTH-35,34),20,20),brush.get());
+        brush->SetColor(chatstyle::sidebar());canvas->FillEllipse(D2D1::Ellipse(D2D1::Point2F(WIDTH-35,34),20,20),brush.get());
         brush->SetColor(chatstyle::separator());canvas->DrawEllipse(D2D1::Ellipse(D2D1::Point2F(WIDTH-35,34),20,20),brush.get(),.6f);
         brush->SetColor(chatstyle::secondary());
         canvas->DrawLine(D2D1::Point2F(WIDTH-39,29),D2D1::Point2F(WIDTH-31,37),brush.get(),1.3f);
@@ -278,7 +278,7 @@ struct Renderer {
         DWRITE_TEXT_METRICS metrics{};layout->GetMetrics(&metrics);const float width=std::clamp(metrics.width+74,132.0f,354.0f);
         const auto box=D2D1::RectF(center-width/2,34,center+width/2,78);
         if(assistant){brush->SetColor(chatstyle::blue());canvas->FillEllipse(D2D1::Ellipse(D2D1::Point2F(box.left+20,56),20,20),brush);
-            brush->SetColor(D2D1::ColorF(1,1,1));canvas->FillRoundedRectangle(D2D1::RoundedRect(D2D1::RectF(box.left+11,54,box.left+29,58),2,2),brush);
+            brush->SetColor(chatstyle::inverse());canvas->FillRoundedRectangle(D2D1::RoundedRect(D2D1::RectF(box.left+11,54,box.left+29,58),2,2),brush);
         }else deviceIcon(brush,card,box.left,36);
         label(name,18,D2D1::RectF(box.left+50,43,box.right-22,71),chatstyle::ink(),DWRITE_FONT_WEIGHT_SEMI_BOLD);
         brush->SetColor(chatstyle::secondary());canvas->DrawLine(D2D1::Point2F(box.right-13,51),D2D1::Point2F(box.right-8,56),brush,1.6f);canvas->DrawLine(D2D1::Point2F(box.right-8,56),D2D1::Point2F(box.right-13,61),brush,1.6f);
@@ -289,15 +289,15 @@ struct Renderer {
         (void)brush;
         // Text toolbar actions retain their full input target without heavy tiles.
         label(title,13,D2D1::RectF(box.left+10,box.top+(box.bottom-box.top-18)/2,box.right-6,box.bottom-4),
-            enabled?chatstyle::blue():D2D1::ColorF(.62f,.62f,.65f));
+            enabled?chatstyle::blue():chatstyle::disabled());
         hits.push_back({box,action,Json::object(),enabled});
     }
     void circleButton(ID2D1SolidColorBrush* brush,D2D1_POINT_2F center,const std::string& action,bool enabled=true,bool blue=false) {
         const float radius=blue?14:20;
-        brush->SetColor(blue&&enabled?chatstyle::blue():D2D1::ColorF(1,1,1));
+        brush->SetColor(blue&&enabled?chatstyle::blue():chatstyle::inverse());
         canvas->FillEllipse(D2D1::Ellipse(center,radius,radius),brush);
         if(!blue){brush->SetColor(chatstyle::separator());canvas->DrawEllipse(D2D1::Ellipse(center,radius,radius),brush,.6f);}
-        brush->SetColor(blue&&enabled?D2D1::ColorF(1,1,1):enabled?chatstyle::ink():D2D1::ColorF(.64f,.64f,.67f));
+        brush->SetColor(blue&&enabled?chatstyle::inverse():enabled?chatstyle::ink():chatstyle::disabled());
         if(action=="attach"||action=="addMenu") {
             canvas->DrawLine(D2D1::Point2F(center.x-6,center.y),D2D1::Point2F(center.x+6,center.y),brush,1.6f);
             canvas->DrawLine(D2D1::Point2F(center.x,center.y-6),D2D1::Point2F(center.x,center.y+6),brush,1.6f);
@@ -314,6 +314,7 @@ struct Renderer {
         return statuspresentation::label(card);
     }
     D2D1_COLOR_F statusColor(const Json& card) {
+        if(chatstyle::highContrast)return chatstyle::ink();
         auto status=card.value("status","");
         if(status=="needs" || card.value("waitingOn",Json::object()).value("kind","")=="you")return D2D1::ColorF(.62f,.36f,0);
         if(status=="blocked")return D2D1::ColorF(.80f,.16f,.18f);
@@ -323,9 +324,9 @@ struct Renderer {
         return chatstyle::secondary();
     }
     void deviceIcon(ID2D1SolidColorBrush* brush,const Json& card,float x,float y) {
-        brush->SetColor(D2D1::ColorF(.82f,.85f,.90f));
+        brush->SetColor(chatstyle::highContrast?chatstyle::surface():D2D1::ColorF(.82f,.85f,.90f));
         canvas->FillEllipse(D2D1::Ellipse(D2D1::Point2F(x+20,y+20),20,20),brush);
-        brush->SetColor(D2D1::ColorF(.36f,.42f,.51f));
+        brush->SetColor(chatstyle::highContrast?chatstyle::ink():D2D1::ColorF(.36f,.42f,.51f));
         auto kind=card.value("device",Json::object()).value("kind","unknown");
         if(kind=="phone" || kind=="tablet") {
             canvas->DrawRoundedRectangle(D2D1::RoundedRect(D2D1::RectF(x+14,y+10,x+26,y+29),2,2),brush,1.5f);
@@ -335,7 +336,7 @@ struct Renderer {
             canvas->DrawLine(D2D1::Point2F(x+20,y+25),D2D1::Point2F(x+20,y+29),brush,1.5f);
             canvas->DrawLine(D2D1::Point2F(x+15,y+29),D2D1::Point2F(x+25,y+29),brush,1.5f);
         } else label("?",16,D2D1::RectF(x+15,y+9,x+30,y+30),chatstyle::secondary());
-        brush->SetColor(D2D1::ColorF(1,1,1));canvas->FillEllipse(D2D1::Ellipse(D2D1::Point2F(x+36,y+34),6,6),brush);
+        brush->SetColor(chatstyle::inverse());canvas->FillEllipse(D2D1::Ellipse(D2D1::Point2F(x+36,y+34),6,6),brush);
         brush->SetColor(statusColor(card));canvas->FillEllipse(D2D1::Ellipse(D2D1::Point2F(x+36,y+34),4.3f,4.3f),brush);
     }
     std::string rendererChatTitle() const {return model.chatting()?"Updates":"Chat";}
@@ -361,7 +362,7 @@ struct Renderer {
             sink->AddBezier(D2D1::BezierSegment(D2D1::Point2F(edge-side*8,base-7),D2D1::Point2F(edge+side*1,base-2),D2D1::Point2F(edge+side*6,base-1)));
             sink->AddBezier(D2D1::BezierSegment(D2D1::Point2F(edge-side*2,base+1),D2D1::Point2F(edge-side*12,base-1),D2D1::Point2F(edge-side*16,base-7)));
             sink->EndFigure(D2D1_FIGURE_END_CLOSED);require(sink->Close(),"Close balloon path");canvas->FillGeometry(tail.get(),brush);}
-            brush->SetColor(user?D2D1::ColorF(1,1,1):chatstyle::ink());canvas->DrawTextLayout(D2D1::Point2F(bubbleLeft+12,y+6),layout,brush,D2D1_DRAW_TEXT_OPTIONS_ENABLE_COLOR_FONT);
+            brush->SetColor(user?chatstyle::inverse():chatstyle::ink());canvas->DrawTextLayout(D2D1::Point2F(bubbleLeft+12,y+6),layout,brush,D2D1_DRAW_TEXT_OPTIONS_ENABLE_COLOR_FONT);
             const auto target=D2D1::RectF(bubbleLeft,std::max(chatlayout::transcriptTop,y),bubbleLeft+bubbleWidth,std::min(transcriptBottom(),y+height));
             if(target.bottom>target.top)messageTargets.push_back({target,"message",{{"text",content},{"tail",terminal}}});
         }
@@ -430,7 +431,7 @@ struct Renderer {
     }
     void noticePaint(ID2D1SolidColorBrush* brush) {
         if(notice.empty())return;const float bottom=noticeBottom();const auto box=D2D1::RectF(CHAT_LEFT+38,bottom-noticeHeight,WIDTH-80,bottom);
-        brush->SetColor(D2D1::ColorF(.96f,.96f,.97f));canvas->FillRoundedRectangle(D2D1::RoundedRect(box,12,12),brush);
+        brush->SetColor(chatstyle::highContrast?chatstyle::surface():D2D1::ColorF(.96f,.96f,.97f));canvas->FillRoundedRectangle(D2D1::RoundedRect(box,12,12),brush);
         label(notice,12,D2D1::RectF(box.left+10,box.top+9,box.right-10,box.bottom-8),chatstyle::secondary());
         if(!model.detailError.empty()){const auto retry=D2D1::RectF(WIDTH-76,bottom-44,WIDTH-28,bottom);centerLabel("Retry",12,retry,chatstyle::blue());hits.push_back({retry,"retryDetails",model.input(),model.connected});}
     }
@@ -441,13 +442,13 @@ struct Renderer {
             const auto box=D2D1::RectF(x,top-92,x+70,top-22);thumbnail(brush,image,box);
             hits.push_back({box,"openImage",image});
             const auto remove=D2D1::RectF(x+42,top-108,x+86,top-64);
-            brush->SetColor(D2D1::ColorF(.25f,.25f,.28f,.9f));canvas->FillEllipse(D2D1::Ellipse(D2D1::Point2F(x+64,top-86),10,10),brush);
-            centerLabel("×",14,D2D1::RectF(x+52,top-98,x+76,top-74),D2D1::ColorF(1,1,1));
+            brush->SetColor(chatstyle::highContrast?chatstyle::ink():D2D1::ColorF(.25f,.25f,.28f,.9f));canvas->FillEllipse(D2D1::Ellipse(D2D1::Point2F(x+64,top-86),10,10),brush);
+            centerLabel("×",14,D2D1::RectF(x+52,top-98,x+76,top-74),chatstyle::inverse());
             hits.push_back({remove,"removeImage",image,model.canDraft()});x+=90;
         }
         const auto box=D2D1::RoundedRect(D2D1::RectF(chatlayout::composerLeft,top,chatlayout::composerRight,HEIGHT-22),20,20);
-        brush->SetColor(D2D1::ColorF(1,1,1));canvas->FillRoundedRectangle(box,brush);
-        brush->SetColor(D2D1::ColorF(.90f,.90f,.92f));canvas->DrawRoundedRectangle(box,brush,.65f);
+        brush->SetColor(chatstyle::inverse());canvas->FillRoundedRectangle(box,brush);
+        brush->SetColor(chatstyle::separator());canvas->DrawRoundedRectangle(box,brush,.65f);
         // The EDIT draws live text and its caret. Do not draw a second, differently
         // wrapped copy underneath it; the fallback is only for exported scenes.
         if(exporting||!IsWindowVisible(composerEditor))label(model.draft().empty()?"Message…":model.draft(),chatlayout::composerSize,D2D1::RectF(chatlayout::composerTextLeft+chatlayout::composerMargin,top+chatlayout::composerPadding,chatlayout::composerTextRight-chatlayout::composerMargin,HEIGHT-22-chatlayout::composerPadding),model.draft().empty()?chatstyle::secondary():chatstyle::ink());
@@ -497,26 +498,26 @@ struct Renderer {
         const int view=model.view==4?0:model.view;
         const bool filtered=view!=0;
         const float filterX=SIDEBAR_RIGHT-38;
-        brush->SetColor(filtered?chatstyle::blue():D2D1::ColorF(1,1,1));canvas->FillEllipse(D2D1::Ellipse(D2D1::Point2F(filterX,46),20,20),brush);
+        brush->SetColor(filtered?chatstyle::blue():chatstyle::inverse());canvas->FillEllipse(D2D1::Ellipse(D2D1::Point2F(filterX,46),20,20),brush);
         brush->SetColor(chatstyle::separator());canvas->DrawEllipse(D2D1::Ellipse(D2D1::Point2F(filterX,46),20,20),brush,.6f);
-        brush->SetColor(filtered?D2D1::ColorF(1,1,1):chatstyle::ink());
+        brush->SetColor(filtered?chatstyle::inverse():chatstyle::ink());
         for(int i=0;i<3;++i)canvas->DrawLine(D2D1::Point2F(filterX-7+i*2,41+i*5),D2D1::Point2F(filterX+7-i*2,41+i*5),brush,1.5f);
         hits.push_back({D2D1::RectF(filterX-22,24,filterX+22,68),"filterMenu",Json::object()});
         const float searchY=chatlayout::searchTop+12;
         const auto searchBox=D2D1::RoundedRect(D2D1::RectF(28,searchY-22,280,searchY+22),22,22);
-        brush->SetColor(D2D1::ColorF(1,1,1));canvas->FillRoundedRectangle(searchBox,brush);
+        brush->SetColor(chatstyle::inverse());canvas->FillRoundedRectangle(searchBox,brush);
         brush->SetColor(chatstyle::separator());canvas->DrawRoundedRectangle(searchBox,brush,.6f);
         brush->SetColor(muted);canvas->DrawEllipse(D2D1::Ellipse(D2D1::Point2F(42,searchY-2),5,5),brush,1.5f);canvas->DrawLine(D2D1::Point2F(46,searchY+2),D2D1::Point2F(51,searchY+7),brush,1.5f);
         label(model.search.empty()?"Search chats and tasks":model.search,13,D2D1::RectF(52,chatlayout::searchTop,model.search.empty()?264:240,chatlayout::searchTop+24),muted);
         if(!model.search.empty()){
             brush->SetColor(muted);canvas->FillEllipse(D2D1::Ellipse(D2D1::Point2F(262,searchY),7,7),brush);
-            brush->SetColor(D2D1::ColorF(1,1,1));canvas->DrawLine(D2D1::Point2F(259,searchY-3),D2D1::Point2F(265,searchY+3),brush,1.2f);canvas->DrawLine(D2D1::Point2F(265,searchY-3),D2D1::Point2F(259,searchY+3),brush,1.2f);
+            brush->SetColor(chatstyle::inverse());canvas->DrawLine(D2D1::Point2F(259,searchY-3),D2D1::Point2F(265,searchY+3),brush,1.2f);canvas->DrawLine(D2D1::Point2F(265,searchY-3),D2D1::Point2F(259,searchY+3),brush,1.2f);
             hits.push_back({D2D1::RectF(240,searchY-22,284,searchY+22),"clearSearch",Json::object()});
         }
         const auto assistantBox=D2D1::RectF(106,94,190,190);
         if(assistant){brush->SetColor(chatstyle::blue());canvas->DrawEllipse(D2D1::Ellipse(D2D1::Point2F(chatlayout::pinX,chatlayout::pinY),33,33),brush,2);}
         brush->SetColor(chatstyle::blue());canvas->FillEllipse(D2D1::Ellipse(D2D1::Point2F(chatlayout::pinX,chatlayout::pinY),28,28),brush);
-        brush->SetColor(D2D1::ColorF(1,1,1));canvas->FillRoundedRectangle(D2D1::RoundedRect(D2D1::RectF(137,127,159,132),2.5f,2.5f),brush);
+        brush->SetColor(chatstyle::inverse());canvas->FillRoundedRectangle(D2D1::RoundedRect(D2D1::RectF(137,127,159,132),2.5f,2.5f),brush);
         centerLabel("Hyphen",12,D2D1::RectF(106,170,190,190),assistant?chatstyle::ink():muted);
         hits.push_back({assistantBox,"assistant",Json::object()});
         auto cards=model.cards();
@@ -524,7 +525,7 @@ struct Renderer {
             const auto& card=cards[index];float top=chatlayout::listTop+(index-model.offset)*chatlayout::rowHeight;
             const auto box=D2D1::RectF(20,top,SIDEBAR_RIGHT-8,top+chatlayout::rowHeight-3);
             bool selected=card.value("id","")==model.selectedId&&card.value("taskKey","")==model.selectedKey;
-            if(selected){brush->SetColor(chatstyle::selected());canvas->FillRoundedRectangle(D2D1::RoundedRect(box,10,10),brush);}
+            if(selected){brush->SetColor(chatstyle::selected());canvas->FillRoundedRectangle(D2D1::RoundedRect(box,10,10),brush);if(chatstyle::highContrast){brush->SetColor(chatstyle::ink());canvas->DrawRoundedRectangle(D2D1::RoundedRect(box,10,10),brush,2);}}
             deviceIcon(brush,card,36,top+11);
             const auto age=std::max(0LL,static_cast<long long>(std::time(nullptr))-card.value("at",0LL));
             const std::string time=card.value("at",0LL)<=0?"":age<60?"Now":age<3600?std::to_string(age/60)+"m":age<86400?std::to_string(age/3600)+"h":std::to_string(age/86400)+"d";
@@ -557,10 +558,10 @@ struct Renderer {
         const float height=popover=="copy"?60:popover=="filters"?296:popover=="add"?164:assistant?164:recovery?426:382;
         const auto box=D2D1::RectF(left,top,left+width,top+height);
         for(int i=6;i>=1;--i){brush->SetColor(D2D1::ColorF(0,0,0,.013f));canvas->FillRoundedRectangle(D2D1::RoundedRect(D2D1::RectF(left-i,top+2-i,box.right+i,box.bottom+4+i),16+i,16+i),brush);}
-        brush->SetColor(D2D1::ColorF(1,1,1,.995f));canvas->FillRoundedRectangle(D2D1::RoundedRect(box,16,16),brush);
+        brush->SetColor(chatstyle::highContrast?chatstyle::surface():D2D1::ColorF(1,1,1,.995f));canvas->FillRoundedRectangle(D2D1::RoundedRect(box,16,16),brush);
         brush->SetColor(chatstyle::separator());canvas->DrawRoundedRectangle(D2D1::RoundedRect(box,16,16),brush,.5f);
         auto item=[&](const std::string& title,const std::string& action,float y,bool enabled=true){
-            label(title,15,D2D1::RectF(left+(popover=="filters"?46:16),y+10,box.right-12,y+36),enabled?chatstyle::ink():D2D1::ColorF(.6f,.6f,.63f));
+            label(title,15,D2D1::RectF(left+(popover=="filters"?46:16),y+10,box.right-12,y+36),enabled?chatstyle::ink():chatstyle::disabled());
             hits.push_back({D2D1::RectF(left+6,y,box.right-6,y+44),action,model.input(),enabled});};
         if(popover=="copy") {item("Copy","copyMessage",top+8);}
         else if(popover=="filters") {
@@ -699,7 +700,7 @@ struct App {
     WNDPROC originalSearchProc=nullptr;
     std::string editorSource;
     bool syncingEditor=false, composing=false, suppressEnterChar=false,focusComposerRequested=false;
-    float auditDpi=0;bool auditReducedMotion=false;
+    float auditDpi=0;bool auditReducedMotion=false,auditHighContrast=false;
     Renderer renderer;
     Bridge bridge;
     QueueClient queueClient;
@@ -800,7 +801,7 @@ struct App {
         CloseHandle(process.hThread); adapterControl=process.hProcess;
     }
     void initComposer() {
-        editorBrush=CreateSolidBrush(chatstyle::editorBackground);
+        editorBrush=CreateSolidBrush(chatstyle::editorBackground());
         editorFont=CreateFontW(-px(chatlayout::composerSize),0,0,0,FW_NORMAL,FALSE,FALSE,FALSE,DEFAULT_CHARSET,
             OUT_DEFAULT_PRECIS,CLIP_DEFAULT_PRECIS,ANTIALIASED_QUALITY,DEFAULT_PITCH,chatstyle::font);
         // The composition-only parent has no GDI redirection bitmap. Give each
@@ -815,7 +816,7 @@ struct App {
         SendMessageW(editor,EM_SETLIMITTEXT,12000,0);
         originalEditProc=reinterpret_cast<WNDPROC>(SetWindowLongPtrW(editor,GWLP_WNDPROC,reinterpret_cast<LONG_PTR>(editProc)));
         if(!originalEditProc)throw std::runtime_error("Reply editor input setup failed");
-        searchBrush=CreateSolidBrush(chatstyle::searchBackground);
+        searchBrush=CreateSolidBrush(chatstyle::searchBackground());
         searchFont=CreateFontW(-px(13),0,0,0,FW_NORMAL,FALSE,FALSE,FALSE,DEFAULT_CHARSET,OUT_DEFAULT_PRECIS,CLIP_DEFAULT_PRECIS,ANTIALIASED_QUALITY,DEFAULT_PITCH,chatstyle::font);
         searchEditor=CreateWindowExW(WS_EX_LAYERED,L"EDIT",L"",WS_CHILD|WS_TABSTOP|ES_AUTOHSCROLL,
             px(chatlayout::searchLeft+20),px(chatlayout::searchTop),px(chatlayout::searchWidth-20),px(22),panel,reinterpret_cast<HMENU>(SEARCH_EDIT),GetModuleHandleW(nullptr),nullptr);
@@ -897,6 +898,15 @@ struct App {
         layoutEditors();
         ShowWindow(editor,visible&&!finishTimer&&renderer.popover.empty()?SW_SHOWNA:SW_HIDE);
         if(searchEditor)ShowWindow(searchEditor,mode!=Mode::Hidden&&!finishTimer&&renderer.popover.empty()?SW_SHOWNA:SW_HIDE);
+    }
+    void refreshColors() {
+        chatstyle::refresh(auditHighContrast);
+        if(editorBrush&&searchBrush){
+            const auto nextEditor=CreateSolidBrush(chatstyle::editorBackground()),nextSearch=CreateSolidBrush(chatstyle::searchBackground());
+            if(!nextEditor||!nextSearch){if(nextEditor)DeleteObject(nextEditor);if(nextSearch)DeleteObject(nextSearch);throw std::runtime_error("Accessibility colors unavailable");}
+            DeleteObject(editorBrush);DeleteObject(searchBrush);editorBrush=nextEditor;searchBrush=nextSearch;
+            InvalidateRect(editor,nullptr,TRUE);InvalidateRect(searchEditor,nullptr,TRUE);
+        }
     }
     void layoutEditors() {
         if(editor) {
@@ -1328,7 +1338,7 @@ LRESULT CALLBACK editProc(HWND window,UINT message,WPARAM wp,LPARAM lp) {
     // placeholder on this child, where it remains visible with the native caret.
     if(message==WM_PAINT&&GetWindowTextLengthW(window)==0) {
         HDC dc=GetDC(window);if(dc){
-            const auto font=SelectObject(dc,app.editorFont);SetBkMode(dc,TRANSPARENT);SetTextColor(dc,RGB(102,102,110));
+            const auto font=SelectObject(dc,app.editorFont);SetBkMode(dc,TRANSPARENT);SetTextColor(dc,chatstyle::placeholder());
             RECT box{};SendMessageW(window,EM_GETRECT,0,reinterpret_cast<LPARAM>(&box));DrawTextW(dc,L"Message…",-1,&box,DT_LEFT|DT_TOP|DT_SINGLELINE|DT_NOPREFIX);
             SelectObject(dc,font);ReleaseDC(window,dc);
         }
@@ -1348,7 +1358,7 @@ LRESULT CALLBACK searchProc(HWND window,UINT message,WPARAM wp,LPARAM lp) {
     if(message==WM_KEYDOWN&&wp==VK_RETURN)return 0;
     if(message==WM_KEYDOWN&&wp==VK_ESCAPE){SetWindowTextW(window,L"");SetFocus(app.panel);return 0;}
     const auto result=CallWindowProcW(app.originalSearchProc,window,message,wp,lp);
-    if(message==WM_PAINT&&GetWindowTextLengthW(window)==0){HDC dc=GetDC(window);if(dc){auto font=SelectObject(dc,app.searchFont);SetBkMode(dc,TRANSPARENT);SetTextColor(dc,RGB(102,102,110));RECT box{};GetClientRect(window,&box);DrawTextW(dc,L"Search chats and tasks",-1,&box,DT_LEFT|DT_TOP|DT_SINGLELINE|DT_NOPREFIX);SelectObject(dc,font);ReleaseDC(window,dc);}}
+    if(message==WM_PAINT&&GetWindowTextLengthW(window)==0){HDC dc=GetDC(window);if(dc){auto font=SelectObject(dc,app.searchFont);SetBkMode(dc,TRANSPARENT);SetTextColor(dc,chatstyle::placeholder());RECT box{};GetClientRect(window,&box);DrawTextW(dc,L"Search chats and tasks",-1,&box,DT_LEFT|DT_TOP|DT_SINGLELINE|DT_NOPREFIX);SelectObject(dc,font);ReleaseDC(window,dc);}}
     return result;
 }
 void CALLBACK shellChanged(HWINEVENTHOOK,DWORD event,HWND window,LONG,LONG,DWORD,DWORD) {
@@ -1371,6 +1381,7 @@ LRESULT CALLBACK panelProc(HWND window, UINT message, WPARAM wp, LPARAM lp) {
             report["paintMs"]=app.renderer.paintMs;report["bubbleLayouts"]=app.renderer.bubbleLayouts.size();report["loadingImages"]=app.renderer.loadingImages.size();report["imageBitmaps"]=app.renderer.images.size();report["detailOffset"]=m.detailOffset;report["detailFollow"]=m.detailFollow;report["cachedChats"]=m.recent.size();
             report["composerHeight"]=app.renderer.composerHeight;report["composerLines"]=app.composerLines;report["composerLinePixels"]=app.composerLinePixels;
             RECT editBounds{},format{};GetWindowRect(app.editor,&editBounds);MapWindowPoints(nullptr,app.panel,reinterpret_cast<POINT*>(&editBounds),2);SendMessageW(app.editor,EM_GETRECT,0,reinterpret_cast<LPARAM>(&format));
+            report["highContrast"]=chatstyle::highContrast;report["editorForeground"]=chatstyle::editorText();report["editorBackground"]=chatstyle::editorBackground();
             report["composerBoundsPx"]={editBounds.left,editBounds.top,editBounds.right,editBounds.bottom};report["composerFormatPx"]={format.left,format.top,format.right,format.bottom};report["composerFocused"]=GetFocus()==app.editor;
             for(const auto& hit:app.renderer.hits)report["hits"].push_back({{"key",Renderer::hitKey(hit)},{"sourceId",hit.card.value("primarySourceId","")},{"action",hit.action},{"enabled",hit.enabled},{"box",{hit.box.left,hit.box.top,hit.box.right,hit.box.bottom}}});
             std::ofstream out(app.auditCapturePath.parent_path()/L"ux-state.json");out<<report.dump(2);return 1;
@@ -1460,11 +1471,11 @@ LRESULT CALLBACK panelProc(HWND window, UINT message, WPARAM wp, LPARAM lp) {
         case WM_CTLCOLOREDIT:
         case WM_CTLCOLORSTATIC:
             if(reinterpret_cast<HWND>(lp)==app.editor) {
-                SetTextColor(reinterpret_cast<HDC>(wp),chatstyle::editorText);
-                SetBkColor(reinterpret_cast<HDC>(wp),chatstyle::editorBackground);
+                SetTextColor(reinterpret_cast<HDC>(wp),chatstyle::editorText());
+                SetBkColor(reinterpret_cast<HDC>(wp),chatstyle::editorBackground());
                 return reinterpret_cast<LRESULT>(app.editorBrush);
             }
-            if(reinterpret_cast<HWND>(lp)==app.searchEditor){SetTextColor(reinterpret_cast<HDC>(wp),chatstyle::editorText);SetBkColor(reinterpret_cast<HDC>(wp),chatstyle::searchBackground);return reinterpret_cast<LRESULT>(app.searchBrush);}
+            if(reinterpret_cast<HWND>(lp)==app.searchEditor){SetTextColor(reinterpret_cast<HDC>(wp),chatstyle::editorText());SetBkColor(reinterpret_cast<HDC>(wp),chatstyle::searchBackground());return reinterpret_cast<LRESULT>(app.searchBrush);}
             break;
         case WM_TIMER:
             if(wp==TIMER_DETAILS){KillTimer(window,TIMER_DETAILS);if(app.renderer.model.detailPending&&app.mode!=Mode::Hidden)app.renderer.paint();return 0;}
@@ -1481,7 +1492,9 @@ LRESULT CALLBACK panelProc(HWND window, UINT message, WPARAM wp, LPARAM lp) {
         case WM_CLOSE: app.hide(); return 0;
         case WM_DPICHANGED: {if(app.mode==Mode::Pinned&&lp){const auto box=*reinterpret_cast<RECT*>(lp);SetWindowPos(window,nullptr,box.left,box.top,box.right-box.left,box.bottom-box.top,SWP_NOZORDER|SWP_NOACTIVATE);}app.moveHome();app.syncComposer();if(app.mode!=Mode::Hidden)app.renderer.paint();app.log("dpi-change");return 0;}
         case WM_DISPLAYCHANGE: app.moveHome(); app.log("display-change"); return 0;
-        case WM_SETTINGCHANGE: app.moveHome();if(app.finishTimer&&app.reducedMotion())app.finish();app.syncComposer();if(app.mode!=Mode::Hidden)app.renderer.paint(); app.log("settings-change"); return 0;
+        case WM_SYSCOLORCHANGE: case WM_THEMECHANGED:
+            app.refreshColors();if(app.mode!=Mode::Hidden)app.renderer.paint();return 0;
+        case WM_SETTINGCHANGE: app.refreshColors();app.moveHome();if(app.finishTimer&&app.reducedMotion())app.finish();app.syncComposer();if(app.mode!=Mode::Hidden)app.renderer.paint(); app.log("settings-change"); return 0;
         }
     } catch(const std::exception& error) {
         app.error(error);
@@ -1593,6 +1606,7 @@ int WINAPI wWinMain(HINSTANCE instance,HINSTANCE,PWSTR,int) {
         if(wcscmp(args[i],L"--audit-capture")==0&&i+1<count)app.auditCapturePath=args[++i];
         if(wcscmp(args[i],L"--audit-dpi")==0&&i+1<count)app.auditDpi=std::clamp(static_cast<float>(wcstoul(args[++i],nullptr,10)),96.0f,192.0f);
         if(wcscmp(args[i],L"--audit-reduced-motion")==0)app.auditReducedMotion=true;
+        if(wcscmp(args[i],L"--audit-high-contrast")==0)app.auditHighContrast=true;
         if(wcscmp(args[i],L"--audit-thumbnail-delay-ms")==0&&i+1<count)app.renderer.thumbnails.auditDelayMs=std::min(3000UL,wcstoul(args[++i],nullptr,10));
         if(wcscmp(args[i],L"--bridge")==0 && i+1<count) {descriptor=args[++i]; explicitBridge=true;}
         if(wcscmp(args[i],L"--audit-exit-ms")==0 && i+1<count) auditExitMs=std::min(10000UL,wcstoul(args[++i],nullptr,10));
@@ -1602,6 +1616,8 @@ int WINAPI wWinMain(HINSTANCE instance,HINSTANCE,PWSTR,int) {
     // honor test isolation and the explicit no-auto-attach option.
     app.allowAdapterAttach=autoAttach&&!standalone&&!isolated;
     if(app.auditCapturePath.empty()){app.auditDpi=0;app.auditReducedMotion=false;app.renderer.thumbnails.auditDelayMs=0;}
+    if(!isolated||app.auditCapturePath.empty())app.auditHighContrast=false;
+    app.refreshColors();
     if(!standalone){
         app.draftPath=descriptor.parent_path()/L"drafts.json";
         try{if(std::filesystem::exists(app.draftPath)){
