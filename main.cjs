@@ -48,6 +48,7 @@ const responsibilityAuthorization=require('./src/responsibility-authorization.cj
 const {Commitments}=require('./src/commitments.cjs');
 const {Research}=require('./src/research.cjs');
 const {Reflections}=require('./src/reflections.cjs');
+const {OutcomeVerification}=require('./src/outcome-verification.cjs');
 const {Triage}=require('./src/triage.cjs');
 const {Delegations}=require('./src/delegations.cjs');
 const {WorkControls}=require('./src/work-controls.cjs');
@@ -151,7 +152,11 @@ const schedules=new Schedules({directory:dataDir,log:diagnostics,maintenance:()=
   probe:entry=>workControls&&workControls.scheduleAdmission(entry)!=='allow'?{eligible:false,reason:'work_control_hold'}:scheduledResponsibility.probe(responsibilities,entry),run:entry=>scheduledResponsibility.run(responsibilities,entry),outcome:(entry,run)=>scheduledResponsibility.outcome(responsibilities,entry,run)});
 delegations=new Delegations({directory:dataDir,policy:authorization,messages,responsibilities,snapshot:()=>devices.snapshot(),log:diagnostics,workAdmission:entry=>workControls?.responsibilityAdmission(entry)||'allow'});
 workControls=new WorkControls({directory:dataDir,policy:authorization,messages,responsibilities,schedules,delegations,snapshot:()=>devices.snapshot(),research:()=>research,interrupt:input=>controller.stopSource(input)});
+const outcomes=new OutcomeVerification({directory:dataDir,actorId:'human:'+devices.local.id,responsibilities,snapshot:()=>devices.snapshot(),maintenance:()=>quitting||maintenanceActive(dataDir),admission:entry=>workControls.responsibilityAdmission(entry)});
+responsibilities.options.outcomeRequired=entry=>outcomes.required(entry);
+responsibilities.options.outcomeAdmission=(entry,human)=>outcomes.admission(entry,human);
 const assistant = new Assistant({directory:dataDir,snapshot:()=>devices.snapshot(),attachments,
+  outcomes,
   responsibilities,
   schedules,
   authorization,
@@ -974,6 +979,7 @@ app.on('before-quit', () => {
   commitments.close();
   research.close();clearInterval(researchTimer);
   activity.close();
+  outcomes.close();
   reflections.close();clearInterval(reflectionTimer);
   triage.close();clearInterval(triageTimer);
   delegations.close();clearInterval(delegationTimer);
