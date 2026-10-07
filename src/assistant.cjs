@@ -11,6 +11,7 @@ const clip=(value,n)=>String(value??'').toWellFormed().slice(0,n);
 const coordination=require('./assistant-coordination.cjs');
 const {command:responsibilityCommand}=require('./responsibility-command.cjs');
 const {currentScope}=require('./responsibility-target.cjs');
+const {command:authorizationCommand}=require('./authorization-command.cjs');
 class Assistant extends EventEmitter {
   constructor(options) {
     super();this.options=options;this.file=path.join(options.directory,'assistant.json');this.active=false;this.closed=false;this.error='';
@@ -140,6 +141,8 @@ class Assistant extends EventEmitter {
   async generate(message) {
     const started=Date.now();
     try {
+      const authorization=authorizationCommand(message.text);
+      if(authorization){await this.manageAuthorization(message,authorization);this.save();return;}
       const ongoing=responsibilityCommand(message.text);
       if(ongoing){await this.manageResponsibility(message,ongoing);this.save();return;}
       const cancel=coordination.cancellation(this.state.messages,message);
@@ -218,6 +221,27 @@ class Assistant extends EventEmitter {
     return {card,sourceId:link.sourceId,draft:link.draft};
   }
   close(){this.closed=true;this.provider.close();}
+  async manageAuthorization(message,command){
+    const policy=this.options.authorization;if(!policy)throw new Error('Authorization controls are unavailable in this session.');
+    const bridge=require('./responsibility-authorization.cjs'),human=bridge.human(policy,{messageId:message.id,text:message.text});
+    if(command.kind==='list'){
+      const state=policy.snapshot(),grants=state.grants.slice(-12),pending=state.operations.filter(o=>o.state==='waiting_human').slice(-12);
+      message.answer=grants.length?grants.map(g=>g.action+' · '+g.mode+' · '+g.state+'\n'+g.id+'\nDestination: '+g.scope.destination+'\nAccount: '+g.scope.accountKind+' / '+g.scope.accountId+'\nDuration: '+(g.duration.kind==='until'?new Date(g.duration.endAt).toISOString():'until the responsibility ends')+' · uses '+state.operations.filter(o=>o.grantId===g.id).length+'/'+g.maxUses).join('\n\n'):'No authorization grants yet.';
+      if(pending.length)message.answer+='\n\nWaiting for your approval:\n'+pending.map(o=>o.action+' · '+o.id).join('\n');
+    }else{
+      if(command.kind==='revoke')policy.revoke(command.id,human);
+      else if(command.kind==='mode')policy.setMode(command.id,command.mode,human);
+      else if(command.kind==='account')policy.revokeAccount(command.accountKind,command.accountId,human);
+      else if(command.kind==='approve'){
+        const store=this.options.responsibilities,entry=store?.state.entries.find(e=>e.currentStep.messageId===command.id);
+        if(!entry)throw new Error('Open the owning source for this operation. It cannot be approved from an unrelated chat.');
+        policy.approve(command.id,human,bridge.request(entry,this.options.snapshot()));
+        if(entry.state==='waiting_approval'&&entry.wakeReason.kind==='authorization_ask'){store.wake(entry.id,{role:'human',messageId:message.id,text:message.text,kind:'approval'});await store.dispatch(entry.id);}
+      }
+      message.answer='Saved your authorization '+command.kind+' control. Accepted work keeps its existing source receipt.';
+    }
+    message.status='completed';
+  }
   async manageResponsibility(message,command){
     const store=this.options.responsibilities;if(!store)throw new Error('Responsibilities are unavailable in this session.');
     const human={role:'human',messageId:message.id,text:message.text};let id=command.id;

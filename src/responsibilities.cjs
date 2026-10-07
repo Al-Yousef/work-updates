@@ -418,6 +418,13 @@ class Responsibilities extends EventEmitter {
       return false;
     // The host resolves a fresh exact source/owner/device/revision before admission.
     this.options.validateTarget(entry.scope, this.options.snapshot());
+    if(this.options.authorize){
+      const decision=this.options.authorize(entry);
+      if(decision?.decision!=='act'){
+        this.change(next=>{const current=next.entries.find(x=>x.id===id);current.state=decision?.decision==='ask'?'waiting_approval':'blocked';current.wakeReason={kind:'authorization_'+(decision?.decision||'deny'),reason:decision?.reason||'authorization_unavailable',operationId:decision?.operationId,grantId:decision?.grantId};current.updatedAt=Date.now();});
+        return false;
+      }
+    }
     const step = structuredClone(entry.currentStep),
       scope = structuredClone(entry.scope);
     this.change((next) => {
