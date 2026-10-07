@@ -580,14 +580,22 @@ class Responsibilities extends EventEmitter {
       throw new Error('An exact source outcome is required before verification');
     if (entry.currentStep.text !== entry.instruction)
       throw new Error('The newer human instruction has not completed its source pass');
-    if(this.options.outcomeAdmission&&!this.options.outcomeAdmission(entry,{...human,role:'human'}))
-      throw new Error('The expected outcome is not verified on its current source and revision. Inspect /outcome before finishing.');
-    this.change((next) => {
-      const current = next.entries.find((x) => x.id === id);
-      current.state = 'completed';
-      current.wakeReason = { kind: 'human_verified', messageId: human.messageId };
-      current.updatedAt = Date.now();
-    });
+    const original = JSON.stringify(entry);
+    const finish = (allowed) => {
+      if (allowed !== true)
+        throw new Error('The expected outcome is not verified on its current source and revision. Inspect /outcome before finishing.');
+      if (JSON.stringify(this.entry(id)) !== original)
+        throw new Error('The responsibility changed during verification; inspect its current instruction.');
+      this.change((next) => {
+        const current = next.entries.find((x) => x.id === id);
+        current.state = 'completed';
+        current.wakeReason = { kind: 'human_verified', messageId: human.messageId };
+        current.updatedAt = Date.now();
+      });
+    };
+    const admitted = this.options.outcomeAdmission
+      ? this.options.outcomeAdmission(entry, { ...human, role: 'human' }) : true;
+    return admitted?.then ? admitted.then(finish) : finish(admitted);
   }
   close() {
     this.closed = true;

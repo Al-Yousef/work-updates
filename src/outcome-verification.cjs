@@ -32,6 +32,8 @@ const statuses = new Set([
   'inaccessible',
   'partial',
   'unsupported',
+  'not_satisfied',
+  'rate_limited',
 ]);
 function spec(value) {
   if (
@@ -50,9 +52,10 @@ function spec(value) {
           'file',
           'fields',
           'sha256',
+          'baseRef',
         ].includes(k),
     ) ||
-    !['artifact', 'source_pass', 'manual'].includes(value.kind) ||
+    !['artifact', 'source_pass', 'manual', 'github_pr'].includes(value.kind) ||
     !stages.has(value.stage) ||
     !text(value.description) ||
     !text(value.target, 512) ||
@@ -97,6 +100,12 @@ function spec(value) {
     throw new Error(
       'A source receipt can prove acceptance or a completed pass, not merge, deployment or delivery.',
     );
+  if (value.kind === 'github_pr') {
+    if (value.stage !== 'merged')
+      throw new Error('A GitHub PR read proves only its requested merge.');
+    require('./outcome-github.cjs').target(value);
+  } else if (Object.hasOwn(value, 'baseRef'))
+    throw new Error('A target branch belongs only to GitHub merge proof.');
   return structuredClone(value);
 }
 function binding(entry) {
@@ -113,7 +122,7 @@ function binding(entry) {
 }
 function validate(value) {
   if (
-    value?.version !== 1 ||
+    value?.version !== 2 ||
     !Array.isArray(value.entries) ||
     value.entries.length > 128 ||
     !object(value.receipts) ||
@@ -147,6 +156,38 @@ function validate(value) {
     )
       throw new Error('Invalid outcome entry');
     spec(e.spec);
+    if (
+      e.connector !== undefined &&
+      (!object(e.connector) ||
+        Object.keys(e.connector).sort().join(',') !== 'fingerprint,nextAt,unchanged' ||
+        !(e.connector.fingerprint === null || /^[a-f0-9]{64}$/.test(e.connector.fingerprint)) ||
+        !Number.isInteger(e.connector.unchanged) ||
+        e.connector.unchanged < 0 ||
+        e.connector.unchanged > 10 ||
+        !Number.isSafeInteger(e.connector.nextAt) ||
+        e.connector.nextAt < 0 ||
+        e.spec.kind !== 'github_pr')
+    )
+      throw new Error('Invalid destination backoff');
+    if (
+      e.result.reason !== undefined &&
+      (typeof e.result.reason !== 'string' || e.result.reason.length > 60)
+    )
+      throw new Error('Invalid outcome reason');
+    if (
+      e.result.retryAfterMs !== undefined &&
+      (!Number.isSafeInteger(e.result.retryAfterMs) ||
+        e.result.retryAfterMs < 60000 ||
+        e.result.retryAfterMs > 86400000)
+    )
+      throw new Error('Invalid destination delay');
+    if (e.result.observation !== undefined) {
+      if (e.spec.kind !== 'github_pr' || e.result.status !== 'not_satisfied')
+        throw new Error('Invalid negative destination evidence');
+      githubEvidence(e.result.observation, e.spec, false);
+    }
+    if (e.result.status === 'not_satisfied' && !e.result.observation)
+      throw new Error('A negative outcome needs original destination evidence');
     ids.add(e.id);
     const prefix = '/outcome require ' + e.id + ': ';
     if (!e.origin.text.startsWith(prefix)) throw new Error('Outcome lost human provenance');
@@ -173,6 +214,14 @@ function validate(value) {
               'mtimeMs',
               'bytes',
               'sourceRevision',
+              'provider',
+              'target',
+              'headSha',
+              'baseRef',
+              'responseSha256',
+              'observedAt',
+              'merged',
+              'mergeSha',
             ].includes(k),
         ) ||
         e.result.proof.stage !== e.spec.stage ||
@@ -181,6 +230,22 @@ function validate(value) {
       throw new Error('Invalid outcome proof');
     if (e.result.proof) {
       const p = e.result.proof;
+      if (e.spec.kind === 'github_pr') githubEvidence(p, e.spec, true);
+      else if (
+        Object.keys(p).some(
+          (key) =>
+            ![
+              'stage',
+              'targetRevision',
+              'sha256',
+              'turnId',
+              'mtimeMs',
+              'bytes',
+              'sourceRevision',
+            ].includes(key),
+        )
+      )
+        throw new Error('Unexpected destination evidence on a local outcome');
       if (
         (e.spec.kind === 'artifact' &&
           (!/^[a-f0-9]{64}$/.test(p.sha256) ||
@@ -203,6 +268,32 @@ function validate(value) {
     throw new Error('Invalid outcome receipts');
   return value;
 }
+function githubEvidence(value, criterion, merged) {
+  const allowed = [
+    'provider',
+    'target',
+    'headSha',
+    'baseRef',
+    'responseSha256',
+    'observedAt',
+    'merged',
+    ...(merged ? ['stage', 'targetRevision', 'mergeSha'] : []),
+  ];
+  if (
+    !object(value) ||
+    Object.keys(value).sort().join(',') !== allowed.sort().join(',') ||
+    value.provider !== 'public-github' ||
+    value.target !== criterion.target ||
+    value.headSha !== criterion.targetRevision ||
+    value.baseRef !== criterion.baseRef ||
+    !/^[a-f0-9]{64}$/.test(value.responseSha256) ||
+    !Number.isFinite(value.observedAt) ||
+    value.observedAt <= 0 ||
+    value.merged !== merged ||
+    (merged && !/^[a-f0-9]{40}$/.test(value.mergeSha))
+  )
+    throw new Error('Invalid exact GitHub destination evidence');
+}
 function regularTree(file) {
   for (let current = path.resolve(file); ; current = path.dirname(current)) {
     const info = fs.lstatSync(current);
@@ -217,9 +308,10 @@ class OutcomeVerification extends EventEmitter {
     this.options = options;
     this.closed = false;
     this.unconfirmed = false;
+    this.pending = new Set();
     this.file = path.join(options.directory, 'outcomes.json');
     this.state = readStore(this.file, {
-      missing: () => ({ version: 1, entries: [], receipts: {} }),
+      missing: () => ({ version: 2, entries: [], receipts: {} }),
     }).value;
   }
   now() {
@@ -239,7 +331,7 @@ class OutcomeVerification extends EventEmitter {
     if (this.closed) throw new Error('Hyphen is closing');
     if (this.unconfirmed) throw new Error('Outcome storage needs recovery');
     const previous = readStore(this.file, {
-      missing: () => ({ version: 1, entries: [], receipts: {} }),
+      missing: () => ({ version: 2, entries: [], receipts: {} }),
     }).value;
     if (hash(previous) !== hash(this.state)) {
       this.unconfirmed = true;
@@ -314,6 +406,7 @@ class OutcomeVerification extends EventEmitter {
       record.spec = criterion;
       record.binding = binding(entry);
       record.result = { status: 'awaiting_proof', checkedAt: 0 };
+      delete record.connector;
       record.history.push({
         messageId: human.messageId,
         actorId: human.actorId,
@@ -428,6 +521,7 @@ class OutcomeVerification extends EventEmitter {
       throw new Error('Outcome storage changed; recovery is required');
     }
     const gate = this.scoped(record, entry);
+    if (record.spec.kind === 'github_pr') return this.destinationCheck(record, entry, human, gate);
     let result = { status: gate || 'unsupported' };
     if (!gate && record.spec.kind === 'artifact') result = this.artifact(record);
     if (!gate && record.spec.kind === 'source_pass') {
@@ -485,12 +579,94 @@ class OutcomeVerification extends EventEmitter {
     });
     return this.entry(id).result;
   }
+  async destinationCheck(record, entry, human, gate) {
+    const id = record.id,
+      original = hash(record),
+      receiptHash = hash([id, record.revision, human.text, 'github-check']),
+      prior = this.state.receipts[human.messageId];
+    if (prior) {
+      if (prior.hash !== receiptHash)
+        throw new Error('Outcome identity belongs to another operation.');
+      return gate || this.freshness(record) ? { status: gate || 'stale' } : record.result;
+    }
+    if (this.pending.has(id)) throw new Error('This destination check is already pending.');
+    if (record.history.length >= 32 || Object.keys(this.state.receipts).length >= 4096)
+      throw new Error('Outcome history is full; no destination was read.');
+    const unchangedRecord = () => {
+      if (this.unconfirmed || hash(readStore(this.file).value) !== hash(this.state)) {
+        this.unconfirmed = true;
+        throw new Error('Outcome storage changed; response discarded.');
+      }
+      if (hash(this.entry(id)) !== original)
+        throw new Error('Outcome changed while checking; response discarded.');
+    };
+    const beforeRead = () => {
+      unchangedRecord();
+      const blocked = this.scoped(record, this.options.responsibilities.entry(id));
+      if (blocked) throw new Error('Destination scope is ' + blocked + '.');
+    };
+    this.pending.add(id);
+    let attempted = false,
+      result = { status: gate || 'unsupported' };
+    try {
+      if (!gate && record.connector?.nextAt > this.now())
+        result = { status: 'rate_limited', reason: 'connector_backoff' };
+      else if (!gate && this.options.github) {
+        attempted = true;
+        try {
+          result = await this.options.github.read(record.spec, {
+            beforeRead,
+            sourceId: entry.scope.sourceId,
+            responsibilityId: id,
+          });
+        } catch (error) {
+          result = {
+            status: 'inaccessible',
+            reason:
+              error.code === 'RESOURCE_BUDGET' ? 'resource_budget' : 'destination_read_failed',
+          };
+        }
+      }
+      unchangedRecord();
+      const currentGate = this.scoped(record, this.options.responsibilities.entry(id));
+      if (currentGate) result = { status: currentGate };
+      this.change((next) => {
+        const current = next.entries.find((e) => e.id === id);
+        current.result = { ...result, checkedAt: this.now() };
+        current.history.push({
+          messageId: human.messageId,
+          actorId: human.actorId,
+          operation: 'check',
+          at: this.now(),
+        });
+        next.receipts[human.messageId] = { id, hash: receiptHash };
+        if (attempted) {
+          const fingerprint =
+              result.proof?.responseSha256 || result.observation?.responseSha256 || null,
+            unchanged =
+              fingerprint && record.connector?.fingerprint === fingerprint
+                ? Math.min(10, record.connector.unchanged + 1)
+                : 0;
+          current.connector = {
+            fingerprint,
+            unchanged,
+            nextAt:
+              this.now() + (result.retryAfterMs || Math.min(86400000, 60000 * 2 ** unchanged)),
+          };
+        }
+      });
+      return this.entry(id).result;
+    } finally {
+      this.pending.delete(id);
+    }
+  }
   required(entry) {
     return !!this.entry(entry.id);
   }
   admission(entry, input) {
     if (!this.required(entry)) return true;
     const result = this.check(entry.id, input);
+    if (result?.then) return result.then((r) => r.status === 'verified');
     return ['verified', 'human_reviewed'].includes(result.status);
   }
   inspect(id) {
@@ -534,6 +710,7 @@ class OutcomeVerification extends EventEmitter {
   }
   close() {
     this.closed = true;
+    this.options.github?.close();
   }
 }
 module.exports = { OutcomeVerification, validate, spec, binding };
