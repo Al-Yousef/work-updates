@@ -11,6 +11,7 @@ const clip=(value,n)=>String(value??'').toWellFormed().slice(0,n);
 const coordination=require('./assistant-coordination.cjs');
 const {command:responsibilityCommand}=require('./responsibility-command.cjs');
 const {currentScope}=require('./responsibility-target.cjs');
+const {command:scheduleCommand}=require('./schedule-command.cjs');
 class Assistant extends EventEmitter {
   constructor(options) {
     super();this.options=options;this.file=path.join(options.directory,'assistant.json');this.active=false;this.closed=false;this.error='';
@@ -43,7 +44,7 @@ class Assistant extends EventEmitter {
     if(JSON.stringify(next)===JSON.stringify(this.state.focus))return;const prior=this.state.focus;this.state.focus=next;
     try{this.save();}catch{this.state.focus=prior;this.log('focus_save_failed',{code:'ASSISTANT_STORAGE_FAILED'});}}
   snapshot(){const visible=new Set([...this.state.messages.filter(conversation).slice(-27),...this.state.messages.filter(m=>m.kind==='update').slice(-3)]);
-    return {responding:this.active,error:this.error,model:this.provider.model||null,memoryCount:this.state.notes.length,responsibilityCount:this.options.responsibilities?.snapshot().filter(r=>!['completed','cancelled'].includes(r.state)).length||0,
+    return {responding:this.active,error:this.error,model:this.provider.model||null,memoryCount:this.state.notes.length,scheduleCount:this.options.schedules?.snapshot().filter(s=>!['cancelled','expired'].includes(s.state)).length||0,responsibilityCount:this.options.responsibilities?.snapshot().filter(r=>!['completed','cancelled'].includes(r.state)).length||0,
     messages:this.state.messages.filter(m=>visible.has(m)).map(m=>({...m,focus:undefined,action:undefined,links:m.links.map(({chatName,draft},index)=>({chatName,draft:clip(draft,12000),index}))}))};}
   log(event,details){this.options.log?.write('assistant.'+event,details);}
   observe(snapshot) {
@@ -140,6 +141,7 @@ class Assistant extends EventEmitter {
   async generate(message) {
     const started=Date.now();
     try {
+      const planned=scheduleCommand(message.text);if(planned){await this.manageSchedule(message,planned);this.save();return;}
       const ongoing=responsibilityCommand(message.text);
       if(ongoing){await this.manageResponsibility(message,ongoing);this.save();return;}
       const cancel=coordination.cancellation(this.state.messages,message);
@@ -166,6 +168,7 @@ class Assistant extends EventEmitter {
       const value=await this.provider.answer({question:message.text||'Describe the attached image and help me understand it.',images,imagesFromHistory:!(message.images||[]).length&&!!images.length,history:recent,recalledHistory:recalled.recalled,userEvidence:recalled.userEvidence,historyCoverage:recalled.coverage,savedNotes:this.state.notes,
         savedNotesProvenance:'explicit_pinned_notes',memoryCoverage:{retentionExchanges:500,retentionAlerts:40,pinnedNoteLimit:32,pinnedNoteCharacters:this.state.notes.join('').length},queue:current.data,
         responsibilities:this.options.responsibilities?.snapshot().slice(-8).map(r=>({id:r.id,origin:{text:clip(r.origin.text,600),provenance:'accepted_human_instruction'},instruction:clip(r.instruction,800),revision:r.revision,state:r.state,chatName:r.scope.chatName,ownerId:r.ownerId,stepStatus:r.currentStep.status,wakeReason:r.wakeReason.kind,completionCriteria:r.completionCriteria})),
+        schedules:this.options.schedules?.snapshot().slice(-8).map(s=>({id:s.id,responsibilityId:s.responsibilityId,state:s.state,reason:s.reason,timeZone:s.schedule.timeZone,endAt:s.schedule.endAt,nextWake:s.nextWake,lastActualRun:s.lastActualRun,lastRun:s.runs.at(-1)?.status})),
         canRequestChatMessage:!!this.options.dispatch&&!!requestedRef,requestedChatRef:requestedRef,requestedMessage:requested?.proposal||null});
       if(this.closed)return;
       if(typeof value.answer!=='string'||!value.answer.trim()||value.answer.length>6000||!Array.isArray(value.links)||value.links.length>3)
@@ -237,6 +240,20 @@ class Assistant extends EventEmitter {
       const entry=store.entry(id);message.responsibilityId=id;message.answer=entry.scope.chatName+' · '+entry.state.replaceAll('_',' ')+'\nResponsibility '+id+'\n'+clip(entry.instruction,3500)+'\nStep: '+entry.currentStep.status+'.';
       if(entry.wakeReason.kind==='source_finished_outcome_unverified')message.answer+=' The source pass finished; the broader requested result still needs verification.';
       const match=coordination.sourceFor(this.options.snapshot(),entry.scope);message.links=match?[{...coordination.link(match.card,entry.scope.sourceId),responsibilityId:id}]:[];
+    }
+    message.status='completed';
+  }
+  async manageSchedule(message,command){
+    const store=this.options.schedules,responsibilities=this.options.responsibilities;if(!store||!responsibilities)throw new Error('Schedules are unavailable in this session.');
+    const human={role:'human',messageId:message.id,text:message.text};let id=command.id;
+    if(command.kind==='list')message.answer=store.snapshot().slice(-12).map(s=>s.grant.chatName+' · '+s.state+'\n'+s.id+'\nNext planned: '+(s.nextWake?new Date(s.nextWake).toISOString():'none')+' · Last actual: '+(s.lastActualRun?new Date(s.lastActualRun).toISOString():'none')).join('\n\n')||'No schedules yet. Create one for an unfinished responsibility with an explicit timezone, end date and run limit.';
+    else{
+      if(command.kind==='start'){
+        const entry=responsibilities.entry(id);require('./scheduled-responsibility.cjs').target(responsibilities,{responsibilityId:id,grant:{instruction:entry.instruction,responsibilityRevision:entry.revision,...entry.scope}});
+        id=store.create(human,entry,command.schedule,command.limits);
+      }else store.control(id,command.kind,human,command.schedule,command.limits);
+      await store.tick();
+      const entry=store.entry(id);message.scheduleId=id;message.answer=entry.grant.chatName+' · '+entry.state+'\nSchedule '+id+'\nTimezone: '+entry.schedule.timeZone+'\nNext planned: '+(entry.nextWake?new Date(entry.nextWake).toISOString():'none')+'\nLast actual: '+(entry.lastActualRun?new Date(entry.lastActualRun).toISOString():'none')+'\nEnds: '+new Date(entry.schedule.endAt).toISOString()+'. Source acceptance and the requested result are tracked separately.';
     }
     message.status='completed';
   }
