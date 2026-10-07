@@ -1275,7 +1275,11 @@ struct App {
         tray.hIcon=LoadIconW(GetModuleHandleW(nullptr),MAKEINTRESOURCEW(1));
         if(!tray.hIcon) tray.hIcon=LoadIconW(nullptr,IDI_APPLICATION);
         wcscpy_s(tray.szTip,L"Hyphen");
-        if(!Shell_NotifyIconW(NIM_ADD,&tray)) throw std::runtime_error("Could not create the native tray icon");
+        // A repeated TaskbarCreated notification can arrive while our icon is
+        // still present. Refresh that same HWND/ID instead of treating it as
+        // a fatal duplicate and opening a modal error on the control thread.
+        if(!Shell_NotifyIconW(NIM_ADD,&tray)&&!Shell_NotifyIconW(NIM_MODIFY,&tray))
+            throw std::runtime_error("Could not create the native tray icon");
         tray.uVersion=NOTIFYICON_VERSION_4; Shell_NotifyIconW(NIM_SETVERSION,&tray);
     }
 };
