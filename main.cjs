@@ -2,6 +2,7 @@
 const {
   app,
   BrowserWindow,
+  session,
   ipcMain,
   protocol,
   Tray,
@@ -168,6 +169,11 @@ const voice=new VoiceSession({directory:dataDir,actorId:'human:'+devices.local.i
 let voiceWindow;
 function openVoice(){voiceWindow??=new VoiceWindow({BrowserWindow,session:require('electron').session,ipcMain,ledger:voice,provider:voiceProvider,actorId:voice.actorId});return voiceWindow.open();}
 const outcomes=new OutcomeVerification({directory:dataDir,actorId:'human:'+devices.local.id,responsibilities,snapshot:()=>devices.snapshot(),maintenance:()=>quitting||maintenanceActive(dataDir),admission:entry=>workControls.responsibilityAdmission(entry)});
+const browserVault=new (require('./src/browser-vault.cjs').BrowserVault)({directory:dataDir,encrypt:value=>safeStorage.encryptString(value),decrypt:bytes=>safeStorage.decryptString(bytes),available:()=>safeStorage.isEncryptionAvailable()&&(process.platform!=='linux'||safeStorage.getSelectedStorageBackend()!=='basic_text')});
+const browsers=new (require('./src/browser-sessions.cjs').BrowserSessions)({directory:dataDir,actorId:authorization.actorId,vault:browserVault,
+  admission:()=>quitting||maintenanceActive(dataDir)||workControls.closed||workControls.storageFailed||workControls.active('all','all')?'deny':'allow',
+  verifyBinding:async(taskId,grantId)=>{const entry=executors.state.entries.find(e=>e.taskId===taskId&&e.id===grantId);if(!entry)throw new Error('Choose an exact current owned local executor grant.');await client.connect();executors.assert(entry,await client.executorRuntime(),entry.workspace);},
+  create:require('./src/browser-electron.cjs').createFactory({BrowserWindow,session})});
 const documents=new (require('./src/documents.cjs').Documents)({directory:dataDir,actorId:authorization.actorId,
   admission:()=>quitting||maintenanceActive(dataDir)||privacy?.activeRemoval||workControls.closed||workControls.storageFailed||workControls.active('all','all')?'deny':'allow'});
 responsibilities.options.outcomeRequired=entry=>outcomes.required(entry);
@@ -186,6 +192,7 @@ const assistant = new Assistant({directory:dataDir,snapshot:()=>devices.snapshot
   reflections,
   delegations,
   workControls,
+  browsers,
   documents,
   binary:queue.state.settings.codexBinary,log:diagnostics,
   loadContext:targets=>require('./src/assistant-context.cjs').loadContext({
@@ -998,6 +1005,7 @@ app.on('activate', () => window && show());
 app.on('window-all-closed', () => {});
 app.on('before-quit', () => {
   quitting = true;
+  browsers.shutdown();
   clearInterval(documentTimer);
   clearInterval(runtimeTimer);
   diagnostics.write('app.stopping', { pid: process.pid });
