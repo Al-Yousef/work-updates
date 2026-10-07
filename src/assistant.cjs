@@ -15,6 +15,7 @@ const {command:authorizationCommand}=require('./authorization-command.cjs');
 const {command:scheduleCommand}=require('./schedule-command.cjs');
 const {command:commitmentCommand}=require('./commitment-command.cjs');
 const {command:researchCommand}=require('./research-command.cjs');
+const {command:reflectionCommand}=require('./reflection-command.cjs');
 const {command:delegationCommand}=require('./delegation-command.cjs');
 class Assistant extends EventEmitter {
   constructor(options) {
@@ -145,6 +146,7 @@ class Assistant extends EventEmitter {
   async generate(message) {
     const started=Date.now();
     try {
+      const reflection=reflectionCommand(message.text);if(reflection){require('./reflection-control.cjs').manage(this.options.reflections,message,reflection);this.save();return;}
       const authorization=authorizationCommand(message.text);
       if(authorization){await this.manageAuthorization(message,authorization);this.save();return;}
       const research=researchCommand(message.text);if(research){await require('./research-control.cjs').manage(this.options.research,message,research,this.options.snapshot());this.save();return;}
@@ -180,6 +182,7 @@ class Assistant extends EventEmitter {
         schedules:this.options.schedules?.snapshot().slice(-8).map(s=>({id:s.id,responsibilityId:s.responsibilityId,state:s.state,reason:s.reason,timeZone:s.schedule.timeZone,endAt:s.schedule.endAt,nextWake:s.nextWake,lastActualRun:s.lastActualRun,lastRun:s.runs.at(-1)?.status})),
         commitments:this.options.commitments?.context(),
         research:this.options.research?.context(),
+        reflections:this.options.reflections?.context(),
         delegations:this.options.delegations?.snapshot().slice(-8).map(e=>({id:e.id,parentId:e.parentId,parentRevision:e.parentRevision,childId:e.childId,chatName:e.scope.chatName,ownerId:e.scope.ownerId,purpose:clip(e.purpose,500),phase:e.phase,limits:e.limits,cancelRequested:e.cancelRequested,review:e.review?{kind:e.review.kind,text:clip(e.review.text,300)}:null,missingEvidence:e.missingEvidence,parentGoalVerification:'Tracked separately on the parent responsibility'})),
         canRequestChatMessage:!!this.options.dispatch&&!!requestedRef,requestedChatRef:requestedRef,requestedMessage:requested?.proposal||null});
       if(this.closed)return;
