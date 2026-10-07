@@ -37,6 +37,9 @@ jobs:
         run: node scripts/native-qa.cjs --lane=simulated
       - name: Hidden synthetic backend with no collector or writers
         run: node scripts/baseline-runtime-audit.cjs
+      - name: Isolated high-contrast composer and theme refresh
+        shell: pwsh
+        run: ./native/windows/scripts/ux-audit.ps1 -Scales @(96,192) -HighContrast
       - name: Packaged update and program rollback with a disposable native app
         env:
           CSC_IDENTITY_AUTO_DISCOVERY: 'false'
@@ -63,6 +66,8 @@ jobs:
             artifacts/update-runtime/verification.json
             native/windows/build/candidate/artifacts/status-*.png
             native/windows/build/candidate/artifacts/status-verification.json
+            native/windows/build/candidate/artifacts/ux-high-contrast.png
+            native/windows/build/artifacts/ux-audit-*.json
             artifacts/native-qa/*/verification.json
             native/windows/build/candidate/artifacts/picker-observations.jsonl
           if-no-files-found: error
