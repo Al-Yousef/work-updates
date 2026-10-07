@@ -5,7 +5,7 @@ function command(text) {
   if(inventory){const page=Number(inventory[1]||1);if(page<1)throw new Error('Choose an inventory page starting at 1.');return {kind:'inventory',page};}
   let m = text.match(/^\/privacy (disconnect|delete) ([a-f0-9-]{36})$/);
   if (m) return { kind: m[1], id: m[2] };
-  m = text.match(/^\/privacy preview (notes|conversation|source-cache)(?: ([a-f0-9-]{36}))?$/);
+  m = text.match(/^\/privacy preview (notes|conversation|source-cache|source-extracts|source-reflections|orphan-attachments|diagnostic-backups|voice-configuration|document-copies|browser-logins)(?: ([a-f0-9-]{36}))?$/);
   if (m) return { kind: 'preview', dataClass: m[1], sourceId: m[2] };
   m = text.match(/^\/privacy export ([a-z-]+(?:\.json)?)(?: ([a-f0-9-]{36}))?$/);
   if (m) return { kind: 'export', dataClass: m[1], sourceId: m[2] };

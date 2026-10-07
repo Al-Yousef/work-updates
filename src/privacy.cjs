@@ -9,7 +9,7 @@ const hash = (v) => crypto.createHash('sha256').update(JSON.stringify(v)).digest
 const hold = (message) => Object.assign(new Error(message), { code: 'PRIVACY_OPERATION_HELD' });
 function validate(v) {
   if (
-    v?.version !== 1 ||
+    v?.version !== 3 ||
     !Array.isArray(v.disconnected) ||
     v.disconnected.length > 2048 ||
     v.disconnected.some((x) => !uuid(x)) ||
@@ -23,11 +23,11 @@ function validate(v) {
   for (const p of v.previews)
     if (
       !uuid(p.id) ||
-      !['notes', 'conversation', 'source-cache'].includes(p.kind) ||
+      !['notes', 'conversation', 'source-cache', 'source-extracts', 'source-reflections', 'orphan-attachments', 'diagnostic-backups', 'voice-configuration', 'document-copies', 'browser-logins'].includes(p.kind) ||
       !/^[a-f0-9]{64}$/.test(p.hash) ||
       !Number.isFinite(p.expiresAt) ||
       typeof p.actorId !== 'string' ||
-      (p.kind === 'source-cache' && !uuid(p.sourceId))
+      (['source-cache','source-extracts','source-reflections'].includes(p.kind) ? !uuid(p.sourceId) : p.sourceId !== null)
     )
       throw hold('Invalid privacy preview.');
   for (const o of v.operations)
@@ -68,7 +68,7 @@ class Privacy {
     this.failed = false;
     const saved = readStore(this.file);
     this.state = saved.missing
-      ? { version: 1, disconnected: [], previews: [], operations: [] }
+      ? { version: 3, disconnected: [], previews: [], operations: [] }
       : saved.value;
     validate(this.state);
     this.diskHash = saved.missing ? null : hash(fs.readFileSync(this.file).toString());
@@ -140,8 +140,10 @@ class Privacy {
   }
   preview(input, kind, sourceId) {
     this.human(input, '/privacy preview ' + kind + (sourceId ? ' ' + sourceId : ''));
-    if (kind === 'source-cache' && (!uuid(sourceId) || !this.disconnected(sourceId)))
+    if (['source-cache','source-extracts','source-reflections'].includes(kind) && (!uuid(sourceId) || !this.disconnected(sourceId)))
       throw hold('Disconnect the exact local source before previewing retained-cache removal.');
+    if (!['source-cache','source-extracts','source-reflections'].includes(kind) && sourceId)
+      throw hold('This retained-data class does not accept a source identity.');
     const { data, dependencies } = this.select(kind, sourceId),
       p = {
         id: crypto.randomUUID(),
@@ -150,7 +152,7 @@ class Privacy {
         hash: hash(data),
         actorId: this.actorId,
         expiresAt: this.now() + 30 * 60000,
-        bytes: Buffer.byteLength(JSON.stringify(data)),
+        bytes: this.options.adapters[kind].bytes?.(data) ?? Buffer.byteLength(JSON.stringify(data)),
         dependencies,
       };
     this.change((next) => {
@@ -166,7 +168,8 @@ class Privacy {
       expiresAt: new Date(p.expiresAt).toISOString(),
       confirmation: '/privacy delete ' + p.id,
       externalActionsReversed: false,
-      kept: 'Original source chats, pinned notes or other unselected classes, action/replay receipts and external provider data remain.',
+      kept: this.options.adapters[kind].kept || 'Original source chats, pinned notes or other unselected classes, action/replay receipts and external provider data remain.',
+      affected: this.options.adapters[kind].summary?.(data) || null,
     };
   }
   async remove(input, id) {
@@ -246,8 +249,9 @@ class Privacy {
   }
   export(input, kind, sourceId) {
     this.human(input, '/privacy export ' + kind + (sourceId ? ' ' + sourceId : ''));
-    if ((kind === 'source-cache' && (!uuid(sourceId) || !this.disconnected(sourceId))) ||
-        (kind !== 'source-cache' && sourceId)) throw hold('Choose one exact disconnected local source for a source-cache export.');
+    if ((['source-cache','source-extracts','source-reflections'].includes(kind) && (!uuid(sourceId) || !this.disconnected(sourceId))) ||
+        (!['source-cache','source-extracts','source-reflections'].includes(kind) && sourceId)) throw hold('Choose one exact disconnected local source for a source export.');
+    if (this.options.adapters[kind]?.exportable === false) throw hold('This class is excluded from privacy text exports. Use its original previewed export control if available.');
     let payload;
     if (this.options.adapters[kind]) payload = this.select(kind, sourceId).data;
     else if (Object.keys(versions).includes(kind) && kind !== 'privacy.json')

@@ -58,5 +58,45 @@ class BrowserVault {
       throw new Error('Saved login belongs to another owner or destination.');
     return v.cookies;
   }
+  inspectOwned(actorId) {
+    if (!fs.existsSync(this.directory)) return [];
+    this.file(crypto.randomUUID()); // Guard encryption and redirects even for an empty vault.
+    const names = fs.readdirSync(this.directory).sort();
+    if (
+      names.length > 128 ||
+      names.some(
+        (name) => !/^[a-f0-9]{8}-[a-f0-9]{4}-[a-f0-9]{4}-[a-f0-9]{4}-[a-f0-9]{12}\.enc$/.test(name),
+      )
+    )
+      throw new Error('Saved-login inventory requires recovery.');
+    const selected = [];
+    for (const name of names) {
+      const id = name.slice(0, -4),
+        file = this.file(id),
+        stat = fs.lstatSync(file);
+      if (!stat.isFile() || stat.isSymbolicLink() || stat.size > 1024 * 1024)
+        throw new Error('Saved login is unavailable.');
+      const bytes = fs.readFileSync(file),
+        value = JSON.parse(this.decrypt(bytes));
+      if (value.schema !== 1 || typeof value.actorId !== 'string')
+        throw new Error('Saved-login ownership requires recovery.');
+      if (value.actorId !== actorId) continue;
+      const destination = new URL(value.origin);
+      if (
+        destination.protocol !== 'https:' ||
+        destination.origin !== value.origin ||
+        !Array.isArray(value.cookies) ||
+        value.cookies.length > 256
+      )
+        throw new Error('Saved-login destination requires recovery.');
+      selected.push({
+        name: 'browser-vault/' + name,
+        origin: destination.origin,
+        bytes: bytes.length,
+        sha256: crypto.createHash('sha256').update(bytes).digest('hex'),
+      });
+    }
+    return selected;
+  }
 }
 module.exports = { BrowserVault };

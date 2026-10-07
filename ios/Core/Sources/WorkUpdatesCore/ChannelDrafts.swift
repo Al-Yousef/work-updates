@@ -36,17 +36,30 @@ private struct DraftJournal: Codable {
     var drafts:[ChannelDraft]=[]
     var receipts:[ChannelReceipt]=[]
 }
+public struct PhoneDraftRemovalPreview: Identifiable, Sendable {
+    public let id:String
+    public let computerID:String
+    public let draftCount:Int
+    public let retainedTextBytes:Int
+    public let uncertainCount:Int
+    public let retainedReceipts:Int
+    public let expiresAt:Double
+    fileprivate let hash:String
+}
 // Called by WorkStore on the main actor; disk failures preserve the old journal.
 public final class ChannelDrafts {
     public let file: URL
     private var state=DraftJournal()
     private var diskHash: String?
     private var failed=false
+    private var previews:[String:PhoneDraftRemovalPreview]=[:]
+    private let canonicalDirectory:String
     private let now: () -> Double
     private let write: (Data,URL) throws -> Void
     public init(file: URL, now: @escaping () -> Double = {Date().timeIntervalSince1970},
                 write: @escaping (Data,URL) throws -> Void = ChannelDrafts.protectedWrite) throws {
         self.file=file; self.now=now; self.write=write
+        canonicalDirectory=file.deletingLastPathComponent().resolvingSymlinksInPath().standardizedFileURL.path
         if FileManager.default.fileExists(atPath:file.path) {
             let values=try file.resourceValues(forKeys:[.isRegularFileKey,.isSymbolicLinkKey,.fileSizeKey])
             guard values.isRegularFile == true, values.isSymbolicLink != true, (values.fileSize ?? Int.max)<=2*1024*1024 else {throw PeerError.server("The saved phone draft journal needs recovery. Its original file is preserved.")}
@@ -103,6 +116,11 @@ public final class ChannelDrafts {
     }
     private func change(_ update:(inout DraftJournal)throws->Void) throws {
         guard !failed else {throw PeerError.server("Phone draft storage needs recovery. Sending is held.")}
+        guard file.deletingLastPathComponent().resolvingSymlinksInPath().standardizedFileURL.path==canonicalDirectory else {throw PeerError.server("The phone draft directory changed. Its data is preserved.")}
+        if FileManager.default.fileExists(atPath:file.path) {
+            let values=try file.resourceValues(forKeys:[.isRegularFileKey,.isSymbolicLinkKey,.fileSizeKey])
+            guard values.isRegularFile==true,values.isSymbolicLink != true,(values.fileSize ?? Int.max)<=2*1024*1024 else {throw PeerError.server("The phone draft file changed. Its data is preserved.")}
+        }
         let current=FileManager.default.fileExists(atPath:file.path) ? try Self.hash(Data(contentsOf:file)) : nil
         guard current==diskHash else {failed=true;throw PeerError.server("The phone draft journal changed outside its owner. Sending is held.")}
         var next=state;try update(&next);try validate(next)
@@ -114,6 +132,29 @@ public final class ChannelDrafts {
     }
     public func draft(_ binding:DraftBinding)->ChannelDraft? {state.drafts.first{$0.binding==binding}}
     public func receipts(computerID:String)->[ChannelReceipt] {state.receipts.filter{$0.binding.computerID==computerID}.suffix(32).map{$0}}
+    public var retainedComputerIDs:[String] {Array(Set(state.drafts.map{$0.binding.computerID})).sorted()}
+    public func previewRemoval(computerID:String) throws -> PhoneDraftRemovalPreview {
+        guard !failed,!computerID.isEmpty,computerID.count<=512 else {throw PeerError.server("Phone draft removal needs its exact local computer identity.")}
+        let selected=state.drafts.filter{$0.binding.computerID==computerID}
+        let encoder=JSONEncoder();encoder.outputFormatting = .sortedKeys
+        let preview=PhoneDraftRemovalPreview(id:UUID().uuidString.lowercased(),computerID:computerID,
+            draftCount:selected.count,retainedTextBytes:selected.reduce(0){$0+$1.text.utf8.count+($1.submittedText?.utf8.count ?? 0)},
+            uncertainCount:selected.filter{["prepared","sending","unconfirmed"].contains($0.status)}.count,
+            retainedReceipts:state.receipts.filter{$0.binding.computerID==computerID}.count,expiresAt:now()+600,
+            hash:Self.hash(try encoder.encode(selected)))
+        previews=previews.filter{$0.value.expiresAt>now()}
+        guard previews.count<16 else {throw PeerError.server("Too many draft previews. Wait for an earlier preview to expire.")}
+        previews[preview.id]=preview;return preview
+    }
+    public func removePreview(_ id:String) throws -> Int {
+        guard let preview=previews.removeValue(forKey:id),preview.expiresAt>now() else {throw PeerError.server("This draft preview expired or was already attempted. Make a fresh preview.")}
+        let selected=state.drafts.filter{$0.binding.computerID==preview.computerID}
+        let encoder=JSONEncoder();encoder.outputFormatting = .sortedKeys
+        guard preview.uncertainCount==0,!selected.contains(where:{["prepared","sending","unconfirmed"].contains($0.status)}),
+              Self.hash(try encoder.encode(selected))==preview.hash else {throw PeerError.server("The drafts changed or still have an uncertain send. Inspect delivery and make a fresh preview.")}
+        try change {value in value.drafts.removeAll{$0.binding.computerID==preview.computerID}}
+        return selected.count
+    }
     public func hasUnconfirmed(computerID:String,hostID:String,sourceID:String)->Bool {
         state.drafts.contains{ $0.binding.computerID==computerID && $0.binding.hostID==hostID && $0.binding.sourceID==sourceID && ["prepared","sending","unconfirmed"].contains($0.status) }
     }

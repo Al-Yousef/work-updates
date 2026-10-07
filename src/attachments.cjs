@@ -24,7 +24,7 @@ function attachmentIds(input=[]){
 }
 function messageHash(text,ids=[]){return digest(ids.length?JSON.stringify([text,ids]):text);}
 class Attachments{
-  constructor(directory){this.directory=path.join(directory,'attachments');fs.mkdirSync(this.directory,{recursive:true});}
+  constructor(directory){this.directory=path.join(directory,'attachments');this.liveReferences=new Set();fs.mkdirSync(this.directory,{recursive:true});}
   import(paths){
     if(!Array.isArray(paths)||!paths.length||paths.length>MAX_IMAGES)throw new Error('Choose up to four images.');
     const images=paths.map(file=>{
@@ -32,6 +32,7 @@ class Attachments{
       const bytes=readImage(file);
       const type=imageType(bytes),id=digest(bytes)+'.'+type,target=path.join(this.directory,id);
       if(!fs.existsSync(target))fs.writeFileSync(target,bytes,{flag:'wx',mode:0o600});
+      this.liveReferences.add(id);
       return {id,path:target,name:path.basename(file).slice(0,160),bytes:bytes.length};
     });
     return [...new Map(images.map(image=>[image.id,image])).values()];
@@ -39,6 +40,7 @@ class Attachments{
   resolve(ids=[]){return attachmentIds(ids).map(id=>{
     const target=path.join(this.directory,id);let bytes;try{bytes=readImage(target);}catch{throw new Error('An attached image is unavailable. Reattach it before sending.');}
     if(bytes.length>MAX_BYTES||digest(bytes)+'.'+imageType(bytes)!==id)throw new Error('An attached image changed or is unavailable. Reattach it before sending.');
+    this.liveReferences.add(id);
     return {id,path:target,name:'Image',bytes:bytes.length};
   });}
   inputs(ids=[]){return this.resolve(ids).map(image=>({type:'localImage',path:image.path}));}
