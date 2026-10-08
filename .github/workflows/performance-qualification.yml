@@ -72,6 +72,8 @@ jobs:
             artifacts/performance/qualification/**/*.samples.json
             artifacts/performance/qualification/**/*.workload.json
             artifacts/performance/qualification/**/cleanup.json
+            artifacts/performance/qualification/**/performance-ready.json
+            artifacts/performance/qualification/**/performance-soak.json
             artifacts/performance/qualification/**/selection-failure.json
             artifacts/performance/qualification/qualification.json
           if-no-files-found: error

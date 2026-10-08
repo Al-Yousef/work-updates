@@ -85,3 +85,27 @@ test('matching hardware fingerprints ignore field order and retain CPU, memory a
   }
   assert.throws(() => hardwareKey({hardware:first.hardware}), /metadata/);
 });
+function tracked(pid,cpu,start,exit=null){
+  const startedAt=new Date(1700000000000+start*1000).toISOString();
+  return {...process(pid,cpu,String(BigInt(Date.parse(startedAt))*10000n+621355968000000000n)),handlePinned:true,startedAt,
+    ...(exit===null?{lifecycle:'running'}:{lifecycle:'exited',exitedAt:new Date(1700000000000+exit*1000).toISOString(),exitCode:0,workingSetBytes:null,privateBytes:null,handles:null,threads:null})};
+}
+test('known child birth and final CPU from its original handle complete an interval without masking an unknown departure',()=>{
+  const r=summary([sample(0,[tracked(1,0,0)]),sample(1,[tracked(1,.1,0),tracked(2,.2,.5)]),
+    sample(2,[tracked(1,.2,0),tracked(2,.3,.5,1.5)]),sample(3,[tracked(1,.3,0)])],2);
+  assert.equal(r.partial,false);assert.equal(r.measurementGaps,0);
+  assert.equal(r.confirmedProcessStarts,1);assert.equal(r.confirmedProcessExits,1);
+  assert.equal(r.metrics.cpuNormalizedPercent.count,3);assert.ok(Math.abs(r.metrics.cpuNormalizedPercent.p95-15)<1e-9);
+  assert.equal(r.metrics.privateBytes.min,50);assert.equal(r.metrics.privateBytes.max,100);
+  const missing=summary([sample(0,[tracked(1,0,0),tracked(2,0,0)]),sample(1,[tracked(1,.1,0)])],2);
+  assert.equal(missing.partial,true);assert.equal(missing.metrics.cpuNormalizedPercent.count,0);
+});
+test('unproven births, fabricated exits, changed identities and revived exited counters remain incomplete',()=>{
+  const before=sample(1,[tracked(1,.1,0)]),child=tracked(2,.1,.5);
+  assert.equal(summary([before,sample(2,[tracked(1,.2,0),child])],2).partial,true);
+  for(const change of [p=>{p.handlePinned=false;},p=>{p.privateBytes=0;},p=>{p.creationTicks='other';},p=>{p.exitedAt=sample(4,[]).at;}]){
+    const ended=tracked(2,.2,.5,1.5);change(ended);
+    assert.equal(summary([sample(1,[tracked(1,.1,0),tracked(2,.1,.5)]),sample(2,[tracked(1,.2,0),ended])],2).partial,true);
+  }
+  assert.equal(summary([sample(1,[tracked(1,.1,0),tracked(2,.2,.5,.9)]),sample(2,[tracked(1,.2,0),tracked(2,.3,.5)])],2).partial,true);
+});

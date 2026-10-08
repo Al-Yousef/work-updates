@@ -76,7 +76,7 @@ foreach($taskCount in $ChatCounts){
     $env:WORK_UPDATES_PYTHON=$taskPython
     Remove-Item Env:ELECTRON_RUN_AS_NODE -ErrorAction SilentlyContinue
     $taskProfile=Join-Path $taskRun 'profile'
-    $taskBackend=$null;$taskShell=$null;$taskCollector=$null;$taskPanel=[IntPtr]::Zero;$taskTrigger=[IntPtr]::Zero
+    $taskBackend=$null;$taskShell=$null;$taskCollector=$null;$taskPanel=[IntPtr]::Zero;$taskTrigger=[IntPtr]::Zero;$taskTracked=@{}
     try {
         $taskBackendArgs=@('-r',('"'+(Join-Path $PSScriptRoot 'performance-preload.cjs')+'"'),('"'+$taskRepo+'"'),'--demo','--native-backend','--hidden','--data-dir',('"'+$taskProfile+'"'))
         $taskBackend=Start-Process $taskElectron -ArgumentList $taskBackendArgs -WindowStyle Hidden -PassThru -RedirectStandardOutput (Join-Path $taskRun 'backend.stdout.txt') -RedirectStandardError (Join-Path $taskRun 'backend.stderr.txt')
@@ -160,7 +160,7 @@ foreach($taskCount in $ChatCounts){
                         if($taskSend){$taskLatencies+=@{operation='send_handler';ms=(Click-PerfHit $taskPanel $taskSend);provider='synthetic transport; network/model latency excluded'}}
                     }
                 }
-                $taskSample=Get-OwnedProcessSample -Roots $taskRoots -Seen $taskSeen
+                $taskSample=Get-OwnedProcessSample -Roots $taskRoots -Seen $taskSeen -Tracked $taskTracked
                 $taskSamples+=,$taskSample;$taskIteration++
                 if($taskPhase -eq 'navigation_reconnect_soak'){
                     $taskState=Get-PerfState $taskPanel $taskRun
@@ -174,7 +174,7 @@ foreach($taskCount in $ChatCounts){
             $taskFixtureState=if(Test-Path -LiteralPath (Join-Path $taskRun 'performance-soak.json')){Get-Content -LiteralPath (Join-Path $taskRun 'performance-soak.json') -Raw|ConvertFrom-Json}else{$null}
             @{count=$taskCount;phase=$taskPhase;latencies=$taskLatencies;distinctSelectedSources=$taskSelectedSources.Count;nativeSamples=$taskNativeSamples;fixture=$taskFixtureState;native=@{paintMs=$taskState.paintMs;cachedChats=$taskState.cachedChats;bubbleLayouts=$taskState.bubbleLayouts;imageBitmaps=$taskState.imageBitmaps;loadingImages=$taskState.loadingImages};measurementOverheadIncluded=$true}|ConvertTo-Json -Depth 8|Set-Content -LiteralPath (Join-Path $taskRun ($taskPhase+'.workload.json')) -Encoding utf8
         }
-    } finally {
+    } finally { try {
         $taskCleanupErrors=@()
         try{if($taskTrigger -ne [IntPtr]::Zero -and $taskShell -and -not $taskShell.HasExited){Send-PerfMessage $taskTrigger 0x10}}catch{$taskCleanupErrors+='Native close was unconfirmed'}
         if($taskShell -and -not $taskShell.WaitForExit(6000)){$taskCleanupErrors+='Owned native shell did not exit normally';$taskShell.Kill($true);[void]$taskShell.WaitForExit(6000)}
@@ -183,7 +183,7 @@ foreach($taskCount in $ChatCounts){
         if($taskCollector -and -not $taskCollector.WaitForExit(6000)){$taskCleanupErrors+='Owned collector remained after backend shutdown';$taskCollector.Kill();[void]$taskCollector.WaitForExit(6000)}
         @{normalExit=($taskCleanupErrors.Count -eq 0);errors=$taskCleanupErrors;backendPid=$taskBackend.Id;nativePid=$taskShell.Id;collectorPid=$taskCollector.Id}|ConvertTo-Json -Depth 5|Set-Content -LiteralPath (Join-Path $taskRun 'cleanup.json') -Encoding utf8
         if($taskCleanupErrors.Count){throw ($taskCleanupErrors -join '; ')}
-    }
+    } finally {Close-OwnedProcessMeasurements $taskTracked} }
 }
 & $taskNode (Join-Path $PSScriptRoot 'performance-report.cjs') $taskOutput
 if($LASTEXITCODE -ne 0){throw 'Whole-process pilot report failed'}

@@ -1,6 +1,6 @@
 'use strict';
 const assert = require('node:assert/strict');
-const { comparison, percentile } = require('./performance-report.cjs');
+const { comparison, percentile, confirmedExit } = require('./performance-report.cjs');
 const phases = [
   'warm_idle',
   'hidden_idle',
@@ -22,11 +22,12 @@ function growth(samples, minimumSeconds = 300) {
   })) {
     const totals = samples.map((s) => {
       assert.ok(Array.isArray(s.processes) && s.processes.length > 0, 'Missing owned process tree');
+      const active=s.processes.filter(p=>!confirmedExit(p,s.completedAt||s.at));
       assert.ok(
-        s.processes.every((p) => !p.unavailable && Number.isFinite(p[metric]) && p[metric] >= 0),
+        active.every((p) => !p.unavailable && Number.isFinite(p[metric]) && p[metric] >= 0),
         'Partial growth measurement',
       );
-      return s.processes.reduce((n, p) => n + p[metric], 0);
+      return active.reduce((n, p) => n + p[metric], 0);
     });
     const windows = Array.from({ length: 5 }, (_, i) =>
       totals.slice(Math.floor((i * totals.length) / 5), Math.floor(((i + 1) * totals.length) / 5)),

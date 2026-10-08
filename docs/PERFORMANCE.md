@@ -32,8 +32,17 @@ their claimed parent are refused. Raw samples retain timestamp, instance
 identity, process name, cumulative CPU, working/private bytes, handles and
 threads. Commands, account identifiers and environment variables are omitted.
 CPU differences divide by actual elapsed sample time and logical processors.
-Departed, replaced or inaccessible instances disclose measurement gaps; their
-usage is never converted to zero. Sampling overhead is included. Wakeups need
+The sampler pins original kernel handles. A newly born child contributes its
+measured cumulative CPU only when its exact creation time falls within the
+observed interval. An observed exit contributes final cumulative CPU and exit
+time read through that same handle, once, then releases the handle. Its live
+memory/handle/thread fields remain null; it is excluded from subsequent live
+totals only after the kernel confirms exit. Unobserved births, missing final
+CPU, replaced identities and inaccessible instances disclose measurement gaps;
+their usage is never converted to zero. Original backend/native/collector
+processes must remain live throughout every phase. Sample collection start/end
+times are retained, and all observer handles close on success or failure.
+Abnormal observed helper exits fail reporting. Sampling overhead is included. Wakeups need
 ETW evidence and remain null here.
 
 CI uses six seconds per phase as an initial pilot. The script's default is
@@ -91,6 +100,14 @@ passing ten-minute observation cannot prove indefinite leak freedom. The report
 retains all local handler exceptions to the 100 ms goal and separates Electron
 backend/helpers from native shell and collector metrics. JSON-only CI artifacts
 allow reviewing evidence without downloading a native executable or package.
+
+This exit accounting follows the Windows [.NET Process implementation](https://github.com/dotnet/runtime/blob/main/src/libraries/System.Diagnostics.Process/src/System/Diagnostics/Process.Windows.cs)
+and [GetProcessTimes contract](https://learn.microsoft.com/en-us/windows/win32/api/processthreadsapi/nf-processthreadsapi-getprocesstimes).
+An actual owned Node-child test verifies final CPU after normal exit, unchanged
+creation identity, null live counters and immediate handle release. Unknown
+departures and forged/revived exits remain failed report-policy tests. The
+qualification artifact also retains its synthetic startup count/owner record
+and reconnect counters.
 
 The workflow establishes candidate resource thresholds from five observed runs;
 it does not compare two different implementations or establish ETW wakeups/energy,

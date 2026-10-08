@@ -7,6 +7,19 @@ function percentile(values, p) {
     ? sorted[Math.min(sorted.length - 1, Math.ceil(p * sorted.length) - 1)]
     : null;
 }
+function pinnedIdentity(p) {
+  if(p.handlePinned!==true||typeof p.creationTicks!=='string'||!/^\d+$/.test(p.creationTicks))return false;
+  const start=Date.parse(p.startedAt);
+  const created=Number(BigInt(p.creationTicks)/10000n-62135596800000n);
+  return Number.isFinite(start)&&Math.abs(start-created)<=1;
+}
+function confirmedExit(p, completedAt) {
+  const exit=Date.parse(p.exitedAt);
+  return p.lifecycle==='exited'&&!p.unavailable&&pinnedIdentity(p)&&
+    Number.isFinite(p.cpuSeconds)&&p.cpuSeconds>=0&&Number.isInteger(p.exitCode)&&
+    Number.isFinite(exit)&&exit>=Date.parse(p.startedAt)&&exit<=Date.parse(completedAt)&&
+    ['workingSetBytes','privateBytes','handles','threads'].every(key=>p[key]===null);
+}
 function summary(samples, cores) {
   if (!Number.isInteger(cores) || cores < 1 || !Array.isArray(samples) || samples.length < 2)
     throw new Error('Performance report requires logical cores and at least two samples');
@@ -18,21 +31,25 @@ function summary(samples, cores) {
     cpuNormalizedPercent: [],
   };
   let prior = null,
-    gaps = 0;
+    gaps = 0, starts=0, exits=0, abnormalExits=0;
   const identities = new Set();
   for (const s of samples) {
     const at = Date.parse(s.at);
     if (!Number.isFinite(at) || !Array.isArray(s.processes))
       throw new Error('Invalid process sample');
+    const completed=s.completedAt||s.at;
+    const exited=p=>confirmedExit(p,completed);
+    const active=s.processes.filter(p=>!exited(p));
+    for(const p of s.processes.filter(exited)){exits++;if(p.exitCode!==0)abnormalExits++;}
     for (const key of ['workingSetBytes', 'privateBytes', 'handles', 'threads']) {
-      if (s.processes.some((p) => p.unavailable || !Number.isFinite(p[key]))) {
+      if (active.some((p) => p.unavailable || !Number.isFinite(p[key])||p[key]<0)) {
         gaps++;
         continue;
       }
-      values[key].push(s.processes.reduce((n, p) => n + p[key], 0));
+      values[key].push(active.reduce((n, p) => n + p[key], 0));
     }
     const map = new Map(
-      s.processes.filter((p) => !p.unavailable).map((p) => [p.pid + ':' + p.creationTicks, p]),
+      s.processes.filter((p) => !p.unavailable && (p.lifecycle!=='exited'||exited(p))).map((p) => [p.pid + ':' + p.creationTicks, p]),
     );
     for (const key of map.keys()) identities.add(key);
     if (prior) {
@@ -43,25 +60,27 @@ function summary(samples, cores) {
       for (const [key, p] of map) {
         const old = prior.map.get(key);
         if (!old) {
-          gaps++;
-          complete = false;
+          const born=Date.parse(p.startedAt);
+          if(pinnedIdentity(p)&&born>=prior.at&&born<=Date.parse(completed)&&Number.isFinite(p.cpuSeconds)&&p.cpuSeconds>=0){
+            cpu+=p.cpuSeconds;starts++;
+          }else{gaps++;complete=false;}
           continue;
         }
-        if (!Number.isFinite(p.cpuSeconds) || p.cpuSeconds < old.cpuSeconds) {
+        if (old.lifecycle==='exited'||!Number.isFinite(p.cpuSeconds) || p.cpuSeconds < old.cpuSeconds) {
           gaps++;
           complete = false;
           continue;
         }
         cpu += p.cpuSeconds - old.cpuSeconds;
       }
-      for (const key of prior.map.keys())
-        if (!map.has(key)) {
+      for (const [key,p] of prior.map)
+        if (!map.has(key)&&!confirmedExit(p,prior.completed)) {
           gaps++;
           complete = false;
         }
       if (complete) values.cpuNormalizedPercent.push((100 * cpu) / elapsed / cores);
     }
-    prior = { at, map };
+    prior = { at, map, completed };
   }
   return {
     samples: samples.length,
@@ -70,6 +89,9 @@ function summary(samples, cores) {
     cpuNormalization: 'one fully occupied logical CPU divided by available logical CPUs',
     observedProcessInstances: identities.size,
     measurementGaps: gaps,
+    confirmedProcessStarts:starts,
+    confirmedProcessExits:exits,
+    abnormalProcessExits:abnormalExits,
     metrics: Object.fromEntries(
       Object.entries(values).map(([key, v]) => [
         key,
@@ -131,4 +153,4 @@ function hardwareKey(metadata) {
     value && typeof value === 'object' ? Object.fromEntries(Object.keys(value).sort().map(key => [key, canonical(value[key])])) : value;
   return crypto.createHash('sha256').update(JSON.stringify(canonical([metadata.hardware, metadata.windows]))).digest('hex');
 }
-module.exports = { percentile, summary, comparison, hash, hardwareKey };
+module.exports = { percentile, summary, comparison, hash, hardwareKey, confirmedExit };

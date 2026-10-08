@@ -83,7 +83,7 @@ function report(directory) {
           assert.ok(
             samples.every((s) =>
               s.processes.some(
-                (p) => p.pid === pid && p.creationTicks === root.creationTicks && !p.unavailable,
+                (p) => p.pid === pid && p.creationTicks === root.creationTicks && !p.unavailable && p.lifecycle!=='exited',
               ),
             ),
             'Original process measurement gap',
@@ -113,6 +113,7 @@ function report(directory) {
       }
       const measured = summary(samples, Number(metadata.hardware.logicalCores));
       assert.equal(measured.partial, false, 'Incomplete whole-process measurement');
+      assert.equal(measured.abnormalProcessExits,0,'An observed helper process exited abnormally');
       const components = Object.fromEntries(
         ['backend', 'native', 'collector', 'helpers'].map((name, index) => {
           const rootPids = [cleanup.backendPid, cleanup.nativePid, cleanup.collectorPid];
