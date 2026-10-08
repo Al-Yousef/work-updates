@@ -44,6 +44,7 @@ jobs:
         shell: pwsh
         run: |
           ./scripts/owned-process-metrics.test.ps1
+          ./scripts/owned-process-observer.test.ps1
           ./scripts/performance-press-proof.test.ps1
           ./scripts/native-performance-audit.ps1 -SecondsPerPhase 6 -SampleIntervalMs 1000
       - name: Packaged update and program rollback with a disposable native app

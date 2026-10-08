@@ -14,6 +14,7 @@ on:
       - 'scripts/owned-process-handle.ps1'
       - 'scripts/owned-process-metrics.ps1'
       - 'scripts/owned-process-metrics.test.ps1'
+      - 'scripts/owned-process-observer.test.ps1'
       - 'scripts/performance-qualification-report.cjs'
 permissions:
   contents: read
@@ -44,6 +45,7 @@ jobs:
         shell: pwsh
         run: |
           ./scripts/owned-process-metrics.test.ps1
+          ./scripts/owned-process-observer.test.ps1
           ./scripts/performance-press-proof.test.ps1
       - name: Ten-minute navigation and reconnect observation
         if: ${{ !inputs.composer_probe }}

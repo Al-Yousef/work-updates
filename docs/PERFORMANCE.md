@@ -32,10 +32,16 @@ their claimed parent are refused. Raw samples retain timestamp, instance
 identity, process name, cumulative CPU, working/private bytes, handles and
 threads. Commands, account identifiers and environment variables are omitted.
 CPU differences divide by actual elapsed sample time and logical processors.
-The sampler pins every discovered original kernel handle before reading live
-counters, handling newly born processes first. Thread enumeration on one process
-cannot delay pinning a short-lived sibling. Failure records identify the stage
-and exception type without exposing commands or environment variables. A newly born child contributes its
+The sampler uses a dedicated read-only discovery thread with a ten-millisecond
+poll interval, separate from the one-second resource sample cadence. Supported
+[Toolhelp32 process snapshots](https://learn.microsoft.com/en-us/windows/win32/toolhelp/taking-a-snapshot-and-viewing-processes)
+provide only process name, PID, parent PID and thread count. The observer opens
+only exact original roots and descendants of their retained parent handles,
+then verifies kernel creation times and the parent's creation/exit interval.
+It retains at most 256 original handles, including children that exit before
+the next resource sample. Each sample records discovery count, configured
+interval, maximum observed capture gap and the finite handle bound. Discovery
+and counter errors fail the run; no unavailable row is discarded. A newly born child contributes its
 measured cumulative CPU only when its exact creation time falls within the
 observed interval. An observed exit contributes final cumulative CPU and exit
 time read through that same handle, once, then releases the handle. Its live
@@ -45,7 +51,9 @@ CPU, replaced identities and inaccessible instances disclose measurement gaps;
 their usage is never converted to zero. Original backend/native/collector
 processes must remain live throughout every phase. Sample collection start/end
 times are retained, and all observer handles close on success or failure.
-Abnormal observed helper exits fail reporting. Sampling overhead is included. Wakeups need
+Abnormal observed helper exits fail reporting. Calls into the app are included;
+the measuring PowerShell process and its discovery thread remain outside the
+app tree, consistently across every baseline and comparison. Wakeups need
 ETW evidence and remain null here.
 
 CI uses six seconds per phase as an initial pilot. The script's default is
@@ -113,7 +121,8 @@ reproduces this rejection and verifies direct kernel acquisition after exit
 between metadata discovery and pinning. It separately verifies exit between
 pinning and live counter reads, unchanged creation identity, final CPU, null live
 counters and immediate handle release. Live memory and handle counts use the
-same original handle; thread count uses the exact-identity CIM discovery snapshot.
+same original handle; the continuous observer's thread count uses the current
+Toolhelp snapshot while that original process handle is still live.
 Counter reads are limited to proven owned descendants; no process mutations or
 privilege adjustments are used.
 Unknown
@@ -161,3 +170,15 @@ A destroyed kernel object, changed creation identity or missing counter still
 fails qualification. Polling does not establish a complete process-lifecycle
 trace for helpers born and exited entirely between observations; ETW remains
 outside this measurement contract.
+
+[Run 37735817992](https://github.com/Al-Yousef/work-updates/actions/runs/37735817992)
+passed its soak and three baselines, then failed baseline four because a new
+Electron child was already destroyed before the post-CIM kernel open (Windows
+error 87). Direct kernel acquisition alone cannot recover a destroyed object.
+Continuous discovery removes the slow CIM-before-open path and retains the
+original before exit. An actual isolated Node regression launches eight children
+that start and exit entirely between resource samples, verifies their final CPU
+and null live counters once, then reproduces error 87 after all original handles
+are released. The unchanged report policy reproduces those raw samples without
+gaps. This faster polling still cannot establish an exhaustive ETW lifecycle
+trace; children shorter than an actual discovery gap may remain unobserved.

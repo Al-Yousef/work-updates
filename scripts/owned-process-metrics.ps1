@@ -1,4 +1,9 @@
 . (Join-Path $PSScriptRoot 'owned-process-handle.ps1')
+function Start-OwnedProcessObserver([hashtable]$Roots) {
+    $taskExactRoots=[Collections.Generic.Dictionary[int,long]]::new()
+    foreach($taskRoot in $Roots.GetEnumerator()){$taskExactRoots.Add([int]$taskRoot.Key,[long]$taskRoot.Value)}
+    return [HyphenOwnedProcessObserver]::new($taskExactRoots)
+}
 function Close-OwnedProcessMeasurements([hashtable]$Tracked) {
     foreach($taskEntry in @($Tracked.Values)){$taskEntry.process.Dispose()}
     $Tracked.Clear()
@@ -10,7 +15,11 @@ function Get-OwnedFailureDetails($Exception) {
     return $taskFailure
 }
 function Get-OwnedProcessSample {
-    param([Parameter(Mandatory)][hashtable]$Roots,[Parameter(Mandatory)][hashtable]$Seen,[Parameter(Mandatory)][hashtable]$Tracked,[scriptblock]$HandlesPinned=$null,[scriptblock]$RowsDiscovered=$null)
+    param([Parameter(Mandatory)][hashtable]$Roots,[Parameter(Mandatory)][hashtable]$Seen,[Parameter(Mandatory)][hashtable]$Tracked,[scriptblock]$HandlesPinned=$null,[scriptblock]$RowsDiscovered=$null,$Observer=$null)
+    if($Observer){
+        if($HandlesPinned -or $RowsDiscovered){throw 'Legacy discovery callbacks cannot modify the continuous observer'}
+        return $Observer.Read()
+    }
     $taskAt=(Get-Date).ToUniversalTime().ToString('o')
     $taskRows=@(Get-CimInstance Win32_Process -Property ProcessId,ParentProcessId,CreationDate,Name,ThreadCount)
     $taskOwned=@{}

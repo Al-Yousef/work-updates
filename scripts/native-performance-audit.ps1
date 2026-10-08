@@ -75,7 +75,7 @@ foreach($taskCount in $ChatCounts){
     $env:WORK_UPDATES_PYTHON=$taskPython
     Remove-Item Env:ELECTRON_RUN_AS_NODE -ErrorAction SilentlyContinue
     $taskProfile=Join-Path $taskRun 'profile'
-    $taskBackend=$null;$taskShell=$null;$taskCollector=$null;$taskPanel=[IntPtr]::Zero;$taskTrigger=[IntPtr]::Zero;$taskTracked=@{}
+    $taskBackend=$null;$taskShell=$null;$taskCollector=$null;$taskObserver=$null;$taskPanel=[IntPtr]::Zero;$taskTrigger=[IntPtr]::Zero;$taskTracked=@{}
     try {
         $taskBackendArgs=@('-r',('"'+(Join-Path $PSScriptRoot 'performance-preload.cjs')+'"'),('"'+$taskRepo+'"'),'--demo','--native-backend','--hidden','--data-dir',('"'+$taskProfile+'"'))
         $taskBackend=Start-Process $taskElectron -ArgumentList $taskBackendArgs -WindowStyle Hidden -PassThru -RedirectStandardOutput (Join-Path $taskRun 'backend.stdout.txt') -RedirectStandardError (Join-Path $taskRun 'backend.stderr.txt')
@@ -101,7 +101,8 @@ foreach($taskCount in $ChatCounts){
         if(-not $taskState.connected){throw 'Isolated native bridge did not connect'}
         $script:taskDpi=$taskState.dpi
         $taskRoots=@{};$taskSeen=@{}
-        foreach($taskProcess in @($taskBackend,$taskShell)){$taskCim=Get-CimInstance Win32_Process -Filter ('ProcessId='+$taskProcess.Id) -Property ProcessId,CreationDate;$taskRoots[[string]$taskProcess.Id]=$taskCim.CreationDate.ToUniversalTime().Ticks}
+        foreach($taskProcess in @($taskBackend,$taskShell)){$taskRoots[[string]$taskProcess.Id]=$taskProcess.StartTime.ToUniversalTime().Ticks}
+        $taskObserver=Start-OwnedProcessObserver $taskRoots
         Start-Sleep -Seconds 2
         $taskPhases=@('warm_idle','hidden_idle','active_stream','chat_switching','image_decode','messaging')
         if($SoakSeconds){$taskPhases+='navigation_reconnect_soak'}
@@ -172,7 +173,7 @@ foreach($taskCount in $ChatCounts){
                         if($taskSend){$taskLatencies+=@{operation='send_handler';ms=(Click-PerfHit $taskPanel $taskSend);provider='synthetic transport; network/model latency excluded'}}
                     }
                 }
-                $taskSample=Get-OwnedProcessSample -Roots $taskRoots -Seen $taskSeen -Tracked $taskTracked
+                $taskSample=Get-OwnedProcessSample -Roots $taskRoots -Seen $taskSeen -Tracked $taskTracked -Observer $taskObserver
                 $taskSamples+=,$taskSample;$taskIteration++
                 $taskState=Get-PerfState $taskPanel $taskRun
                 if($taskState.pid -ne $taskShell.Id -or $taskState.mode -ne $taskNativeEntry.mode -or $taskState.panelVisible -ne $taskNativeEntry.panelVisible){throw 'Native mode or visibility changed during the measured phase'}
@@ -195,7 +196,7 @@ foreach($taskCount in $ChatCounts){
         if($taskCollector -and -not $taskCollector.WaitForExit(6000)){$taskCleanupErrors+='Owned collector remained after backend shutdown';$taskCollector.Kill();[void]$taskCollector.WaitForExit(6000)}
         @{normalExit=($taskCleanupErrors.Count -eq 0);errors=$taskCleanupErrors;backendPid=$taskBackend.Id;nativePid=$taskShell.Id;collectorPid=$taskCollector.Id}|ConvertTo-Json -Depth 5|Set-Content -LiteralPath (Join-Path $taskRun 'cleanup.json') -Encoding utf8
         if($taskCleanupErrors.Count){throw ($taskCleanupErrors -join '; ')}
-    } finally {Close-OwnedProcessMeasurements $taskTracked} }
+    } finally {if($taskObserver){$taskObserver.Dispose()};Close-OwnedProcessMeasurements $taskTracked} }
 }
 & $taskNode (Join-Path $PSScriptRoot 'performance-report.cjs') $taskOutput
 if($LASTEXITCODE -ne 0){throw 'Whole-process pilot report failed'}
