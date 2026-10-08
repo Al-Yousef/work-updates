@@ -1,7 +1,11 @@
 'use strict';
 const test = require('node:test'),
   assert = require('node:assert/strict');
-const { growth, qualification, phases } = require('../src/performance-qualification.cjs');
+const { growth, qualification, phases, phaseVisibility } = require('../src/performance-qualification.cjs');
+const visibility = (phase, count = 30) => ({mode: phase === 'hidden_idle' ? 'hidden' : 'pinned',
+  panelVisible: phase !== 'hidden_idle', nativePid: 2, samples: count,
+  entrySurfaceDraws: 5, lastSurfaceDraws: phase === 'hidden_idle' ? 5 : 10,
+  observedSurfaceDraws: phase === 'hidden_idle' ? 0 : 5});
 function samples(grow = false, length = 60) {
   return Array.from({ length }, (_, i) => ({
     at: new Date(1700000000000 + i * 6000).toISOString(),
@@ -46,6 +50,7 @@ function runs() {
             ),
           },
           latencies: { chat_selection_handler: { p95: 2 } },
+          visibility: visibility(phase),
         })),
       )
       .concat(
@@ -54,6 +59,9 @@ function runs() {
               {
                 count: 1500,
                 phase: 'navigation_reconnect_soak',
+                summary: {samples: 101},
+                ownedRoots: [1, 2, 3].map((pid) => `${pid}:creation-1500-${i}`),
+                visibility: visibility('navigation_reconnect_soak', 101),
                 hardwareKey: 'runner-hardware',
                 fixture: { reconnectCycles: 20, observedReconnections: 19, ownershipLeasePreserved: true, boundedLatestFrames: true },
                 distinctSelectedSources: 30,
@@ -102,6 +110,12 @@ test('partial, mismatched, short and regressed measurements remain failed', () =
     [(r) => (r[1].metadata.secondsPerPhase = 60), /sampling policy/],
     [(r) => (r[6].metadata.soakSeconds = 300), /ten minutes/],
     [(r) => (r[6].cases.at(-1).growth = growth(samples())), /ten minutes/],
+    [(r) => delete r[0].cases[0].visibility, /production mode/],
+    [(r) => (r[0].cases.find(c => c.phase === 'hidden_idle').visibility.mode = 'pinned'), /production mode/],
+    [(r) => (r[0].cases.find(c => c.phase === 'hidden_idle').visibility.panelVisible = true), /visibility/],
+    [(r) => (r[0].cases.find(c => c.phase === 'hidden_idle').visibility.observedSurfaceDraws = 1), /native rendering/],
+    [(r) => (r[0].cases[0].visibility.nativePid = 99), /owner differs/],
+    [(r) => (r[0].cases[0].visibility.samples = 1), /sample count/],
   ]) {
     const r = runs();
     mutate(r);
@@ -113,4 +127,30 @@ test('partial, mismatched, short and regressed measurements remain failed', () =
   r[5].cases[0].summary.metrics.privateBytes.p95 = 50;
   r[6].cases.at(-1).growth = growth(samples(true, 101), 600);
   assert.equal(qualification(r.slice(0, 5), r[5], r[6]).passed, false);
+});
+
+test('hidden idle requires the original production hidden mode and no rendering throughout its observation', () => {
+  const entry = {pid: 2, mode: 'hidden', panelVisible: false, surfaceDraws: 7};
+  const states = Array.from({length: 3}, () => ({...entry}));
+  assert.equal(phaseVisibility('hidden_idle', states, 3, 2, entry).observedSurfaceDraws, 0);
+  for (const [mutate, pattern] of [
+    [s => {s[1].mode = 'pinned';}, /production mode/],
+    [s => {s[1].panelVisible = true;}, /visibility/],
+    [s => {s[1].surfaceDraws++;}, /native rendering/],
+    [s => {s[1].pid = 99;}, /replaced process/],
+    [s => {delete s[1].surfaceDraws;}, /draw counter/],
+  ]) {
+    const changed = structuredClone(states); mutate(changed);
+    assert.throws(() => phaseVisibility('hidden_idle', changed, 3, 2, entry), pattern);
+  }
+  assert.throws(() => phaseVisibility('hidden_idle', states.slice(0, 2), 3, 2, entry), /every process sample/);
+  assert.throws(() => phaseVisibility('hidden_idle', states, 3, 2, {...entry, mode: 'pinned'}), /production mode/);
+});
+
+test('visible benchmark phases require a pinned original surface and retain observed draws', () => {
+  const entry = {pid: 2, mode: 'pinned', panelVisible: true, surfaceDraws: 7};
+  const states = [{...entry}, {...entry, surfaceDraws: 9}];
+  assert.equal(phaseVisibility('active_stream', states, 2, 2, entry).observedSurfaceDraws, 2);
+  assert.throws(() => phaseVisibility('active_stream', [{...entry, panelVisible: false}], 1, 2, entry), /visibility/);
+  assert.throws(() => phaseVisibility('unknown', states, 2, 2, entry), /Unknown/);
 });

@@ -9,6 +9,23 @@ const phases = [
   'image_decode',
   'messaging',
 ];
+function phaseVisibility(phase, nativeSamples, sampleCount, nativePid, entry) {
+  assert.ok([...phases, 'navigation_reconnect_soak'].includes(phase), 'Unknown native workload');
+  assert.ok(Array.isArray(nativeSamples) && nativeSamples.length === sampleCount && sampleCount > 0,
+    'Native mode must be recorded for every process sample');
+  const hidden = phase === 'hidden_idle', mode = hidden ? 'hidden' : 'pinned';
+  for (const state of [entry, ...nativeSamples]) {
+    assert.equal(state?.pid, nativePid, 'Native mode came from a replaced process');
+    assert.equal(state.mode, mode, 'The workload did not enter its production mode');
+    assert.equal(state.panelVisible, !hidden, 'Native visibility does not match the production mode');
+    assert.ok(Number.isSafeInteger(state.surfaceDraws) && state.surfaceDraws >= 0, 'Missing native draw counter');
+    assert.ok(state.surfaceDraws >= entry.surfaceDraws, 'Native draw counter restarted');
+    if (hidden) assert.equal(state.surfaceDraws, entry.surfaceDraws, 'Hidden idle performed native rendering');
+  }
+  return {mode, panelVisible: !hidden, nativePid, samples: sampleCount,
+    entrySurfaceDraws: entry.surfaceDraws, lastSurfaceDraws: nativeSamples.at(-1).surfaceDraws,
+    observedSurfaceDraws: nativeSamples.at(-1).surfaceDraws - entry.surfaceDraws};
+}
 function growth(samples, minimumSeconds = 300) {
   assert.ok(Array.isArray(samples) && samples.length >= 25, 'Growth needs at least 25 samples');
   const duration = (Date.parse(samples.at(-1).at) - Date.parse(samples[0].at)) / 1000;
@@ -72,6 +89,15 @@ function qualification(baselines, current, soak) {
   );
   const ownedRoots = new Set();
   for (const run of runs) {
+    for (const row of run.cases) {
+      const visibility = row.visibility, hidden = row.phase === 'hidden_idle';
+      assert.equal(visibility?.mode, hidden ? 'hidden' : 'pinned', 'Unverified production mode');
+      assert.equal(visibility.panelVisible, !hidden, 'Unverified native visibility');
+      assert.equal(visibility.samples, row.summary?.samples, 'Native mode sample count differs');
+      assert.equal(String(visibility.nativePid), row.ownedRoots?.[1]?.split(':')[0], 'Native mode owner differs');
+      assert.ok(Number.isSafeInteger(visibility.observedSurfaceDraws) && visibility.observedSurfaceDraws >= 0, 'Unverified native draw count');
+      if (hidden) assert.equal(visibility.observedSurfaceDraws, 0, 'Hidden idle performed native rendering');
+    }
     assert.deepEqual(
       run.metadata.counts,
       run === soak ? [1500] : [100, 500, 1500],
@@ -158,4 +184,4 @@ function qualification(baselines, current, soak) {
       'Matching runner baseline and bounded synthetic navigation/reconnection only. No optimization savings, physical input, account delivery, indefinite leak freedom, ETW wakeups, or energy measurement is claimed.',
   };
 }
-module.exports = { growth, qualification, phases };
+module.exports = { growth, qualification, phases, phaseVisibility };

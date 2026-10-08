@@ -3,7 +3,7 @@ const fs = require('node:fs'),
   path = require('node:path');
 const assert = require('node:assert/strict');
 const { summary, percentile, hardwareKey: fingerprint } = require('../src/performance-report.cjs');
-const { growth, phases } = require('../src/performance-qualification.cjs');
+const { growth, phases, phaseVisibility } = require('../src/performance-qualification.cjs');
 const read = (file) => JSON.parse(fs.readFileSync(file, 'utf8').replace(/^\uFEFF/, ''));
 function report(directory) {
   const metadata = read(path.join(directory, 'metadata.json'));
@@ -28,6 +28,8 @@ function report(directory) {
         workload = read(path.join(root, phase + '.workload.json'));
       assert.equal(workload.count, count);
       assert.equal(workload.phase, phase);
+      const visibility = phaseVisibility(phase, workload.nativeSamples, samples.length, cleanup.nativePid, workload.nativeEntry);
+      assert.ok(workload.nativeSamples.every((state, index) => state.at === samples[index].at), 'Native mode timestamps do not match the process samples');
       assert.ok(
         samples.some((s) => s.processes.some((p) => p.pid === cleanup.backendPid)),
         'Backend missing from process tree',
@@ -138,6 +140,7 @@ function report(directory) {
         summary: measured,
         components,
         latencies,
+        visibility,
         native: workload.native,
         ownedRoots,
         ...(phase === 'navigation_reconnect_soak'

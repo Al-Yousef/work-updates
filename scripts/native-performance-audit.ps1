@@ -36,7 +36,6 @@ public static class HyphenPerfWindows {
  [DllImport("user32.dll")] public static extern uint GetWindowThreadProcessId(IntPtr w,out uint p);
  [DllImport("user32.dll",CharSet=CharSet.Unicode)] public static extern int GetClassName(IntPtr w,StringBuilder n,int c);
  [DllImport("user32.dll")] public static extern IntPtr GetDlgItem(IntPtr w,int id);
- [DllImport("user32.dll")] public static extern bool ShowWindow(IntPtr w,int show);
  [StructLayout(LayoutKind.Sequential)] public struct Point { public int x; public int y; }
  [DllImport("user32.dll")] public static extern bool ClientToScreen(IntPtr w,ref Point p);
  [DllImport("user32.dll")] public static extern IntPtr SendMessageTimeout(IntPtr w,uint m,IntPtr a,IntPtr b,uint flags,uint timeout,out UIntPtr result);
@@ -110,7 +109,19 @@ foreach($taskCount in $ChatCounts){
             $taskRequest=[Guid]::NewGuid().ToString();@{id=$taskRequest;phase=$taskPhase}|ConvertTo-Json -Compress|Set-Content -LiteralPath (Join-Path $taskRun 'performance-command.json') -Encoding utf8
             for($taskTry=0;$taskTry -lt 50;$taskTry++){try{$taskAck=Get-Content -LiteralPath (Join-Path $taskRun 'performance-result.json') -Raw|ConvertFrom-Json;if($taskAck.id -eq $taskRequest){break}}catch{};Start-Sleep -Milliseconds 100}
             if($taskAck.id -ne $taskRequest){throw 'Performance phase was not acknowledged'}
-            [void][HyphenPerfWindows]::ShowWindow($taskPanel, $(if($taskPhase -eq 'hidden_idle'){0}else{5}))
+            # Use the production hide/pin handlers. Hiding the HWND alone leaves
+            # the app pinned and keeps its update rendering active.
+            $taskHidden=$taskPhase -eq 'hidden_idle'
+            $taskState=Get-PerfState $taskPanel $taskRun
+            if($taskHidden){Send-PerfMessage $taskPanel 0x10}
+            elseif($taskState.mode -ne 'pinned' -or -not $taskState.panelVisible){Send-PerfMessage $taskTrigger (0x8000+1) ([IntPtr]::Zero) ([IntPtr]0x400)} # WM_TRAY / NIN_SELECT
+            for($taskTry=0;$taskTry -lt 20;$taskTry++){
+                $taskState=Get-PerfState $taskPanel $taskRun
+                if($taskState.pid -eq $taskShell.Id -and $taskState.mode -eq $(if($taskHidden){'hidden'}else{'pinned'}) -and $taskState.panelVisible -eq (-not $taskHidden)){break}
+                Start-Sleep -Milliseconds 100
+            }
+            if($taskTry -eq 20){throw 'The original native shell did not enter the required production mode'}
+            $taskNativeEntry=@{pid=$taskState.pid;mode=$taskState.mode;panelVisible=$taskState.panelVisible;surfaceDraws=$taskState.surfaceDraws}
             if($taskPhase -eq 'image_decode'){$taskState=Get-PerfState $taskPanel $taskRun;$taskHit=$taskState.hits|Where-Object {$_.action -eq 'assistant'}|Select-Object -First 1;if(-not $taskHit){throw 'Assistant image surface absent'};[void](Click-PerfHit $taskPanel $taskHit)}
             $taskSamples=@();$taskLatencies=@();$taskNativeSamples=@();$taskSelectedSources=@{};$taskWatch=[Diagnostics.Stopwatch]::StartNew();$taskIteration=0
             $taskPhaseSeconds=if($taskPhase -eq 'navigation_reconnect_soak'){$SoakSeconds}else{$SecondsPerPhase}
@@ -163,17 +174,17 @@ foreach($taskCount in $ChatCounts){
                 }
                 $taskSample=Get-OwnedProcessSample -Roots $taskRoots -Seen $taskSeen -Tracked $taskTracked
                 $taskSamples+=,$taskSample;$taskIteration++
-                if($taskPhase -eq 'navigation_reconnect_soak'){
-                    $taskState=Get-PerfState $taskPanel $taskRun
-                    $taskNativeSamples+=@{at=$taskSample.at;connected=$taskState.connected;cachedChats=$taskState.cachedChats;bubbleLayouts=$taskState.bubbleLayouts;imageBitmaps=$taskState.imageBitmaps;loadingImages=$taskState.loadingImages}
-                }
+                $taskState=Get-PerfState $taskPanel $taskRun
+                if($taskState.pid -ne $taskShell.Id -or $taskState.mode -ne $taskNativeEntry.mode -or $taskState.panelVisible -ne $taskNativeEntry.panelVisible){throw 'Native mode or visibility changed during the measured phase'}
+                if($taskHidden -and $taskState.surfaceDraws -ne $taskNativeEntry.surfaceDraws){throw 'The hidden native shell rendered during its idle observation'}
+                $taskNativeSamples+=@{at=$taskSample.at;pid=$taskState.pid;mode=$taskState.mode;panelVisible=$taskState.panelVisible;surfaceDraws=$taskState.surfaceDraws;connected=$taskState.connected;cachedChats=$taskState.cachedChats;bubbleLayouts=$taskState.bubbleLayouts;imageBitmaps=$taskState.imageBitmaps;loadingImages=$taskState.loadingImages}
                 $taskWait=$SampleIntervalMs-[int]$taskLoop.Elapsed.TotalMilliseconds;if($taskWait -gt 0){Start-Sleep -Milliseconds $taskWait}
             }
             $taskSamples|ConvertTo-Json -Depth 8|Set-Content -LiteralPath (Join-Path $taskRun ($taskPhase+'.samples.json')) -Encoding utf8
             if($taskPhase -in @('chat_switching','messaging','navigation_reconnect_soak') -and @($taskLatencies|Where-Object {$_.operation -eq 'chat_selection_handler'}).Count -eq 0){throw 'Performance phase had no accepted source selections'}
             $taskState=Get-PerfState $taskPanel $taskRun
             $taskFixtureState=if(Test-Path -LiteralPath (Join-Path $taskRun 'performance-soak.json')){Get-Content -LiteralPath (Join-Path $taskRun 'performance-soak.json') -Raw|ConvertFrom-Json}else{$null}
-            @{count=$taskCount;phase=$taskPhase;latencies=$taskLatencies;distinctSelectedSources=$taskSelectedSources.Count;nativeSamples=$taskNativeSamples;fixture=$taskFixtureState;native=@{paintMs=$taskState.paintMs;cachedChats=$taskState.cachedChats;bubbleLayouts=$taskState.bubbleLayouts;imageBitmaps=$taskState.imageBitmaps;loadingImages=$taskState.loadingImages};measurementOverheadIncluded=$true}|ConvertTo-Json -Depth 8|Set-Content -LiteralPath (Join-Path $taskRun ($taskPhase+'.workload.json')) -Encoding utf8
+            @{count=$taskCount;phase=$taskPhase;latencies=$taskLatencies;distinctSelectedSources=$taskSelectedSources.Count;nativeEntry=$taskNativeEntry;nativeSamples=$taskNativeSamples;fixture=$taskFixtureState;native=@{paintMs=$taskState.paintMs;cachedChats=$taskState.cachedChats;bubbleLayouts=$taskState.bubbleLayouts;imageBitmaps=$taskState.imageBitmaps;loadingImages=$taskState.loadingImages};measurementOverheadIncluded=$true}|ConvertTo-Json -Depth 8|Set-Content -LiteralPath (Join-Path $taskRun ($taskPhase+'.workload.json')) -Encoding utf8
         }
     } finally { try {
         $taskCleanupErrors=@()

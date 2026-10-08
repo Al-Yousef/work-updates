@@ -131,3 +131,15 @@ Repeating qualification keeps the workload and thresholds unchanged. Artifact
 names include the run attempt so retry evidence can coexist instead of colliding
 with an immutable prior artifact. A later passing observation does not erase the
 failed measurements or establish that these empirical limits never fluctuate.
+
+Subsequent source inspection found that the old hidden-idle fixture hid the HWND
+directly while leaving the application in its pinned mode. It therefore kept
+rendering incoming updates and did not exercise production hidden idle. The
+corrected fixture sends the normal close/hide command and reopens through the
+normal tray pin action. Every process sample retains the original native PID,
+application mode, actual window visibility and surface draw counter. Hidden idle
+must remain hidden and produce no surface draws for the entire observation;
+visible phases must remain pinned and visible. Reports without this evidence are
+rejected. The earlier hidden-idle result is retained as historical evidence of
+that incorrect workload, and the separate chat-switching CPU variation remains
+unexplained. Workload durations and regression thresholds are unchanged.
