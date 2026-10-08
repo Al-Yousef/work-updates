@@ -186,7 +186,8 @@ try {
         const auto [logicalWidth,logicalHeight]=dimensions;
         RECT beforeResize{};GetWindowRect(panel,&beforeResize);
         check(SetWindowPos(panel,nullptr,beforeResize.left,beforeResize.top,std::lround(logicalWidth*dpi/96.0),std::lround(logicalHeight*dpi/96.0),SWP_NOZORDER|SWP_NOACTIVATE)!=0,"Resize only the owned native panel");
-        auto resized=state();check(std::abs(resized.value("width",0.0f)-logicalWidth)<.1f&&std::abs(resized.value("height",0.0f)-logicalHeight)<.1f,"Native canvas adopts the new logical dimensions");
+        auto resized=state();const auto resizeDescription="Native canvas adopts "+std::to_string(logicalWidth)+"x"+std::to_string(logicalHeight)+" logical dimensions (actual "+std::to_string(resized.value("width",0.0f))+"x"+std::to_string(resized.value("height",0.0f))+")";
+        check(std::abs(resized.value("width",0.0f)-logicalWidth)<.1f&&std::abs(resized.value("height",0.0f)-logicalHeight)<.1f,resizeDescription.c_str());
         DWORD begin=0,end=0;SendMessageW(editor,EM_GETSEL,reinterpret_cast<WPARAM>(&begin),reinterpret_cast<LPARAM>(&end));
         check(draft()==resizeDraft&&begin==2&&end==6&&focus()==editor&&resized.value("source","")==resizeSource,"Resizing preserves the source, Unicode draft, selection and native focus");
         const auto field=resized.at("composerBoundsPx");
@@ -199,6 +200,7 @@ try {
     }
     MINMAXINFO limits{};SendMessageW(panel,WM_GETMINMAXINFO,0,reinterpret_cast<LPARAM>(&limits));
     check(limits.ptMinTrackSize.x==std::lround(720*dpi/96.0)&&limits.ptMinTrackSize.y==std::lround(560*dpi/96.0),"Resize minimums are expressed in actual display pixels");
+    check(limits.ptMaxTrackSize.x==std::lround(1280*dpi/96.0)&&limits.ptMaxTrackSize.y==std::lround(960*dpi/96.0),"Isolated DPI capture supports the full logical resize range without changing Windows display settings");
     RECT resizeRect{};GetWindowRect(panel,&resizeRect);const auto edge=MAKELPARAM(resizeRect.left+1,resizeRect.top+1);
     check(SendMessageW(panel,WM_NCHITTEST,0,edge)==HTTOPLEFT,"Pinned panel exposes the actual resize corner");
     click(845,33);check(!IsWindowVisible(panel),"X immediately hides under reduced motion");

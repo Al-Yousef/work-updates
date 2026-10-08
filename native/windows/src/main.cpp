@@ -1455,7 +1455,10 @@ LRESULT CALLBACK panelProc(HWND window, UINT message, WPARAM wp, LPARAM lp) {
         case WM_GETMINMAXINFO: {
             auto limits=reinterpret_cast<MINMAXINFO*>(lp);if(!limits)return 0;
             limits->ptMinTrackSize={app.px(chatlayout::minWidth),app.px(chatlayout::minHeight)};
-            const auto workWidth=app.workArea.right-app.workArea.left,workHeight=app.workArea.bottom-app.workArea.top;
+            // Explicit isolated DPI captures already render beyond the runner's
+            // desktop. Do not confuse that fixture with production monitor fit.
+            const auto workWidth=app.auditDpi>0?app.px(chatlayout::maxWidth):app.workArea.right-app.workArea.left;
+            const auto workHeight=app.auditDpi>0?app.px(chatlayout::maxHeight):app.workArea.bottom-app.workArea.top;
             limits->ptMaxTrackSize={std::max<LONG>(limits->ptMinTrackSize.x,std::min(app.px(chatlayout::maxWidth),workWidth>0?static_cast<int>(workWidth):app.px(chatlayout::maxWidth))),
                 std::max<LONG>(limits->ptMinTrackSize.y,std::min(app.px(chatlayout::maxHeight),workHeight>0?static_cast<int>(workHeight):app.px(chatlayout::maxHeight)))};
             return 0;
