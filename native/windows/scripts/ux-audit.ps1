@@ -15,6 +15,12 @@ foreach($taskScale in $Scales){
         $taskReady=Join-Path $taskFixture 'fixture-ready.json'
         for($taskAttempt=0;$taskAttempt -lt 50 -and -not(Test-Path -LiteralPath $taskReady);$taskAttempt++){Start-Sleep -Milliseconds 100}
         if(-not(Test-Path -LiteralPath $taskReady)){throw 'Synthetic fixture did not start'}
+        $taskPython=if($env:WORK_UPDATES_PYTHON){(Get-Command $env:WORK_UPDATES_PYTHON -CommandType Application -ErrorAction Stop).Source}else{(Get-Command python -CommandType Application -ErrorAction Stop).Source}
+        & $taskPython -c 'import pathlib,sys
+from PIL import Image
+for index in range(4):
+    Image.new("RGB",(32,32),(40+40*index,80+20*index,120+10*index)).save(pathlib.Path(sys.argv[1])/("text-image-"+str(index)+".png"))' $taskFixture
+        if($LASTEXITCODE -ne 0){throw 'Owned text-scale image fixtures were not created'}
         $taskLog=Join-Path $taskNative ('build/artifacts/ux-audit-'+$taskRunId+'-'+$taskScale+'.log')
         $taskArguments=@((Join-Path $taskFixture 'native-control.info'),$taskScale)
         if($HighContrast){$taskArguments+='--high-contrast'}

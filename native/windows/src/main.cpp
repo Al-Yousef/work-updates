@@ -32,6 +32,7 @@
 #include <map>
 #include <ctime>
 #include <memory>
+#include <functional>
 #include "motion.h"
 #include "bridge.h"
 #include "queue-client.h"
@@ -125,8 +126,10 @@ struct Renderer {
     bool pointerInside=false;
     float composerHeight=40;
     HWND composerEditor=nullptr;
+    std::function<void()> prepareLayout;
     bool exporting=false;
     float noticeHeight=0;
+    float noticeLineHeight=0;unsigned noticeVisibleLines=0;
     std::string notice;
     std::map<std::wstring,std::unique_ptr<Com<IDWriteTextLayout>>> layouts;
     std::map<std::string,std::unique_ptr<Com<ID2D1Bitmap>>> images;
@@ -219,6 +222,7 @@ struct Renderer {
 
     void paint(const std::filesystem::path& exportPath={}) {
         const auto started=clockSeconds();
+        if(chatlayout::textScale>1&&prepareLayout)prepareLayout();
         const auto focusKey=focused>=0&&focused<static_cast<int>(hits.size())?hitKey(hits[focused]):std::string();
         exporting=!exportPath.empty();measureNotice();
         if(layouts.size()>512)layouts.clear();
@@ -276,8 +280,9 @@ struct Renderer {
         label(value,size,box,color,weight,DWRITE_TEXT_ALIGNMENT_CENTER);
     }
     float composeY() const {return HEIGHT-22-composerHeight;}
-    int attachmentColumns()const{return std::max(1,static_cast<int>((WIDTH-CHAT_LEFT-70)/90));}
-    float attachmentHeight()const{const auto count=model.images().size();return count?static_cast<float>((count+attachmentColumns()-1)/attachmentColumns())*100+8:0;}
+    float attachmentSize()const{return std::clamp((WIDTH-CHAT_LEFT-70)/4-20,44.0f,70.0f);}
+    int attachmentColumns()const{return std::max(1,static_cast<int>((WIDTH-CHAT_LEFT-70)/(attachmentSize()+20)));}
+    float attachmentHeight()const{const auto count=model.images().size();return count?static_cast<float>((count+attachmentColumns()-1)/attachmentColumns())*(attachmentSize()+30)+8:0;}
     void contactHeader(ID2D1SolidColorBrush* brush,const Json& card,bool assistant) {
         const float center=chatlayout::contactCenter,headerExtra=14*(chatlayout::textScale-1);
         const auto profile=model.state.value("profile",Json::object());
@@ -436,10 +441,13 @@ struct Renderer {
     }
     float noticeBottom() const {return composeY()-(model.images().empty()?8:attachmentHeight());}
     void measureNotice() {
-        notice=statusNotice();noticeHeight=0;if(notice.empty())return;
+        notice=statusNotice();noticeHeight=0;noticeLineHeight=0;noticeVisibleLines=0;if(notice.empty())return;
         const auto value=wide(notice);Com<IDWriteTextFormat> format;require(text->CreateTextFormat(chatstyle::font,nullptr,DWRITE_FONT_WEIGHT_NORMAL,DWRITE_FONT_STYLE_NORMAL,DWRITE_FONT_STRETCH_NORMAL,12*chatlayout::textScale,L"en-US",format.put()),"Status format");
         Com<IDWriteTextLayout> layout;require(text->CreateTextLayout(value.c_str(),static_cast<UINT32>(value.size()),format.get(),WIDTH-CHAT_LEFT-132,64000,layout.put()),"Status measure");
-        DWRITE_TEXT_METRICS metrics{};layout->GetMetrics(&metrics);noticeHeight=std::clamp(metrics.height+20,36.0f,chatlayout::textScale==1?144.0f:std::max(36.0f,noticeBottom()-chatlayout::transcriptTop-24));
+        DWRITE_TEXT_METRICS metrics{};layout->GetMetrics(&metrics);noticeLineHeight=metrics.lineCount?metrics.height/metrics.lineCount:16*chatlayout::textScale;
+        if(chatlayout::textScale==1){noticeHeight=std::clamp(metrics.height+20,36.0f,144.0f);noticeVisibleLines=metrics.lineCount;}
+        else{const auto maximum=std::max(noticeLineHeight+20,noticeBottom()-chatlayout::transcriptTop-32*chatlayout::textScale-10);
+            noticeVisibleLines=std::max(1U,std::min(metrics.lineCount,static_cast<unsigned>(std::floor((maximum-20)/noticeLineHeight))));noticeHeight=noticeVisibleLines*noticeLineHeight+20;}
     }
     void noticePaint(ID2D1SolidColorBrush* brush) {
         if(notice.empty())return;const float bottom=noticeBottom();const auto box=D2D1::RectF(CHAT_LEFT+38,bottom-noticeHeight,WIDTH-80,bottom);
@@ -450,13 +458,13 @@ struct Renderer {
     float transcriptBottom() const {return notice.empty()?(model.images().empty()?composeY()-44:composeY()-attachmentHeight()-2):noticeBottom()-noticeHeight-10;}
     void composerPaint(ID2D1SolidColorBrush* brush) {
         const float top=composeY();const auto attached=model.images();
-        size_t attachmentIndex=0;const auto columns=attachmentColumns(),rows=static_cast<int>((attached.size()+columns-1)/columns);for(const auto& image:attached) {
-            const float x=CHAT_LEFT+38+(attachmentIndex%columns)*90,y=top-(rows-attachmentIndex/columns)*100+8;
-            const auto box=D2D1::RectF(x,y,x+70,y+70);thumbnail(brush,image,box);
+        size_t attachmentIndex=0;const auto columns=attachmentColumns(),rows=static_cast<int>((attached.size()+columns-1)/columns);const auto previewSize=attachmentSize();for(const auto& image:attached) {
+            const float x=CHAT_LEFT+38+(attachmentIndex%columns)*(previewSize+20),y=top-(rows-attachmentIndex/columns)*(previewSize+30)+8;
+            const auto box=D2D1::RectF(x,y,x+previewSize,y+previewSize);thumbnail(brush,image,box);
             hits.push_back({box,"openImage",image});
-            const auto remove=D2D1::RectF(x+42,y-16,x+86,y+28);
-            brush->SetColor(chatstyle::highContrast?chatstyle::ink():D2D1::ColorF(.25f,.25f,.28f,.9f));canvas->FillEllipse(D2D1::Ellipse(D2D1::Point2F(x+64,y+6),10,10),brush);
-            centerLabel("×",14/chatlayout::textScale,D2D1::RectF(x+52,y-6,x+76,y+18),chatstyle::inverse());
+            const auto remove=D2D1::RectF(x+previewSize-28,y-16,x+previewSize+16,y+28);
+            brush->SetColor(chatstyle::highContrast?chatstyle::ink():D2D1::ColorF(.25f,.25f,.28f,.9f));canvas->FillEllipse(D2D1::Ellipse(D2D1::Point2F(x+previewSize-6,y+6),10,10),brush);
+            centerLabel("×",14/chatlayout::textScale,D2D1::RectF(x+previewSize-18,y-6,x+previewSize+6,y+18),chatstyle::inverse());
             hits.push_back({remove,"removeImage",image,model.canDraft()});++attachmentIndex;
         }
         const auto box=D2D1::RoundedRect(D2D1::RectF(chatlayout::composerLeft,top,chatlayout::composerRight,HEIGHT-22),20,20);
@@ -909,6 +917,7 @@ struct App {
         INITCOMMONCONTROLSEX controls{sizeof(controls),ICC_WIN95_CLASSES};InitCommonControlsEx(&controls);
         tooltip=CreateWindowExW(WS_EX_TOPMOST,TOOLTIPS_CLASSW,nullptr,WS_POPUP|TTS_NOPREFIX|TTS_ALWAYSTIP,CW_USEDEFAULT,CW_USEDEFAULT,CW_USEDEFAULT,CW_USEDEFAULT,panel,nullptr,GetModuleHandleW(nullptr),nullptr);
         if(tooltip){SendMessageW(tooltip,WM_SETFONT,reinterpret_cast<WPARAM>(searchFont),FALSE);TOOLINFOW tool{};tool.cbSize=sizeof(tool);tool.uFlags=TTF_SUBCLASS;tool.hwnd=panel;tool.uId=1;GetClientRect(panel,&tool.rect);tool.lpszText=const_cast<wchar_t*>(L"");SendMessageW(tooltip,TTM_ADDTOOLW,0,reinterpret_cast<LPARAM>(&tool));SendMessageW(tooltip,TTM_SETMAXTIPWIDTH,0,px(440));SendMessageW(tooltip,TTM_SETDELAYTIME,TTDT_INITIAL,500);}
+        renderer.prepareLayout=[this]{layoutEditors();};
     }
     std::string hitName(const Hit& hit) const {
         const auto& a=hit.action;
@@ -1007,7 +1016,13 @@ struct App {
             HDC dc=GetDC(editor);TEXTMETRICW metrics{};
             if(dc){const auto previous=SelectObject(dc,editorFont);if(GetTextMetricsW(dc,&metrics))composerLinePixels=metrics.tmHeight;SelectObject(dc,previous);ReleaseDC(editor,dc);}
             composerLines=std::max(1,static_cast<int>(SendMessageW(editor,EM_GETLINECOUNT,0,0)));
-            renderer.composerHeight=std::clamp(composerLines*composerLinePixels*96/renderer.dpi+2*chatlayout::composerPadding,chatlayout::composerMinHeight,chatlayout::composerMaxHeight);
+            const float lineHeight=composerLinePixels*96/renderer.dpi;
+            float maximum=chatlayout::composerMaxHeight;
+            if(chatlayout::textScale>1){const auto minimumNotice=renderer.statusNotice().empty()?0:12*chatlayout::textScale*1.35f+20;
+                const auto available=HEIGHT-22-chatlayout::transcriptTop-renderer.attachmentHeight()-32*chatlayout::textScale-minimumNotice-10;
+                maximum=std::max(chatlayout::composerMinHeight,std::min(maximum,available));
+                const auto wholeLines=std::max(1.0f,std::floor((maximum-2*chatlayout::composerPadding)/lineHeight));maximum=std::max(chatlayout::composerMinHeight,wholeLines*lineHeight+2*chatlayout::composerPadding);}
+            renderer.composerHeight=std::clamp(composerLines*lineHeight+2*chatlayout::composerPadding,chatlayout::composerMinHeight,maximum);
             resized=position()||resized;if(resized)SendMessageW(editor,EM_SCROLLCARET,0,0);
         }
         if(searchEditor)SetWindowPos(searchEditor,nullptr,px(chatlayout::searchLeft+20),px(chatlayout::searchTop),px(chatlayout::searchWidth-(renderer.model.search.empty()?20:42)),px(chatlayout::searchHeight),SWP_NOZORDER|SWP_NOACTIVATE);
@@ -1503,6 +1518,7 @@ LRESULT CALLBACK panelProc(HWND window, UINT message, WPARAM wp, LPARAM lp) {
             report["lastPress"]=app.lastPressAudit;
             report["accessibilityIds"]=app.accessible?app.accessible->retainedIds():0;
             report["textScale"]=chatlayout::textScale;report["textScaleApiRead"]=app.textScaleRead;report["textScaleWatching"]=app.textSettings.watching();report["textScaleFixture"]=app.auditTextScale>0;
+            report["transcriptTop"]=chatlayout::transcriptTop;report["noticeLineHeight"]=app.renderer.noticeLineHeight;report["noticeVisibleLines"]=app.renderer.noticeVisibleLines;
             report["menuPage"]=app.renderer.menuPage;report["menuPages"]=app.renderer.menuPages;report["visibleRows"]=chatlayout::visibleRows;
             report["paintMs"]=app.renderer.paintMs;report["bubbleLayouts"]=app.renderer.bubbleLayouts.size();report["loadingImages"]=app.renderer.loadingImages.size();report["imageBitmaps"]=app.renderer.images.size();report["detailOffset"]=m.detailOffset;report["detailFollow"]=m.detailFollow;report["cachedChats"]=m.recent.size();
             report["composerHeight"]=app.renderer.composerHeight;report["composerLines"]=app.composerLines;report["composerLinePixels"]=app.composerLinePixels;
