@@ -90,7 +90,7 @@ try {
     }
     var owned=instances.Where(x=>x.Group!=null).ToArray();
     if(roots.Count!=2 || roots.Any(r=>r.IdentityMatches!=1 || r.Process.ExitCode!=0) ||
-        owned.Length<12 || owned.Any(x=>x.End==null))
+        owned.Length<12 || owned.Any(x=>x.End==null || x.End.ExitCode!=0))
         throw new InvalidOperationException("Owned process starts, exits or original roots are incomplete.");
     var burst=JsonDocument.Parse(File.ReadAllText(Path.Combine(directory,"burst.json")));
     if(!burst.RootElement.GetProperty("normalExit").GetBoolean()) throw new InvalidOperationException("Owned burst did not exit normally.");
@@ -121,6 +121,7 @@ try {
         recordedEventsLost=recordedLoss,savedEventsLost=fileLoss,ownedSessionStopped,
         knownShortLivedChildrenVerified=childPids.Length,originalRootsVerified=roots.Count,
         processStarts=owned.Length,processExits=owned.Count(x=>x.End!=null),
+        nonZeroExitCount=owned.Count(x=>x.End!.ExitCode!=0),
         processes=owned.Select(x=>new {group=x.Group,pid=x.Birth.Pid,parentPid=x.Birth.Parent,
             originalKernelKeyVerified=x.Birth.Key!=0,startedAt=x.Birth.At,exitedAt=x.End!.At,
             exitCode=x.End.ExitCode,scheduledIn=x.ScheduledIn}),
