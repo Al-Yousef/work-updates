@@ -118,3 +118,16 @@ it does not compare two different implementations or establish ETW wakeups/energ
 physical interaction, installed-app behavior or real-account delivery. Each future
 optimization needs its own matching before/after comparison and appropriate
 physical scheduling/rendering checks before performance improvements are claimed.
+
+The first complete qualification on the handle-pinning implementation retained
+all 115 cases with no process-measurement gaps and a passing ten-minute growth
+observation, but failed two CPU p95 thresholds at 500 sources. Hidden idle measured
+4.697 percent against a 4.488 percent limit; chat switching measured 12.136 percent
+against an 11.997 percent limit. The raw failed report is retained in
+[run 37721292132](https://github.com/Al-Yousef/work-updates/actions/runs/37721292132).
+This is an observed failure on the same implementation, not evidence of an
+optimization regression or an established explanation for the variability.
+Repeating qualification keeps the workload and thresholds unchanged. Artifact
+names include the run attempt so retry evidence can coexist instead of colliding
+with an immutable prior artifact. A later passing observation does not erase the
+failed measurements or establish that these empirical limits never fluctuate.
