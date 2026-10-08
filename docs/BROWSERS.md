@@ -11,6 +11,9 @@ The implemented provider is a new Hyphen-owned private Electron browser on the e
 /browser takeover SESSION_UUID
 /browser save-login SESSION_UUID
 /browser reuse-login SESSION_UUID VAULT_UUID
+/browser logins
+/browser forget-login VAULT_UUID
+/browser clear-login SESSION_UUID
 /browser close SESSION_UUID
 ```
 
@@ -28,6 +31,8 @@ Each tool call is tied to the original helper connection, owned task, grant, cur
 
 The [official app-server dynamic tool contract](https://learn.chatgpt.com/docs/app-server) and [pinned 0.160.1 thread-start schema source](https://github.com/openai/codex/blob/rust-v0.160.1/codex-rs/app-server-protocol/src/protocol/v2/thread.rs) define registration and `item/tool/call`. The locally generated experimental schema also verifies the exact request/response fields. Production Codex/Controller transport fixtures use a real owned loopback HTTP page and cover accepted-turn routing, admission, duplicate/replaced calls, takeover, connection replacement, restart and unsupported runtimes without model calls or existing accounts.
 
-Human login state initially exists only in the ephemeral session. Save-login explicitly stores that destination's bounded cookie state using OS encryption in `browser-vault/UUID.enc`. No plaintext fallback, default browser profile import or automatic save is supported. Reuse-login separately confirms the current human session, origin and vault identity. Cookie application is not proof that the website authenticated. Password capture/fill is unsupported. Active cookie use and saved credentials remain distinct. Clearing or forgetting a saved login, privacy inspection and physical cross-device acceptance need a follow-up; #28 stays open.
+Human login state initially exists only in the ephemeral session. Save-login explicitly stores that destination's bounded cookie state using OS encryption in `browser-vault/UUID.enc`. No plaintext fallback, default browser profile import or automatic save is supported. Reuse-login separately confirms the current human session, origin and vault identity. Cookie application is not proof that the website authenticated. Password capture/fill is unsupported.
+
+`logins` lists only the current owner's saved-login IDs and origins, without cookie values or page content. `forget-login` removes only the selected owned encrypted file; another owner's file, changed bytes, redirected storage or unavailable encryption are refused. It does not clear an already active browser login. After taking human control, `clear-login` closes that exact private window and clears its in-memory partition's storage, cache, HTTP authentication and connections. It invalidates automation before removal, preserves separately saved logins and does not revoke website sessions on other devices or undo external actions. Cleanup can run after task access is revoked. Failed cleanup stays unconfirmed and permits only an explicit retry on the retained original partition. Closing the page alone is distinct from verified storage removal. Actual website sign-in and physical cross-device acceptance remain; #28 stays open.
 
 Official implementation contracts: [Electron session partitions](https://www.electronjs.org/docs/latest/api/session) and [webContents navigation](https://www.electronjs.org/docs/latest/api/web-contents). Unit transport fixtures cover ownership races, changed executor/site, delayed reads, explicit encrypted save/reuse and restart/future formats. The isolated CI runtime exercises actual Electron page isolation, temporary session, original-window handoff and stale-lease denial against a local synthetic HTTP server. It uses no account, model, existing profile or installed data. This is simulated local evidence, not physical input or actual signed-in site acceptance.

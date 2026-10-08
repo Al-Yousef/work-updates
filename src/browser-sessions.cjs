@@ -190,7 +190,8 @@ class BrowserSessions {
     this.human(i, '/browser takeover ' + id);
     const e = this.entry(id),
       live = this.live.get(id);
-    if (!live) throw held('Original browser is unavailable; it was not replaced.');
+    if (!live || live.clearing || e.owner === 'closed')
+      throw held('Original browser is unavailable or clearing login storage; it was not replaced.');
     this.change((s) => {
       const x = s.entries.find((x) => x.id === id);
       x.owner = 'held';
@@ -379,9 +380,49 @@ class BrowserSessions {
       authenticatedSiteVerified: false,
     };
   }
+  inspectLogins(i) {
+    this.human(i, '/browser logins');
+    if (!this.options.vault) throw held('Saved logins are unavailable.');
+    return { logins: this.options.vault.inspectOwned(this.actorId).map((row) => ({
+      vaultId: path.basename(row.name, '.enc'), origin: row.origin,
+    })), credentialValuesIncluded: false, activeBrowserContentsIncluded: false };
+  }
+  forgetLogin(i, id) {
+    this.human(i, '/browser forget-login ' + id);
+    if (!uuid(id) || !this.options.vault) throw held('Select an exact saved-login identity.');
+    return this.options.vault.forget(this.actorId, id);
+  }
+  async clearLogin(i, id) {
+    this.human(i, '/browser clear-login ' + id);
+    this.assertStorage();
+    const entry = this.entry(id), live = this.live.get(id);
+    if (!live || !['human', 'closed'].includes(entry.owner) ||
+        typeof live.adapter.clearLogin !== 'function' || live.pending)
+      throw held('Take over the original browser and wait for its pending operation before clearing login storage.');
+    // Privacy cleanup remains available after task/grant revocation. It cannot
+    // return control, reopen a page, or use another browser's partition.
+    this.closed(id);
+    live.clearing = true;
+    try {
+      if ((await this.run(live, () => live.adapter.clearLogin())) !== true)
+        throw held('Private-session login removal was not confirmed.');
+      this.live.delete(id);
+      this.change((state) => { state.entries.find((e) => e.id === id).reason = null; });
+      return { sessionId: id, control: 'closed', loginStorageCleared: true,
+        savedLoginsForgotten: false, externalSessionsRevoked: false,
+        externalActionsReversed: false };
+    } catch (error) {
+      this.change((state) => { state.entries.find((e) => e.id === id).reason =
+        'Automation is closed; login cleanup is unconfirmed. Retry the exact clear-login command.'; });
+      throw error;
+    } finally {
+      live.clearing = false;
+    }
+  }
   close(i, id) {
     this.human(i, '/browser close ' + id);
     this.entry(id);
+    if (this.live.get(id)?.clearing) throw held('Original login cleanup has not settled.');
     this.closed(id);
     this.live.get(id)?.adapter.close();
     this.live.delete(id);

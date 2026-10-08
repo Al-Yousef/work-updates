@@ -52,6 +52,7 @@ function fixture(t) {
     },
     cookies: async () => cookies,
     restoreCookies: async (_origin, value) => (cookies = value),
+    clearLogin: async () => { control = 'closed'; cookies = []; return true; },
   };
   const options = {
     directory,
@@ -254,4 +255,90 @@ test('future browser journals and unavailable OS encryption preserve their bytes
     () => vault.save('human:local', 'https://example.test', []),
     /No plaintext fallback/,
   );
+});
+
+test('saved-login controls expose only owned metadata and cannot forget another actor or accept source authority', async (t) => {
+  const f = fixture(t), s = await f.open();
+  const own = await f.store.saveLogin(f.input('/browser save-login ' + s.sessionId), s.sessionId);
+  const other = f.vault.save('human:other', 'https://other.test', []);
+  const inspection = f.store.inspectLogins(f.input('/browser logins'));
+  assert.deepEqual(inspection.logins, [{ vaultId: own.vaultId, origin: 'https://example.test' }]);
+  assert.ok(!JSON.stringify(inspection).includes('synthetic-cookie-value'));
+  const file = path.join(f.directory, 'browser-vault', own.vaultId + '.enc');
+  assert.throws(() => f.store.forgetLogin({ ...f.input('/browser forget-login ' + own.vaultId),
+    role: 'source', authority: 'untrusted' }, own.vaultId), /human request/);
+  assert.throws(() => f.store.forgetLogin(f.input('/browser forget-login ' + other), other), /owned/);
+  assert.ok(fs.existsSync(file));
+  const removed = f.store.forgetLogin(f.input('/browser forget-login ' + own.vaultId), own.vaultId);
+  assert.equal(removed.savedLoginForgotten, true);
+  assert.equal(removed.activeBrowserLoginCleared, false);
+  assert.equal(fs.existsSync(file), false);
+  assert.ok(fs.existsSync(path.join(f.directory, 'browser-vault', other + '.enc')));
+  f.restart();
+  assert.deepEqual(f.store.inspectLogins(f.input('/browser logins')).logins, []);
+});
+
+test('forgetting refuses unavailable encryption and a saved file changed after ownership validation', async (t) => {
+  const f = fixture(t), s = await f.open();
+  const own = await f.store.saveLogin(f.input('/browser save-login ' + s.sessionId), s.sessionId);
+  const file = path.join(f.directory, 'browser-vault', own.vaultId + '.enc'), bytes = fs.readFileSync(file);
+  f.vault.available = () => false;
+  assert.throws(() => f.store.forgetLogin(f.input('/browser forget-login ' + own.vaultId), own.vaultId), /plaintext fallback/);
+  assert.deepEqual(fs.readFileSync(file), bytes);
+  f.vault.available = () => true;
+  const load = f.vault.load.bind(f.vault);
+  f.vault.load = (...args) => { const value = load(...args); fs.appendFileSync(file, 'changed'); return value; };
+  assert.throws(() => f.store.forgetLogin(f.input('/browser forget-login ' + own.vaultId), own.vaultId), /changed before removal/);
+  assert.deepEqual(fs.readFileSync(file), Buffer.concat([bytes, Buffer.from('changed')]));
+});
+
+test('clearing the original session remains available after revocation and leaves encrypted saved logins intact', async (t) => {
+  const f = fixture(t), s = await f.open();
+  const own = await f.store.saveLogin(f.input('/browser save-login ' + s.sessionId), s.sessionId);
+  const file = path.join(f.directory, 'browser-vault', own.vaultId + '.enc'), bytes = fs.readFileSync(file);
+  await f.store.returnControl(f.input('/browser return ' + s.sessionId), s.sessionId);
+  const stale = f.store.lease(s.sessionId);
+  await assert.rejects(f.store.clearLogin(f.input('/browser clear-login ' + s.sessionId), s.sessionId), /Take over/);
+  await f.store.takeover(f.input('/browser takeover ' + s.sessionId), s.sessionId);
+  f.options.admission = () => 'deny';
+  const cleared = await f.store.clearLogin(f.input('/browser clear-login ' + s.sessionId), s.sessionId);
+  assert.equal(cleared.loginStorageCleared, true);
+  assert.equal(cleared.savedLoginsForgotten, false);
+  assert.equal(cleared.externalSessionsRevoked, false);
+  assert.deepEqual(fs.readFileSync(file), bytes);
+  assert.equal(f.store.entry(s.sessionId).owner, 'closed');
+  assert.equal(f.store.lease(s.sessionId), null);
+  await assert.rejects(f.store.read(stale), /lease changed/);
+});
+
+test('pending cleanup prevents takeover or close; uncertain removal retains the original partition for explicit retry', async (t) => {
+  const f = fixture(t), s = await f.open();
+  let release, calls = 0;
+  f.adapter.clearLogin = () => { calls++; return new Promise(resolve => { release = resolve; }); };
+  const clearing = f.store.clearLogin(f.input('/browser clear-login ' + s.sessionId), s.sessionId);
+  await new Promise(resolve => setImmediate(resolve));
+  await assert.rejects(f.store.takeover(f.input('/browser takeover ' + s.sessionId), s.sessionId), /unavailable or clearing/);
+  assert.throws(() => f.store.close(f.input('/browser close ' + s.sessionId), s.sessionId), /not settled/);
+  release(false);
+  await assert.rejects(clearing, /not confirmed/);
+  assert.equal(calls, 1);
+  assert.equal(f.store.entry(s.sessionId).owner, 'closed');
+  assert.match(f.store.entry(s.sessionId).reason, /unconfirmed/);
+  f.adapter.clearLogin = async () => { calls++; return true; };
+  assert.equal((await f.store.clearLogin(f.input('/browser clear-login ' + s.sessionId), s.sessionId)).loginStorageCleared, true);
+  assert.equal(calls, 2);
+  assert.equal(f.creates, 1);
+});
+
+test('literal browser login commands route through current human authority and redact cookie values', async (t) => {
+  const f = fixture(t), s = await f.open();
+  const { command, manage } = require('../src/browser-command.cjs');
+  const own = await f.store.saveLogin(f.input('/browser save-login ' + s.sessionId), s.sessionId);
+  for (const text of ['/browser logins', '/browser forget-login ' + own.vaultId, '/browser clear-login ' + s.sessionId]) {
+    const message = { id: crypto.randomUUID(), text };
+    await manage(f.store, message, command(text));
+    assert.equal(message.status, 'completed');
+    assert.ok(!message.answer.includes('synthetic-cookie-value'));
+  }
+  assert.equal(command('Quoted: /browser forget-login ' + own.vaultId), null);
 });

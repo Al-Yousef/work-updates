@@ -58,6 +58,18 @@ function createFactory({ BrowserWindow, session }) {
         return !web.isLoading();
       },
       cookies: (current) => isolated.cookies.get({ url: current }),
+      async clearLogin() {
+        // Stop the original page before clearing its partition: page scripts
+        // must not repopulate storage while removal is in flight.
+        if (!window.isDestroyed()) window.destroy();
+        await isolated.closeAllConnections();
+        await isolated.clearStorageData();
+        await isolated.clearCache();
+        await isolated.clearAuthCache();
+        if ((await isolated.cookies.get({})).length)
+          throw new Error('Private-session cookie removal was not confirmed.');
+        return true;
+      },
       async restoreCookies(current, cookies) {
         const host = new URL(current).hostname;
         for (const c of cookies) {
