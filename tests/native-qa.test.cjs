@@ -71,10 +71,11 @@ test('physical input and live delivery cannot be inferred from passing simulated
     revision,
     verifyCandidate: () => ({ revision, dirty: false, binaryHashes: {} }),
     executeCase: async () => ({ status: 'passed', cleanup: 'normal_exit', exitObserved: true }),
+    physicalConfiguration: () => {throw new Error('No explicit cursor configuration');},
   });
   assert.deepEqual(
     report.lanes.map((l) => l.status),
-    ['passed', 'unsupported', 'unsupported'],
+    ['passed', 'blocked', 'unsupported'],
   );
   assert.equal(report.passed, false);
   assert.equal(report.accountsUsed, 0);
@@ -100,7 +101,7 @@ test('an interrupted run cannot launch a case or claim cleanup or success', asyn
 });
 test('matrix commands contain only existing reviewed local scripts and never a signed-in account audit', () => {
   assert.throws(() => matrix(root, 'unreviewed'));
-  const cases = matrix(root, 'isolated').concat(matrix(root, 'simulated'));
+  const cases = matrix(root, 'isolated').concat(matrix(root, 'simulated'), matrix(root,'physical'));
   assert.equal(new Set(cases.map((c) => c.id)).size, cases.length);
   assert.ok(cases.every((c) => c.timeoutMs <= 300000));
   assert.ok(cases.every((c) => !JSON.stringify(c).includes('live-audit')));
