@@ -1,17 +1,27 @@
 #pragma once
+#include <algorithm>
 namespace chatlayout {
-constexpr float width=880,height=660;
-constexpr float sidebarRight=296,chatLeft=318,chatRight=width-30;
-constexpr float composerTop=height-62,listTop=200,rowHeight=70;
-constexpr float contactCenter=(sidebarRight+width-12)/2;
-constexpr float searchLeft=32,searchTop=606,searchWidth=232;
-constexpr float pinX=148,pinY=130,transcriptTop=126;
+constexpr float minWidth=720,maxWidth=1280,minHeight=560,maxHeight=960;
+inline float width=880,height=660;
+inline float sidebarRight=296,chatLeft=318,chatRight=850;
+inline float composerTop=598;
+constexpr float listTop=200,rowHeight=70,searchLeft=32,pinY=130,transcriptTop=126;
+inline float contactCenter=582,searchTop=606,searchWidth=232,pinX=148;
 constexpr float messageSize=17,composerSize=15;
 // The native editor, rendered bubble and click targets share these bounds.
-constexpr float composerLeft=chatLeft+38,composerRight=width-28;
-constexpr float composerTextLeft=chatLeft+50,sendCenter=width-46;
-constexpr float sendTargetLeft=sendCenter-22;
-constexpr float composerTextRight=sendTargetLeft-10,composerTextWidth=composerTextRight-composerTextLeft;
+inline float composerLeft=356,composerRight=852;
+inline float composerTextLeft=368,sendCenter=834;
+inline float sendTargetLeft=812;
+inline float composerTextRight=802,composerTextWidth=434;
 constexpr float composerPadding=10,composerMargin=2,composerMinHeight=40,composerMaxHeight=96;
-constexpr int visibleRows=5;
+inline int visibleRows=5;
+inline void resize(float requestedWidth,float requestedHeight) {
+    width=std::clamp(requestedWidth,minWidth,maxWidth);height=std::clamp(requestedHeight,minHeight,maxHeight);
+    sidebarRight=std::min(296.0f,width*296/880);chatLeft=sidebarRight+22;chatRight=width-30;
+    composerTop=height-62;contactCenter=(sidebarRight+width-12)/2;
+    searchTop=height-54;searchWidth=sidebarRight-64;pinX=sidebarRight/2;
+    composerLeft=chatLeft+38;composerRight=width-28;composerTextLeft=chatLeft+50;sendCenter=width-46;
+    sendTargetLeft=sendCenter-22;composerTextRight=sendTargetLeft-10;composerTextWidth=composerTextRight-composerTextLeft;
+    visibleRows=std::max(1,static_cast<int>((height-listTop-109)/rowHeight));
+}
 }
