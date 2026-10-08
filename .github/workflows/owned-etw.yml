@@ -50,5 +50,6 @@ jobs:
             artifacts/performance/etw/**/*.workload.json
             artifacts/performance/etw/**/cleanup.json
             artifacts/performance/etw/**/collector-exit.json
+            artifacts/performance/etw/**/performance-ready.json
           if-no-files-found: error
           retention-days: 14
