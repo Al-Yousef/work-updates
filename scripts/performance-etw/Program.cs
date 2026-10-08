@@ -3,6 +3,7 @@ using System.Security.Cryptography;
 using System.Text.Json;
 using Microsoft.Diagnostics.Tracing;
 using Microsoft.Diagnostics.Tracing.Parsers;
+using Microsoft.Diagnostics.Tracing.Parsers.Kernel;
 using Microsoft.Diagnostics.Tracing.Session;
 
 // This tool never runs on the user's desktop. A unique non-restarting ETW
@@ -48,7 +49,7 @@ try {
     using (var source = new ETWTraceEventSource(traceFile)) {
         void Add(bool start, ProcessTraceData data) {
             if (facts.Count >= 50000) throw new InvalidOperationException("Process trace exceeds its finite bound.");
-            facts.Add(new Fact(start,data.ProcessID,data.ParentID,data.UniqueProcessKey,data.TimeStampQPC,
+            facts.Add(new Fact(start,data.ProcessID,data.ParentID,data.UniqueProcessKey,data.TimeStampRelativeMSec,
                 data.TimeStamp.ToUniversalTime(),data.ExitStatus,facts.Count));
         }
         source.Kernel.ProcessStart += data => Add(true,data);
@@ -58,7 +59,7 @@ try {
     if (fileLoss != 0) throw new InvalidOperationException("The saved trace reports lost events.");
     var active = new Dictionary<int,Instance>();
     var instances = new List<Instance>();
-    foreach (var fact in facts.OrderBy(x=>x.Qpc).ThenBy(x=>x.Order)) {
+    foreach (var fact in facts.OrderBy(x=>x.AtMs).ThenBy(x=>x.Order)) {
         if (fact.Start) {
             if (active.ContainsKey(fact.Pid)) throw new InvalidOperationException("Overlapping process lifetimes cannot be resolved.");
             var instance=new Instance(fact);
@@ -91,7 +92,7 @@ try {
         source.Kernel.ThreadCSwitch += data => {
             if(++switches>10000000) throw new InvalidOperationException("Scheduling trace exceeds its finite bound.");
             if(ownedByPid.TryGetValue(data.NewProcessID,out var candidates)) {
-                var instance=candidates.SingleOrDefault(x=>x.Birth.Qpc<=data.TimeStampQPC && x.End!.Qpc>=data.TimeStampQPC);
+                var instance=candidates.SingleOrDefault(x=>x.Birth.AtMs<=data.TimeStampRelativeMSec && x.End!.AtMs>=data.TimeStampRelativeMSec);
                 if(instance!=null) instance.ScheduledIn++;
             }
         };
@@ -141,7 +142,7 @@ async Task RunOwned(string kind,string executable,IEnumerable<string> arguments)
         if(!process.HasExited) { process.Kill(entireProcessTree:true); await process.WaitForExitAsync(); }
     }
 }
-record Fact(bool Start,int Pid,int Parent,ulong Key,long Qpc,DateTime At,int ExitCode,int Order);
+record Fact(bool Start,int Pid,int Parent,ulong Key,double AtMs,DateTime At,int ExitCode,int Order);
 sealed class Instance(Fact birth) { public Fact Birth=birth; public Fact? End; public string? Group; public long ScheduledIn; }
 sealed class OwnedRoot(string kind,Process process,DateTime startedAt) {
     public string Kind=kind; public Process Process=process; public DateTime StartedAt=startedAt; public int IdentityMatches;

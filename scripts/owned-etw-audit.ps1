@@ -11,10 +11,17 @@ $taskCandidate=Join-Path $taskRepo 'native/windows/build/candidate'
 if($LASTEXITCODE -ne 0) {throw 'The trace needs the exact current verified native candidate'}
 $taskOutput=Join-Path $taskRepo ('artifacts/performance/etw/'+[Guid]::NewGuid().ToString())
 New-Item -ItemType Directory -Path $taskOutput | Out-Null
+@{schema=1;sourceRevision=(& git -C $taskRepo rev-parse HEAD);phase='compilation_pending';
+    traceEventVersion='3.2.8';synthetic=$true;accountsUsed=0;installedAppChanged=$false;rawTracePublished=$false} |
+    ConvertTo-Json -Depth 4 | Set-Content -LiteralPath (Join-Path $taskOutput 'metadata.json') -Encoding utf8
 $taskTool=Join-Path $taskOutput 'tool'
 $taskIntermediate=(Join-Path $taskOutput 'tool-obj')+'/'
 & dotnet build (Join-Path $PSScriptRoot 'performance-etw/PerformanceEtw.csproj') --configuration Release --output $taskTool "-p:BaseIntermediateOutputPath=$taskIntermediate" "-p:MSBuildProjectExtensionsPath=$taskIntermediate"
-if($LASTEXITCODE -ne 0) {throw 'Pinned TraceEvent audit did not compile'}
+if($LASTEXITCODE -ne 0) {
+    @{schema=1;passed=$false;phase='compilation_failed';traceStarted=$false;accountsUsed=0;installedAppChanged=$false} |
+        ConvertTo-Json | Set-Content -LiteralPath (Join-Path $taskOutput 'verification.json') -Encoding utf8
+    throw 'Pinned TraceEvent audit did not compile'
+}
 $taskToolHashes=@{}
 Get-ChildItem -LiteralPath $taskTool -File | ForEach-Object {
     $taskToolHashes[$_.Name]=(Get-FileHash -LiteralPath $_.FullName -Algorithm SHA256).Hash.ToLowerInvariant()
