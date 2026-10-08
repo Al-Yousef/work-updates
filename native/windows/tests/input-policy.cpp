@@ -16,7 +16,9 @@ int main() {
         chatlayout::scaleText(scale);chatlayout::resize(width,height);
         assert(chatlayout::textScale==scale);assert(chatlayout::composerTextWidth>150);assert(chatlayout::composerTextRight<chatlayout::sendTargetLeft);
         assert(chatlayout::searchHeight>=22*scale);assert(chatlayout::searchTop+chatlayout::searchHeight<=height-22);
-        assert(chatlayout::listTop+chatlayout::visibleRows*chatlayout::rowHeight<height-90-(chatlayout::searchHeight-22)-22);
+        // The final row's actual input rectangle ends three pixels before
+        // its separator. Compare that rectangle with pagination's input edge.
+        assert(chatlayout::listTop+chatlayout::visibleRows*chatlayout::rowHeight-3<height-90-(chatlayout::searchHeight-22)-22);
         assert(chatlayout::composerMinHeight>=15*scale*1.3f+2*chatlayout::composerPadding);
         assert(chatlayout::composerMaxHeight>=chatlayout::composerMinHeight);assert(chatlayout::transcriptTop<height-22-chatlayout::composerMaxHeight-24);
     }
