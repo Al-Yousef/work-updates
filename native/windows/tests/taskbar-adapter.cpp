@@ -67,7 +67,7 @@ int main() {
         auto handler=new textscale::Handler(window,WM_APP+230);void* typed=nullptr;
         check(handler->QueryInterface(textscale::handlerId,&typed)==S_OK&&typed,"Text notification exposes the exact system delegate ABI");static_cast<IUnknown*>(typed)->Release();
         check(handler->QueryInterface(textscale::agileId,&typed)==S_OK&&typed,"Text notification can arrive from the system's background thread");static_cast<IUnknown*>(typed)->Release();
-        check(handler->QueryInterface(IID_IInspectable,&typed)==E_NOINTERFACE&&!typed,"Text delegate refuses unrelated interfaces");
+        check(handler->QueryInterface(__uuidof(IInspectable),&typed)==E_NOINTERFACE&&!typed,"Text delegate refuses unrelated interfaces");
         std::thread notification([&]{handler->Invoke(nullptr,nullptr);});notification.join();check(textNotifications==0,"System callback does not mutate the UI from its thread");drain();
         check(textNotifications==1&&notificationThread==GetCurrentThreadId(),"Owned UI thread handles the posted text-size notification");
         handler->detach();handler->Invoke(nullptr,nullptr);drain();check(textNotifications==1,"Detached settings callbacks cannot target a destroyed or reused window");handler->Release();

@@ -27,7 +27,7 @@ public:
     void detach(){std::lock_guard lock(guard);window=nullptr;}
     HRESULT STDMETHODCALLTYPE QueryInterface(REFIID id,void** result) override {
         if(!result)return E_POINTER;*result=nullptr;
-        if(id==IID_IUnknown||id==handlerId||id==agileId){*result=static_cast<ChangeHandler*>(this);AddRef();return S_OK;}return E_NOINTERFACE;
+        if(id==__uuidof(IUnknown)||id==handlerId||id==agileId){*result=static_cast<ChangeHandler*>(this);AddRef();return S_OK;}return E_NOINTERFACE;
     }
     ULONG STDMETHODCALLTYPE AddRef() override{return InterlockedIncrement(&references);}
     ULONG STDMETHODCALLTYPE Release() override{const auto left=InterlockedDecrement(&references);if(!left)delete this;return left;}
