@@ -5,6 +5,16 @@ const assert = require('node:assert/strict');
 const { summary, percentile, hardwareKey: fingerprint } = require('../src/performance-report.cjs');
 const { growth, phases, phaseVisibility } = require('../src/performance-qualification.cjs');
 const read = (file) => JSON.parse(fs.readFileSync(file, 'utf8').replace(/^\uFEFF/, ''));
+function verifyShutdown(cleanup, collectorExit, ready) {
+  assert.equal(cleanup.normalExit, true);
+  assert.ok(ready.collectorSession, 'Original collector launch identity is missing');
+  assert.equal(collectorExit.pid, cleanup.collectorPid, 'Original collector PID differs');
+  assert.equal(collectorExit.pid, ready.collectorPid, 'Original collector receipt differs');
+  assert.equal(collectorExit.session, ready.collectorSession, 'Original collector launch differs');
+  assert.equal(collectorExit.exitCode, 0, 'Original collector did not exit zero');
+  assert.equal(collectorExit.signal, null, 'Original collector was terminated by a signal');
+  assert.equal(collectorExit.intentional, true, 'Original collector shutdown was not requested');
+}
 function report(directory) {
   const metadata = read(path.join(directory, 'metadata.json'));
   assert.equal(metadata.schema, 1);
@@ -19,7 +29,7 @@ function report(directory) {
       cleanup = read(path.join(root, 'cleanup.json'));
     assert.equal(ready.chatCount, count);
     assert.ok(ready.backendPid && ready.collectorPid);
-    assert.equal(cleanup.normalExit, true);
+    verifyShutdown(cleanup, read(path.join(root, 'collector-exit.json')), ready);
     for (const phase of [
       ...phases,
       ...(metadata.soakSeconds ? ['navigation_reconnect_soak'] : []),
@@ -185,4 +195,4 @@ if (require.main === module) {
     process.exitCode = 1;
   }
 }
-module.exports = { report };
+module.exports = { report, verifyShutdown };

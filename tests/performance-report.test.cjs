@@ -2,6 +2,18 @@
 const test = require('node:test'),
   assert = require('node:assert/strict');
 const { summary, comparison, percentile } = require('../src/performance-report.cjs');
+test('a cleanup boolean cannot hide a killed collector or a different original launch', () => {
+  const { verifyShutdown } = require('../scripts/performance-report.cjs');
+  const ready = { collectorPid: 123, collectorSession: 'owned-session' };
+  const cleanup = { normalExit: true, collectorPid: 123 };
+  const exited = { pid: 123, session: 'owned-session', exitCode: 0, signal: null, intentional: true };
+  assert.doesNotThrow(() => verifyShutdown(cleanup, exited, ready));
+  for (const change of [e => {e.exitCode=1;}, e => {e.signal='SIGTERM';}, e => {e.session='other';},
+    e => {e.pid=124;}, e => {e.intentional=false;}]) {
+    const bad = {...exited}; change(bad);
+    assert.throws(() => verifyShutdown(cleanup, bad, ready));
+  }
+});
 const process = (pid, cpu, creation = 'one') => ({
   pid,
   creationTicks: creation,
