@@ -321,6 +321,9 @@ async function waitFor(page, fn) {
     );
     await page.screenshot({ path: path.join(output, 'composer.png') });
     await page.getByRole('button', { name: 'Queue task', exact: true }).click();
+    // A click receipt precedes the asynchronous create result. Observe the
+    // original composer closing before opening a different panel.
+    await page.locator('#task-title').waitFor({ state: 'hidden', timeout: 6000 });
     await chooseView('queued');
     await page.locator('.card-trigger').first().click();
     await page.getByRole('button', { name: 'Start chat', exact: true }).click();
