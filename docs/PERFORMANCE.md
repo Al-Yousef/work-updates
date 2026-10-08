@@ -104,11 +104,19 @@ retains all local handler exceptions to the 100 ms goal and separates Electron
 backend/helpers from native shell and collector metrics. JSON-only CI artifacts
 allow reviewing evidence without downloading a native executable or package.
 
-This exit accounting follows the Windows [.NET Process implementation](https://github.com/dotnet/runtime/blob/main/src/libraries/System.Diagnostics.Process/src/System/Diagnostics/Process.Windows.cs)
-and [GetProcessTimes contract](https://learn.microsoft.com/en-us/windows/win32/api/processthreadsapi/nf-processthreadsapi-getprocesstimes).
-An actual owned Node-child test verifies final CPU after normal exit, unchanged
-creation identity, exit between pinning and live counter reads, null live
-counters and immediate handle release. Unknown
+This exit accounting uses read-only [OpenProcess](https://learn.microsoft.com/en-us/windows/win32/api/processthreadsapi/nf-processthreadsapi-openprocess)
+and [GetProcessTimes](https://learn.microsoft.com/en-us/windows/win32/api/processthreadsapi/nf-processthreadsapi-getprocesstimes)
+on the original kernel handle. An exited process object can still be opened while
+another original handle retains it; `Process.GetProcessById` first checks the
+live-process list and rejects that object. The actual owned Node-child test
+reproduces this rejection and verifies direct kernel acquisition after exit
+between metadata discovery and pinning. It separately verifies exit between
+pinning and live counter reads, unchanged creation identity, final CPU, null live
+counters and immediate handle release. Live memory and handle counts use the
+same original handle; thread count uses the exact-identity CIM discovery snapshot.
+Counter reads are limited to proven owned descendants; no process mutations or
+privilege adjustments are used.
+Unknown
 departures and forged/revived exits remain failed report-policy tests. The
 qualification artifact also retains its synthetic startup count/owner record
 and reconnect counters.
@@ -143,3 +151,13 @@ visible phases must remain pinned and visible. Reports without this evidence are
 rejected. The earlier hidden-idle result is retained as historical evidence of
 that incorrect workload, and the separate chat-switching CPU variation remains
 unexplained. Workload durations and regression thresholds are unchanged.
+
+The corrected-mode [run 37727957985](https://github.com/Al-Yousef/work-updates/actions/runs/37727957985)
+completed its soak and all five baselines, then rejected one short-lived Electron
+helper during the final comparison at handle acquisition. Its failed raw samples
+remain retained. Direct kernel acquisition addresses the demonstrated live-list
+race without treating an unavailable process as zero or discarding its sample.
+A destroyed kernel object, changed creation identity or missing counter still
+fails qualification. Polling does not establish a complete process-lifecycle
+trace for helpers born and exited entirely between observations; ETW remains
+outside this measurement contract.

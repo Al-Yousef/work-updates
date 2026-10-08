@@ -11,6 +11,9 @@ on:
       - '.github/workflows/performance-qualification.yml'
       - 'src/performance-qualification.cjs'
       - 'scripts/native-performance-audit.ps1'
+      - 'scripts/owned-process-handle.ps1'
+      - 'scripts/owned-process-metrics.ps1'
+      - 'scripts/owned-process-metrics.test.ps1'
       - 'scripts/performance-qualification-report.cjs'
 permissions:
   contents: read

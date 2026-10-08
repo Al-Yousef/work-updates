@@ -1,11 +1,18 @@
+. (Join-Path $PSScriptRoot 'owned-process-handle.ps1')
 function Close-OwnedProcessMeasurements([hashtable]$Tracked) {
     foreach($taskEntry in @($Tracked.Values)){$taskEntry.process.Dispose()}
     $Tracked.Clear()
 }
+function Get-OwnedFailureDetails($Exception) {
+    $taskCause=$Exception.GetBaseException()
+    $taskFailure=@{exceptionType=$Exception.GetType().Name;causeType=$taskCause.GetType().Name}
+    if($taskCause -is [ComponentModel.Win32Exception]){$taskFailure.nativeErrorCode=$taskCause.NativeErrorCode}
+    return $taskFailure
+}
 function Get-OwnedProcessSample {
-    param([Parameter(Mandatory)][hashtable]$Roots,[Parameter(Mandatory)][hashtable]$Seen,[Parameter(Mandatory)][hashtable]$Tracked,[scriptblock]$HandlesPinned=$null)
+    param([Parameter(Mandatory)][hashtable]$Roots,[Parameter(Mandatory)][hashtable]$Seen,[Parameter(Mandatory)][hashtable]$Tracked,[scriptblock]$HandlesPinned=$null,[scriptblock]$RowsDiscovered=$null)
     $taskAt=(Get-Date).ToUniversalTime().ToString('o')
-    $taskRows=@(Get-CimInstance Win32_Process -Property ProcessId,ParentProcessId,CreationDate,Name)
+    $taskRows=@(Get-CimInstance Win32_Process -Property ProcessId,ParentProcessId,CreationDate,Name,ThreadCount)
     $taskOwned=@{}
     foreach($taskRow in $taskRows){
         $taskId=[string]$taskRow.ProcessId
@@ -21,6 +28,9 @@ function Get-OwnedProcessSample {
         }
     } while($taskAdded)
     $taskSamples=@{};$taskLive=@{}
+    # The owned lifecycle test exits a child after metadata discovery and before
+    # pinning. Production never supplies this callback.
+    if($RowsDiscovered){& $RowsDiscovered $taskOwned}
     function Get-OwnedExit($Entry) {
         if(-not $Entry.process.HasExited){throw 'Original process has no confirmed exit'}
         $taskExit=@{}+$Entry.identity
@@ -42,15 +52,14 @@ function Get-OwnedProcessSample {
         try {
             if(-not $Tracked.ContainsKey($taskKey)){
                 if($Tracked.Count -ge 256){throw 'Original process handle observer exceeds its finite bound'}
-                $taskProcess=[Diagnostics.Process]::GetProcessById([int]$taskRow.ProcessId)
+                $taskProcess=[HyphenOwnedProcessHandle]::new([int]$taskRow.ProcessId)
                 try {
-                    [void]$taskProcess.Handle
                     $taskStage='verify_original_identity'
                     if([Math]::Abs($taskProcess.StartTime.ToUniversalTime().Ticks-$taskCreated) -gt 10){throw 'Original process creation identity changed'}
                     $Tracked[$taskKey]=@{process=$taskProcess;identity=@{pid=[int]$taskRow.ProcessId;parentPid=[int]$taskRow.ParentProcessId;creationTicks=[string]$taskCreated;name=$taskRow.Name;startedAt=$taskProcess.StartTime.ToUniversalTime().ToString('o')}}
                 } catch {$taskProcess.Dispose();throw}
             }
-        } catch {$taskSamples[$taskKey]=@{pid=[int]$taskRow.ProcessId;parentPid=[int]$taskRow.ParentProcessId;creationTicks=[string]$taskCreated;name=$taskRow.Name;unavailable=$true;unavailableStage=$taskStage;exceptionType=$_.Exception.GetType().Name;unavailableAt=(Get-Date).ToUniversalTime().ToString('o')}}
+        } catch {$taskSamples[$taskKey]=@{pid=[int]$taskRow.ProcessId;parentPid=[int]$taskRow.ParentProcessId;creationTicks=[string]$taskCreated;name=$taskRow.Name;unavailable=$true;unavailableStage=$taskStage;unavailableAt=(Get-Date).ToUniversalTime().ToString('o')}+(Get-OwnedFailureDetails $_.Exception)}
     }
     # The optional dependency is used only by the owned lifecycle test to
     # terminate its child normally between handle pinning and counter reads.
@@ -60,7 +69,7 @@ function Get-OwnedProcessSample {
         $taskKey=$taskId+':'+$taskCreated
         if(-not $Tracked.ContainsKey($taskKey)){continue}
         try {
-            $taskEntry=$Tracked[$taskKey];$taskProcess=$taskEntry.process;$taskProcess.Refresh()
+            $taskEntry=$Tracked[$taskKey];$taskProcess=$taskEntry.process
             # CIM timestamps have microsecond precision; tolerate only its
             # sub-microsecond truncation, never a reused PID within one second.
             if($taskProcess.HasExited){$taskSamples[$taskKey]=Get-OwnedExit $taskEntry}
@@ -68,11 +77,15 @@ function Get-OwnedProcessSample {
                 $taskSample=@{}+$taskEntry.identity
                 $taskSample.lifecycle='running';$taskSample.handlePinned=$true
                 $taskSample.cpuSeconds=$taskProcess.TotalProcessorTime.TotalSeconds
-                $taskSample.workingSetBytes=$taskProcess.WorkingSet64;$taskSample.privateBytes=$taskProcess.PrivateMemorySize64
-                $taskSample.handles=$taskProcess.HandleCount;$taskSample.threads=$taskProcess.Threads.Count
+                $taskMemory=$taskProcess.ReadMemory()
+                $taskSample.workingSetBytes=$taskMemory.WorkingSetSize.ToUInt64();$taskSample.privateBytes=$taskMemory.PrivateUsage.ToUInt64()
+                # Thread count belongs to the exact creation identity in the
+                # discovery snapshot; do not reopen a live PID to enumerate it.
+                if($null -eq $taskRow.ThreadCount){throw 'Original process thread count was unavailable'}
+                $taskSample.handles=$taskProcess.HandleCount;$taskSample.threads=[int]$taskRow.ThreadCount
                 $taskSamples[$taskKey]=$taskSample;$taskLive[$taskKey]=$true
             }
-        } catch {$taskSamples[$taskKey]=@{pid=[int]$taskRow.ProcessId;parentPid=[int]$taskRow.ParentProcessId;creationTicks=[string]$taskCreated;name=$taskRow.Name;unavailable=$true;unavailableStage='read_original_counters';exceptionType=$_.Exception.GetType().Name;unavailableAt=(Get-Date).ToUniversalTime().ToString('o')}}
+        } catch {$taskSamples[$taskKey]=@{pid=[int]$taskRow.ProcessId;parentPid=[int]$taskRow.ParentProcessId;creationTicks=[string]$taskCreated;name=$taskRow.Name;unavailable=$true;unavailableStage='read_original_counters';unavailableAt=(Get-Date).ToUniversalTime().ToString('o')}+(Get-OwnedFailureDetails $_.Exception)}
     }
     foreach($taskKey in @($Tracked.Keys)){
         if($taskLive.ContainsKey($taskKey)){continue}
@@ -81,7 +94,7 @@ function Get-OwnedProcessSample {
             $taskSamples[$taskKey]=Get-OwnedExit $taskEntry
             $taskEntry.process.Dispose();$Tracked.Remove($taskKey)
         } catch {
-            $taskSample=@{}+$taskEntry.identity;$taskSample.unavailable=$true;$taskSample.unavailableStage='confirm_original_exit';$taskSample.exceptionType=$_.Exception.GetType().Name;$taskSample.unavailableAt=(Get-Date).ToUniversalTime().ToString('o');$taskSamples[$taskKey]=$taskSample
+            $taskSample=@{}+$taskEntry.identity+(Get-OwnedFailureDetails $_.Exception);$taskSample.unavailable=$true;$taskSample.unavailableStage='confirm_original_exit';$taskSample.unavailableAt=(Get-Date).ToUniversalTime().ToString('o');$taskSamples[$taskKey]=$taskSample
         }
     }
     $taskValues=@($taskSamples.Values)
