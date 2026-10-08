@@ -182,3 +182,11 @@ and null live counters once, then reproduces error 87 after all original handles
 are released. The unchanged report policy reproduces those raw samples without
 gaps. This faster polling still cannot establish an exhaustive ETW lifecycle
 trace; children shorter than an actual discovery gap may remain unobserved.
+
+## Owned event trace
+
+`scripts/owned-etw-audit.ps1` runs only on the isolated Windows CI runner. It starts a unique non-restarting ETW file session using the pinned Microsoft TraceEvent 3.2.8 package, keeps original root handles until analysis, and records process/thread/context-switch events around eight short-lived owned Node children and a fresh 100-source native pilot. Actual process start/stop kernel keys, parent lifetimes and timestamps establish each retained descendant. A changed original identity, overlapping lifetime, missing exit, reported event loss, missing scheduling data, oversized trace or uncertain owned shutdown fails the report. The trace observes events separately from the polling sampler; it does not fabricate counters for processes absent from that sampler.
+
+Only owned synthetic JSON and source/tool/candidate hashes are published. Raw ETL files, command lines, kernel pointers and unrelated system records are not published. The recorder stops only its own uniquely named session, refuses adoption, and never runs on the policy-blocked local machine. Process and context-switch observations apply only to this bounded CI workload. Context switches are not CPU hardware wakeups or energy; physical interaction, optimization comparisons, energy and longer app-specific trace qualification remain separate.
+
+References: [Microsoft TraceEvent guide](https://github.com/microsoft/perfview/blob/v3.2.8/documentation/TraceEvent/TraceEventProgrammersGuide.md) and [pinned provider package](https://www.nuget.org/packages/Microsoft.Diagnostics.Tracing.TraceEvent/3.2.8).

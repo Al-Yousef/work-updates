@@ -1,0 +1,53 @@
+name: Owned process ETW verification
+on:
+  workflow_dispatch:
+  pull_request:
+    paths:
+      - '.github/workflows/owned-etw.yml'
+      - 'scripts/owned-etw-*'
+      - 'scripts/performance-etw/**'
+permissions:
+  contents: read
+jobs:
+  owned-etw:
+    name: Owned ETW lifecycle and scheduling
+    runs-on: windows-2025
+    timeout-minutes: 20
+    steps:
+      - uses: actions/checkout@v4
+      - uses: actions/setup-node@v4
+        with:
+          node-version: '24'
+          cache: npm
+      - uses: actions/setup-python@v5
+        with:
+          python-version: '3.12'
+      - uses: actions/setup-dotnet@v4
+        with:
+          dotnet-version: '8.0.x'
+      - run: npm ci --no-fund
+      - run: node node_modules/electron/install.js
+      - run: npm run audit:release
+      - run: python -m pip install -r requirements-qa.txt
+      - name: Build current digest-verified native source
+        shell: pwsh
+        run: |
+          ./native/windows/bootstrap-toolchain.ps1
+          ./native/windows/build.ps1 -OutputDirectory build/candidate
+      - name: Observe owned lifecycle and scheduling events
+        shell: pwsh
+        run: ./scripts/owned-etw-audit.ps1
+      - name: Publish owned synthetic JSON only
+        if: always()
+        uses: actions/upload-artifact@v4
+        with:
+          name: owned-etw-synthetic-metrics
+          path: |
+            artifacts/performance/etw/**/verification.json
+            artifacts/performance/etw/**/metadata.json
+            artifacts/performance/etw/**/burst.json
+            artifacts/performance/etw/**/*.samples.json
+            artifacts/performance/etw/**/*.workload.json
+            artifacts/performance/etw/**/cleanup.json
+          if-no-files-found: error
+          retention-days: 14
