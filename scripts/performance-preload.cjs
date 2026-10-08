@@ -40,6 +40,14 @@ demo.startDemoObserver = function (value) {
       codexHome: path.join(directory, 'source'),
       pollSeconds: 3,
       python: process.env.WORK_UPDATES_PYTHON,
+      log: { write(type, value) {
+        if (type === 'observer.exited') fs.writeFileSync(
+          path.join(directory, 'collector-exit.json'), JSON.stringify({
+            schema: 1, pid: value.pid, session: value.session, exitCode: value.exitCode,
+            signal: value.signal, intentional: value.intentional,
+            evidence: 'exit event from original owned collector ChildProcess',
+          }));
+      } },
     },
     (feed, health) => {
       if (!feed) return;
@@ -51,6 +59,7 @@ demo.startDemoObserver = function (value) {
           synthetic: true,
           backendPid: process.pid,
           collectorPid: observer?.pid || null,
+          collectorSession: observer?.session || null,
           chatCount: queue.feed.threads.length,
         }),
       );
@@ -61,7 +70,7 @@ demo.startDemoObserver = function (value) {
     clearInterval(stream);
     clearInterval(reconnect);
     watch?.close();
-    close();
+    return close();
   };
   watch = fs.watch(directory, (_, file) => {
     if (String(file) !== 'performance-command.json') return;

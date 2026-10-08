@@ -1058,6 +1058,7 @@ app.whenReady().then(async () => {
 app.on('activate', () => window && show());
 app.on('window-all-closed', () => {});
 let voiceShutdownCompleted=false,voiceShutdownStarted=false;
+let observerShutdownCompleted=false,observerShutdownStarted=false;
 app.on('before-quit', (event) => {
   if(!voiceShutdownCompleted&&voice.active){
     event.preventDefault();quitting=true;
@@ -1067,13 +1068,25 @@ app.on('before-quit', (event) => {
     Promise.resolve(voice.close()).catch(()=>{}).finally(()=>{voiceShutdownCompleted=true;app.quit();});
     return;
   }
+  if (!observerShutdownCompleted && observer?.closeAndWait) {
+    event.preventDefault(); quitting=true;
+    if (observerShutdownStarted) return;
+    observerShutdownStarted=true;
+    Promise.resolve(observer.closeAndWait()).then(() => {
+      observerShutdownCompleted=true;app.quit();
+    }).catch(error => {
+      diagnostics.write('observer.shutdown-unconfirmed', { message: error.message });
+      observerShutdownStarted=false;quitting=false;
+    });
+    return;
+  }
   quitting = true;
   browsers.shutdown();
   clearInterval(documentTimer);
   clearInterval(runtimeTimer);
   diagnostics.write('app.stopping', { pid: process.pid });
   queue.save();
-  observer?.close();
+  Promise.resolve(observer?.close()).catch(() => {});
   summaries?.close();
   client.close();
   desktop?.close();

@@ -98,5 +98,19 @@ class BrowserVault {
     }
     return selected;
   }
+  forget(actorId, id) {
+    const file = this.file(id),
+      owned = this.inspectOwned(actorId).find((row) => row.name === 'browser-vault/' + id + '.enc');
+    if (!owned) throw new Error('Select an existing saved login owned by the current human.');
+    this.load(actorId, owned.origin, id);
+    const stat = fs.lstatSync(this.file(id));
+    if (!stat.isFile() || stat.isSymbolicLink() ||
+        crypto.createHash('sha256').update(fs.readFileSync(file)).digest('hex') !== owned.sha256)
+      throw new Error('Saved login changed before removal. Original bytes are preserved.');
+    fs.unlinkSync(file);
+    if (fs.existsSync(file)) throw new Error('Saved-login removal was not confirmed.');
+    return { vaultId: id, origin: owned.origin, savedLoginForgotten: true,
+      activeBrowserLoginCleared: false, externalSessionsRevoked: false };
+  }
 }
 module.exports = { BrowserVault };

@@ -18,7 +18,11 @@ fs.mkdirSync(directory, { recursive: true });
     assert.equal(await page.evaluate(() => typeof require), 'undefined');
     assert.equal(await page.evaluate(() => typeof process), 'undefined');
     await page.getByLabel('Synthetic editable input').fill('Human-owned fixture input');
-    const result = await app.evaluate(async ({ BrowserWindow }) => {
+    await page.evaluate(() => {
+      localStorage.setItem('synthetic-login', 'owned-fixture-only');
+      document.cookie = 'synthetic_login=owned-fixture-only; Path=/';
+    });
+    const result = await app.evaluate(async ({ BrowserWindow, session }) => {
       let f;
       for (let i = 0; i < 100; i++) {
         f = global.browserFixture;
@@ -42,7 +46,22 @@ fs.mkdirSync(directory, { recursive: true });
       }
       const visible = window.isVisible(),
         owner = f.store.entry(f.id).owner;
-      f.store.close(f.input('/browser close ' + f.id), f.id);
+      const isolated = window.webContents.session;
+      const unrelated = session.fromPartition('hyphen-unrelated-audit-' + f.id);
+      await unrelated.cookies.set({ url: f.origin, name: 'synthetic_other_session',
+        value: 'owned-other-fixture-only' });
+      if (!(await isolated.cookies.get({})).some((c) => c.name === 'synthetic_login'))
+        throw new Error('Synthetic session cookie was not established');
+      const cleared = await f.store.clearLogin(f.input('/browser clear-login ' + f.id), f.id);
+      const probe = new BrowserWindow({ show: false, webPreferences: {
+        session: isolated, nodeIntegration: false, contextIsolation: true, sandbox: true,
+      }});
+      let localStorageCleared;
+      try {
+        await probe.loadURL(f.origin);
+        localStorageCleared = await probe.webContents.executeJavaScript(
+          'localStorage.getItem("synthetic-login") === null');
+      } finally { probe.destroy(); }
       return {
         persistent,
         readContainsFixture: read.text.includes('Owned browser fixture'),
@@ -50,6 +69,12 @@ fs.mkdirSync(directory, { recursive: true });
         visible,
         owner,
         closed: f.store.entry(f.id).owner === 'closed',
+        originalWindowDestroyed: window.isDestroyed(),
+        cookiesCleared: (await isolated.cookies.get({})).length === 0,
+        localStorageCleared,
+        clearReceipt: cleared.loginStorageCleared === true,
+        unrelatedPartitionPreserved: (await unrelated.cookies.get({})).some(
+          (c) => c.name === 'synthetic_other_session'),
       };
     });
     assert.equal(result.persistent, false);
@@ -58,6 +83,11 @@ fs.mkdirSync(directory, { recursive: true });
     assert.equal(result.visible, true);
     assert.equal(result.owner, 'human');
     assert.equal(result.closed, true);
+    assert.equal(result.originalWindowDestroyed, true);
+    assert.equal(result.cookiesCleared, true);
+    assert.equal(result.localStorageCleared, true);
+    assert.equal(result.clearReceipt, true);
+    assert.equal(result.unrelatedPartitionPreserved, true);
     await app.close();
     app = null;
     fs.writeFileSync(

@@ -2,6 +2,7 @@
 const fs = require('node:fs');
 const path = require('node:path');
 const os = require('node:os');
+const crypto = require('node:crypto');
 const { spawn } = require('node:child_process');
 const { atomic, read } = require('./queue.cjs');
 function startObserver(root, options, onFeed) {
@@ -50,6 +51,8 @@ function startObserver(root, options, onFeed) {
   };
   let stopped = false,
     child,
+    childSession,
+    shutdown,
     retry,
     failures = 0,
     connected = false,
@@ -67,15 +70,18 @@ function startObserver(root, options, onFeed) {
     healthBaseline = stamp(healthFile);
     launched = Date.now();
     connected = false;
-    child = spawn(binary, args, { windowsHide: true, stdio: 'ignore' });
+    childSession = crypto.randomUUID();
+    child = spawn(binary, [...args, '--session', childSession], { windowsHide: true, stdio: 'ignore' });
     const own = child;
+    const ownSession = childSession;
     let ended = false;
-    options.log?.write('observer.started', { pid: own.pid, binary });
+    options.log?.write('observer.started', { pid: own.pid, session: ownSession, binary });
     const finish = (code, signal, error) => {
       if (ended) return;
       ended = true;
       options.log?.write(error ? 'observer.error' : 'observer.exited', {
         pid: own.pid,
+        session: ownSession,
         exitCode: code,
         signal,
         intentional: stopped,
@@ -155,6 +161,32 @@ function startObserver(root, options, onFeed) {
   launch();
   const timer = setInterval(poll, options.checkMs || 700);
   poll();
+  function closeAndWait() {
+    if (shutdown) return shutdown;
+    stopped = true; clearInterval(timer); clearTimeout(retry);
+    const own = child, session = childSession;
+    shutdown = new Promise((resolve, reject) => {
+      if (!own || !own.pid) { resolve(); return; }
+      const completed = (code, signal) => {
+        clearTimeout(deadline);
+        if (code === 0 && signal == null) resolve();
+        else reject(new Error('The original collector did not exit normally. Removal is held.'));
+      };
+      const deadline = setTimeout(() => {
+        own.removeListener('exit', completed);
+        reject(new Error('The owned collector did not confirm shutdown. Removal is held.'));
+      }, 10000);
+      if (own.exitCode !== null || own.signalCode !== null) { completed(own.exitCode, own.signalCode); return; }
+      own.once('exit', completed);
+      try {
+        fs.mkdirSync(path.join(root, 'data'), { recursive: true });
+        atomic(path.join(root, 'data', 'stop.flag'), { pid: own.pid, session });
+      } catch (error) {
+        clearTimeout(deadline); own.removeListener('exit', completed); reject(error);
+      }
+    });
+    return shutdown;
+  }
   return {
     ignore(ids) {
       if(!Array.isArray(ids)||ids.length>2048||ids.some(id=>typeof id!=='string'||!id))throw new Error('Invalid disconnected source list');
@@ -162,16 +194,12 @@ function startObserver(root, options, onFeed) {
       if(!config)throw new Error('Observer configuration is unavailable');
       atomic(file,{...config,ignoredThreadIds:[...new Set(ids)]});
     },
-    async closeAndWait() {
-      stopped=true;clearInterval(timer);clearTimeout(retry);
-      const own=child;if(!own||own.exitCode!==null||own.signalCode!==null)return;
-      await new Promise((resolve,reject)=>{
-        const deadline=setTimeout(()=>reject(new Error('The owned collector did not confirm shutdown. Removal is held.')),10000);
-        own.once('exit',()=>{clearTimeout(deadline);resolve();});own.kill();
-      });
-    },
+    closeAndWait,
     get pid() {
       return child?.pid;
+    },
+    get session() {
+      return childSession;
     },
     request(ids) {
       const file=path.join(root,'data','details-request.json');
@@ -180,10 +208,7 @@ function startObserver(root, options, onFeed) {
       fs.writeFileSync(path.join(root, 'data', 'refresh.flag'), 'context');
     },
     close() {
-      stopped = true;
-      clearInterval(timer);
-      clearTimeout(retry);
-      child?.kill();
+      return closeAndWait();
     },
   };
 }

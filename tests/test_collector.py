@@ -1,5 +1,6 @@
 import importlib.util
 import json
+import os
 from pathlib import Path
 import sqlite3
 import tempfile
@@ -13,6 +14,21 @@ spec.loader.exec_module(collector)
 
 
 class FeedTests(unittest.TestCase):
+    def test_stop_receipt_requires_original_pid_and_launch_session(self):
+        with tempfile.TemporaryDirectory() as directory:
+            root = Path(directory)
+            (root / 'data').mkdir()
+            stop = root / 'data' / 'stop.flag'
+            for request in [{'pid': os.getpid() + 1, 'session': 'current'},
+                            {'pid': os.getpid(), 'session': 'old'}, []]:
+                stop.write_text(json.dumps(request), encoding='utf-8')
+                original = stop.read_bytes()
+                self.assertFalse(collector.stop_requested(root, 'current'))
+                self.assertEqual(stop.read_bytes(), original)
+            stop.write_text(json.dumps({'pid': os.getpid(), 'session': 'current'}), encoding='utf-8')
+            self.assertTrue(collector.stop_requested(root, 'current'))
+            self.assertFalse(stop.exists())
+
     def setUp(self):
         collector.SOURCE_CACHE.clear(); collector.TAIL_CACHE.clear(); collector.DETAIL_IDS.clear()
         self.temp = tempfile.TemporaryDirectory()

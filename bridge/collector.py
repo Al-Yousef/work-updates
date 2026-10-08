@@ -527,6 +527,22 @@ def read_original_thread(home, thread_id, since, until, nonce, limit=32):
                          'gaps': gaps}}
 
 
+def stop_requested(root, session):
+    if not root or not session:
+        return False
+    stop = root / 'data' / 'stop.flag'
+    try:
+        if stop.stat().st_size > 1024:
+            return False
+        request = json.loads(stop.read_text(encoding='utf-8-sig'))
+        if request.get('pid') != os.getpid() or request.get('session') != session:
+            return False
+        stop.unlink()
+        return True
+    except (OSError, ValueError, AttributeError):
+        return False
+
+
 def main():
     ap = argparse.ArgumentParser()
     ap.add_argument('--root')
@@ -598,6 +614,8 @@ def main():
     while True:
         if not parent_alive():
             return 0
+        if not args.stdio and stop_requested(root, args.session):
+            return 0
         sequence += 1
         started = time.monotonic()
         try:
@@ -649,9 +667,7 @@ def main():
             if not parent_alive():
                 return 0
             refresh = root / 'data' / 'refresh.flag'
-            stop = root / 'data' / 'stop.flag'
-            if stop.exists():
-                stop.unlink(missing_ok=True)
+            if stop_requested(root, args.session):
                 return 0
             if refresh.exists():
                 refresh.unlink(missing_ok=True)
