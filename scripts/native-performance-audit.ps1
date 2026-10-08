@@ -149,6 +149,7 @@ foreach($taskCount in $ChatCounts){
                             $taskFocusLatency=Click-PerfHit $taskPanel $taskComposerHit
                             $taskFocusState=Get-PerfState $taskPanel $taskRun
                             if(-not $taskFocusState.composerFocused -or $taskFocusState.source -ne $taskLive.source -or $taskFocusState.selected -ne $taskLive.selected){
+                                @{count=$taskCount;phase=$taskPhase;iteration=$taskIteration;before=$taskLive;hit=$taskComposerHit;after=$taskFocusState}|ConvertTo-Json -Depth 12|Set-Content -LiteralPath (Join-Path $taskRun 'focus-failure.json') -Encoding utf8
                                 throw 'Owned composer focus was not confirmed on the selected source'
                             }
                             $taskLatencies+=@{operation='composer_focus_handler';ms=$taskFocusLatency;sourceSelectionVerified=$true;provider='local owned-window focus; network/model latency excluded'}
