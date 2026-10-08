@@ -1516,6 +1516,7 @@ LRESULT CALLBACK panelProc(HWND window, UINT message, WPARAM wp, LPARAM lp) {
             Json report={{"dpi",app.renderer.dpi},{"width",WIDTH},{"height",HEIGHT},{"focused",app.renderer.focused},{"connected",app.renderer.model.connected},{"canDraft",app.renderer.model.canDraft()},{"canReply",app.renderer.model.canReply()},{"notice",app.renderer.notice},{"noticeHeight",app.renderer.noticeHeight},{"transcriptBottom",app.renderer.transcriptBottom()},{"reducedMotion",app.reducedMotion()},{"hits",Json::array()}};
             auto& m=app.renderer.model;report["selected"]=m.selectedId;report["detailPending"]=m.detailPending;report["pending"]=m.pending;report["source"]=m.sourceId;report["detailMatchesSelection"]=m.detail.value("id","")==m.selectedId&&m.detail.value("taskKey","")==m.selectedKey;
             report["lastPress"]=app.lastPressAudit;
+            report["pid"]=GetCurrentProcessId();report["mode"]=app.name();report["panelVisible"]=IsWindowVisible(app.panel)!=FALSE;report["surfaceDraws"]=app.renderer.draws;
             report["accessibilityIds"]=app.accessible?app.accessible->retainedIds():0;
             report["textScale"]=chatlayout::textScale;report["textScaleApiRead"]=app.textScaleRead;report["textScaleWatching"]=app.textSettings.watching();report["textScaleFixture"]=app.auditTextScale>0;
             report["transcriptTop"]=chatlayout::transcriptTop;report["noticeLineHeight"]=app.renderer.noticeLineHeight;report["noticeVisibleLines"]=app.renderer.noticeVisibleLines;

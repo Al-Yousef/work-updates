@@ -69,3 +69,43 @@ test('regressions need comparable independent baselines and an explicit noise al
   );
   assert.equal(percentile([], 0.95), null);
 });
+test('matching hardware fingerprints ignore field order and retain CPU, memory and Windows differences', () => {
+  const { hardwareKey } = require('../src/performance-report.cjs');
+  const first = {hardware:{manufacturer:'Synthetic VM', model:'Synthetic model', logicalCores:4,
+    physicalMemoryBytes:16000000000, processors:[{model:'Synthetic CPU', cores:4, maxClockMHz:2800}]},
+    windows:{caption:'Synthetic Windows', version:'10.0', build:'26100'}};
+  const reordered = {windows:{build:'26100', version:'10.0', caption:'Synthetic Windows'},
+    hardware:{processors:[{maxClockMHz:2800, cores:4, model:'Synthetic CPU'}], physicalMemoryBytes:16000000000,
+      logicalCores:4, model:'Synthetic model', manufacturer:'Synthetic VM'}};
+  assert.equal(hardwareKey(first), hardwareKey(reordered));
+  for (const change of [m => {m.hardware.processors[0].model='Other CPU';},
+    m => {m.hardware.physicalMemoryBytes++;}, m => {m.windows.build='different';}]) {
+    const different = structuredClone(first); change(different);
+    assert.notEqual(hardwareKey(first), hardwareKey(different));
+  }
+  assert.throws(() => hardwareKey({hardware:first.hardware}), /metadata/);
+});
+function tracked(pid,cpu,start,exit=null){
+  const startedAt=new Date(1700000000000+start*1000).toISOString();
+  return {...process(pid,cpu,String(BigInt(Date.parse(startedAt))*10000n+621355968000000000n)),handlePinned:true,startedAt,
+    ...(exit===null?{lifecycle:'running'}:{lifecycle:'exited',exitedAt:new Date(1700000000000+exit*1000).toISOString(),exitCode:0,workingSetBytes:null,privateBytes:null,handles:null,threads:null})};
+}
+test('known child birth and final CPU from its original handle complete an interval without masking an unknown departure',()=>{
+  const r=summary([sample(0,[tracked(1,0,0)]),sample(1,[tracked(1,.1,0),tracked(2,.2,.5)]),
+    sample(2,[tracked(1,.2,0),tracked(2,.3,.5,1.5)]),sample(3,[tracked(1,.3,0)])],2);
+  assert.equal(r.partial,false);assert.equal(r.measurementGaps,0);
+  assert.equal(r.confirmedProcessStarts,1);assert.equal(r.confirmedProcessExits,1);
+  assert.equal(r.metrics.cpuNormalizedPercent.count,3);assert.ok(Math.abs(r.metrics.cpuNormalizedPercent.p95-15)<1e-9);
+  assert.equal(r.metrics.privateBytes.min,50);assert.equal(r.metrics.privateBytes.max,100);
+  const missing=summary([sample(0,[tracked(1,0,0),tracked(2,0,0)]),sample(1,[tracked(1,.1,0)])],2);
+  assert.equal(missing.partial,true);assert.equal(missing.metrics.cpuNormalizedPercent.count,0);
+});
+test('unproven births, fabricated exits, changed identities and revived exited counters remain incomplete',()=>{
+  const before=sample(1,[tracked(1,.1,0)]),child=tracked(2,.1,.5);
+  assert.equal(summary([before,sample(2,[tracked(1,.2,0),child])],2).partial,true);
+  for(const change of [p=>{p.handlePinned=false;},p=>{p.privateBytes=0;},p=>{p.creationTicks='other';},p=>{p.exitedAt=sample(4,[]).at;}]){
+    const ended=tracked(2,.2,.5,1.5);change(ended);
+    assert.equal(summary([sample(1,[tracked(1,.1,0),tracked(2,.1,.5)]),sample(2,[tracked(1,.2,0),ended])],2).partial,true);
+  }
+  assert.equal(summary([sample(1,[tracked(1,.1,0),tracked(2,.2,.5,.9)]),sample(2,[tracked(1,.2,0),tracked(2,.3,.5)])],2).partial,true);
+});

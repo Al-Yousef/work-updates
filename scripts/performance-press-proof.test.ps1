@@ -3,8 +3,8 @@ $ErrorActionPreference='Stop'
 $taskBefore=[pscustomobject]@{lastPress=[pscustomobject]@{sequence=1}}
 $taskHit=[pscustomobject]@{key='exact-target';sourceId='exact-source'}
 $taskChecks=0
-function Check-Press($Press,[string]$Source,[string]$Expected){
-    $taskActual=Get-HyphenSelectionProof $taskBefore ([pscustomobject]@{lastPress=$Press;source=$Source}) $taskHit
+function Check-Press($Press,[string]$Source,[string]$Expected,$Down=$null){
+    $taskActual=Get-HyphenSelectionProof $taskBefore ([pscustomobject]@{lastPress=$Press;source=$Source}) $taskHit $Down
     if($taskActual -ne $Expected){throw ('Expected '+$Expected+' press proof; received '+$taskActual)}
     $script:taskChecks++
 }
@@ -17,4 +17,15 @@ $taskCancelled.sequence=1;Check-Press $taskCancelled '' 'invalid';$taskCancelled
 $taskCancelled.sourceAfterDecision='different-source';Check-Press $taskCancelled '' 'invalid';$taskCancelled.sourceAfterDecision='old-source'
 $taskCancelled.expectedKey='different-target';Check-Press $taskCancelled '' 'invalid'
 Check-Press ([pscustomobject]@{sequence=2;expectedKey='exact-target';disposition='cancelled'}) '' 'invalid'
+$taskDown=[pscustomobject]@{lastPress=[pscustomobject]@{sequence=2;expectedKey='moved-row';disposition='down'}}
+$taskCancelled.expectedKey='moved-row'
+Check-Press $taskCancelled '' 'stale_snapshot_cancelled' $taskDown
+$taskCancelled.disposition='accepted';$taskCancelled | Add-Member actualKey 'moved-row'
+Check-Press $taskCancelled 'different-source' 'invalid' $taskDown
+$taskCancelled.disposition='cancelled';$taskCancelled.sequence=3
+Check-Press $taskCancelled '' 'invalid' $taskDown
+$taskCancelled.sequence=2;$taskCancelled.sourceAfterDecision='different-source'
+Check-Press $taskCancelled '' 'invalid' $taskDown
+$taskCancelled.sourceAfterDecision='old-source';$taskDown.lastPress.sequence=1
+Check-Press $taskCancelled '' 'invalid' $taskDown
 Write-Output ('PASS '+$taskChecks+' native press proof gates; stale, unbound and changed-selection records are refused')

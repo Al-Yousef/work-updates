@@ -44,6 +44,7 @@ jobs:
         shell: pwsh
         run: |
           ./scripts/owned-process-metrics.test.ps1
+          ./scripts/owned-process-observer.test.ps1
           ./scripts/performance-press-proof.test.ps1
           ./scripts/native-performance-audit.ps1 -SecondsPerPhase 6 -SampleIntervalMs 1000
       - name: Packaged update and program rollback with a disposable native app
@@ -70,6 +71,17 @@ jobs:
             native/windows/build/candidate/artifacts/*.png
             native/windows/build/candidate/build-verification.json
             native/windows/build/candidate/artifacts/status-verification.json
+          if-no-files-found: error
+          retention-days: 14
+      - uses: actions/upload-artifact@v4
+        with:
+          name: native-performance-synthetic-metrics
+          path: |
+            artifacts/performance/**/verification.json
+            artifacts/performance/**/metadata.json
+            artifacts/performance/**/*.samples.json
+            artifacts/performance/**/*.workload.json
+            artifacts/performance/**/cleanup.json
           if-no-files-found: error
           retention-days: 14
       - uses: actions/upload-artifact@v4

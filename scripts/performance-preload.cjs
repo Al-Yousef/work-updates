@@ -26,6 +26,8 @@ AssistantProvider.prototype.answer = async () => ({
 });
 let queue,
   stream = null,
+  reconnect = null,
+  control = null,
   watch = null,
   overlay = {},
   lastId = '';
@@ -57,6 +59,7 @@ demo.startDemoObserver = function (value) {
   const close = observer.close.bind(observer);
   observer.close = () => {
     clearInterval(stream);
+    clearInterval(reconnect);
     watch?.close();
     close();
   };
@@ -73,9 +76,11 @@ demo.startDemoObserver = function (value) {
     if (!command.id || command.id === lastId) return;
     lastId = command.id;
     clearInterval(stream);
+    clearInterval(reconnect);
     stream = null;
+    reconnect = null;
     overlay = {};
-    if (command.phase === 'active_stream')
+    if (['active_stream', 'navigation_reconnect_soak'].includes(command.phase))
       stream = setInterval(() => {
         const feed = structuredClone(queue.feed);
         feed.collectedAt = Date.now() / 1000;
@@ -88,6 +93,39 @@ demo.startDemoObserver = function (value) {
           });
         queue.setFeed(feed, { ok: true, synthetic: true });
       }, 200);
+    if (command.phase === 'navigation_reconnect_soak') {
+      let cycles = 0, observedReconnections = 0, priorSubscriptions = null;
+      const originalOwner = control?.owner;
+      reconnect = setInterval(() => {
+        // The corner lease is deliberately kept alive. Losing that lease
+        // makes the native shell exit by design; only its queue subscription
+        // should reconnect through the production read-stream recovery path.
+        if (!control) return;
+        const subscribers = [...control.subscribers].filter(s => !s.destroyed);
+        const identities = new Set(subscribers.map(s => s.diagnosticSession));
+        if(priorSubscriptions && [...identities].some(id => !priorSubscriptions.has(id)))
+          observedReconnections++;
+        if(subscribers.length) {
+          priorSubscriptions = identities;
+          for (const socket of subscribers) socket.destroy();
+          cycles++;
+        }
+        fs.writeFileSync(
+          path.join(directory, 'performance-soak.json'),
+          JSON.stringify({
+            reconnectCycles: cycles,
+            observedReconnections,
+            ownershipLeasePreserved: !!originalOwner && control.owner === originalOwner && !originalOwner.destroyed,
+            subscribersBeforeLastDisconnect: subscribers.length,
+            boundedLatestFrames: [...control.subscribers].every(
+              (s) => !s.latestState || Buffer.byteLength(s.latestState) <= 2 * 1024 * 1024,
+            ),
+            clients: control.clients.size,
+            subscribers: control.subscribers.size,
+          }),
+        );
+      }, 15000);
+    }
     if (command.phase === 'image_decode')
       overlay = {
         assistant: {
@@ -125,6 +163,7 @@ NativeControl.prototype.broadcast = function (state) {
   return broadcast.call(this, { ...state, ...overlay });
 };
 NativeControl.prototype.start = async function () {
+  control = this;
   const state = this.state;
   this.state = () => ({ ...state(), ...overlay });
   return start.call(this);
