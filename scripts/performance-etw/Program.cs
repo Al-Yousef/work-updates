@@ -25,14 +25,23 @@ var reportFile = Path.Combine(directory, "verification.json");
 var roots = new List<OwnedRoot>();
 bool ownedSessionStopped = false;
 int recordedLoss = -1;
+var sessionName = "Hyphen-owned-" + Guid.NewGuid();
+string phase = "session_start";
 try {
-    using (var session = new TraceEventSession("Hyphen-owned-" + Guid.NewGuid(), traceFile,
+    if (TraceEventSession.GetActiveSessionNames().Contains(sessionName, StringComparer.OrdinalIgnoreCase))
+        throw new InvalidOperationException("The new trace name already exists; no existing session may be adopted.");
+    using (var session = new TraceEventSession(sessionName, traceFile,
         TraceEventSessionOptions.Create | TraceEventSessionOptions.NoRestartOnCreate)) {
         session.StopOnDispose = true;
         session.BufferSizeMB = 64;
-        if (session.EnableKernelProvider(KernelTraceEventParser.Keywords.Process |
-            KernelTraceEventParser.Keywords.Thread | KernelTraceEventParser.Keywords.ContextSwitch))
-            throw new InvalidOperationException("An existing trace was encountered; no existing session may be adopted.");
+        // In TraceEvent 3.2.8 the modern system-provider branch returns true
+        // for a newly created session too. NoRestartOnCreate guards collisions
+        // in EnsureStarted; the legacy boolean is not an ownership receipt.
+        session.EnableKernelProvider(KernelTraceEventParser.Keywords.Process |
+            KernelTraceEventParser.Keywords.Thread | KernelTraceEventParser.Keywords.ContextSwitch);
+        if (!session.IsActive || !TraceEventSession.GetActiveSessionNames().Contains(sessionName, StringComparer.OrdinalIgnoreCase))
+            throw new InvalidOperationException("The uniquely owned session did not become active.");
+        phase = "owned_fixtures";
         await RunOwned("short_lived_fixture", args[2], new[] {
             Path.Combine(repo,"scripts","owned-etw-burst.cjs"),Path.Combine(directory,"burst.json") });
         await RunOwned("native_pilot", args[3], new[] {
@@ -44,6 +53,9 @@ try {
         ownedSessionStopped = true;
     }
     if (recordedLoss != 0 || !ownedSessionStopped) throw new InvalidOperationException("Trace loss or cleanup is unverified.");
+    if (TraceEventSession.GetActiveSessionNames().Contains(sessionName, StringComparer.OrdinalIgnoreCase))
+        throw new InvalidOperationException("The uniquely owned recording remains active after stop.");
+    phase = "lifecycle_analysis";
     var facts = new List<Fact>();
     int fileLoss;
     using (var source = new ETWTraceEventSource(traceFile)) {
@@ -87,6 +99,7 @@ try {
         owned.Count(x=>x.Group=="short_lived_fixture" && x.Birth.Pid==pid && x.End?.ExitCode==0)!=1))
         throw new InvalidOperationException("The trace missed a known short-lived child or its matching normal exit.");
     var ownedByPid=owned.GroupBy(x=>x.Birth.Pid).ToDictionary(g=>g.Key,g=>g.ToArray());
+    phase = "scheduling_analysis";
     using(var source=new ETWTraceEventSource(traceFile)) {
         long switches=0;
         source.Kernel.ThreadCSwitch += data => {
@@ -117,7 +130,7 @@ try {
     Console.WriteLine($"Owned ETW trace passed: {owned.Length} starts/exits, eight short-lived children, zero recorded loss.");
 } catch(Exception error) {
     File.WriteAllText(reportFile,JsonSerializer.Serialize(new {schema=1,passed=false,
-        ownedSessionStopped,recordedEventsLost=recordedLoss,ownedRoots=roots.Count,
+        phase,ownedSessionStopped,recordedEventsLost=recordedLoss,ownedRoots=roots.Count,
         error=error.GetType().Name,reason=error.Message,accountsUsed=0,installedAppChanged=false}));
     throw;
 } finally { foreach(var root in roots) root.Process.Dispose(); }
