@@ -1,11 +1,16 @@
 import XCTest
 final class WorkUpdatesUITests:XCTestCase {
-    override func setUpWithError() throws {continueAfterFailure=false}
+    override func setUpWithError() throws {
+        continueAfterFailure=false
+        XCUIDevice.shared.orientation = .portrait
+    }
     private func launchDemo()->XCUIApplication {
         let app=XCUIApplication();app.launchArguments=["--demo"];app.launch();return app
     }
     private func capture(_ name:String) {
-        let image=XCTAttachment(screenshot:XCUIApplication().screenshot());image.name=name;image.lifetime = .keepAlways;add(image)
+        // Capture the whole owned simulator display. App-region capture can
+        // retain stale portrait crop coordinates after a landscape rotation.
+        let image=XCTAttachment(screenshot:XCUIScreen.main.screenshot());image.name=name;image.lifetime = .keepAlways;add(image)
     }
     func testNotificationHierarchyAndClickDetails() {
         let app=launchDemo()
@@ -32,10 +37,19 @@ final class WorkUpdatesUITests:XCTestCase {
     }
     func testLandscapeRemainsScrollable() {
         let app=launchDemo();XCUIDevice.shared.orientation = .landscapeLeft
+        defer {XCUIDevice.shared.orientation = .portrait}
+        let landscape=expectation(for:NSPredicate {_,_ in app.frame.width > app.frame.height},evaluatedWith:app)
+        wait(for:[landscape],timeout:10)
         XCTAssertTrue(app.buttons["devices"].waitForExistence(timeout:5))
-        app.swipeUp();XCTAssertTrue(app.buttons["notification-work"].exists)
+        app.swipeUp()
+        let card=app.buttons["notification-work"]
+        XCTAssertTrue(card.waitForExistence(timeout:5))
+        XCTAssertTrue(card.isHittable)
+        let viewport=app.frame,bounds=card.frame
+        XCTAssertGreaterThanOrEqual(bounds.minX,viewport.minX)
+        XCTAssertLessThanOrEqual(bounds.maxX,viewport.maxX)
+        print("Landscape viewport \(viewport); visible card \(bounds)")
         capture("Landscape queue")
-        XCUIDevice.shared.orientation = .portrait
     }
     func testLargeTypeRemainsUsable() {
         let app=XCUIApplication();app.launchArguments=["--demo","--large-type"];app.launch()
