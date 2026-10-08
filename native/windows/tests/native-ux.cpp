@@ -29,7 +29,7 @@ Json state(){SendMessageW(panel,WM_APP+215,0,0);return read(artifacts/L"ux-state
 void wait(auto condition,const char* label){for(int n=0;n<160;++n){if(deadline&&GetTickCount64()>deadline)throw std::runtime_error("Isolated audit exceeded its deadline");if(condition()){check(true,label);return;}Sleep(40);}throw std::runtime_error(label);}
 HWND focus(){GUITHREADINFO i{};i.cbSize=sizeof(i);check(GetGUIThreadInfo(GetWindowThreadProcessId(panel,nullptr),&i)!=0,"Read own child's focus");return i.hwndFocus;}
 void fault(const char* op,Json value=Json::object()){std::string id=std::to_string(++requestId);{std::ofstream out(fixture/L"ux-command.json");out<<Json({{"id",id},{"op",op},{"value",value}}).dump();}wait([&]{try{return read(fixture/L"ux-result.json").value("id","")==id;}catch(...){return false;}},"Isolated fixture acknowledges fault injection");}
-void click(int x,int y){RECT b{};GetClientRect(panel,&b);const auto p=MAKELPARAM(x*b.right/880,y*b.right/880);SendMessageW(panel,WM_LBUTTONDOWN,MK_LBUTTON,p);SendMessageW(panel,WM_LBUTTONUP,0,p);}
+void click(int x,int y){const auto dpi=state().value("dpi",96.0f);const auto p=MAKELPARAM(std::lround(x*dpi/96),std::lround(y*dpi/96));SendMessageW(panel,WM_LBUTTONDOWN,MK_LBUTTON,p);SendMessageW(panel,WM_LBUTTONUP,0,p);}
 void action(AuditAction a){const auto p=SendMessageW(panel,WM_APP+211,static_cast<WPARAM>(a),0);check(p!=0,"Visible enabled action exists");click(LOWORD(p),HIWORD(p));}
 std::wstring draft(){wchar_t text[12002]{};SendMessageW(editor,WM_GETTEXT,12002,reinterpret_cast<LPARAM>(text));return text;}
 void setDraft(const wchar_t* text){SendMessageW(editor,WM_SETTEXT,0,reinterpret_cast<LPARAM>(text));}
@@ -177,6 +177,32 @@ try {
     setDraft(L"Line one\r\nLine two 漢字 😀");RECT before{};GetWindowRect(editor,&before);SendMessageW(panel,WM_DISPLAYCHANGE,0,0);RECT after{};GetWindowRect(editor,&after);
     check(draft()==L"Line one\r\nLine two 漢字 😀"&&before.bottom-before.top==after.bottom-after.top,"Display refresh preserves multiline input and scaled geometry");
     action(AuditAction::FilterMenu);saveCapture((L"ux-menu-"+std::to_wstring(dpi)+L".png").c_str());SendMessageW(panel,WM_KEYDOWN,VK_ESCAPE,0);check(draft()==L"Line one\r\nLine two 漢字 😀","Menu cancellation preserves text");
+    // Real owned HWND resizing exercises layout, EDIT wrapping, MSAA positions,
+    // retained draft/selection and local hit targets without changing Windows.
+    click(static_cast<int>(chatlayout::composerTextLeft+10),static_cast<int>(state().value("height",660.0f)-45));
+    SendMessageW(editor,EM_SETSEL,2,6);
+    const auto resizeDraft=draft();const auto resizeSource=state().value("source","");
+    for(const auto& dimensions:std::vector<std::pair<int,int>>{{720,560},{1280,960},{880,660}}){
+        const auto [logicalWidth,logicalHeight]=dimensions;
+        RECT beforeResize{};GetWindowRect(panel,&beforeResize);
+        check(SetWindowPos(panel,nullptr,beforeResize.left,beforeResize.top,std::lround(logicalWidth*dpi/96.0),std::lround(logicalHeight*dpi/96.0),SWP_NOZORDER|SWP_NOACTIVATE)!=0,"Resize only the owned native panel");
+        auto resized=state();const auto resizeDescription="Native canvas adopts "+std::to_string(logicalWidth)+"x"+std::to_string(logicalHeight)+" logical dimensions (actual "+std::to_string(resized.value("width",0.0f))+"x"+std::to_string(resized.value("height",0.0f))+")";
+        check(std::abs(resized.value("width",0.0f)-logicalWidth)<.1f&&std::abs(resized.value("height",0.0f)-logicalHeight)<.1f,resizeDescription.c_str());
+        DWORD begin=0,end=0;SendMessageW(editor,EM_GETSEL,reinterpret_cast<WPARAM>(&begin),reinterpret_cast<LPARAM>(&end));
+        check(draft()==resizeDraft&&begin==2&&end==6&&focus()==editor&&resized.value("source","")==resizeSource,"Resizing preserves the source, Unicode draft, selection and native focus");
+        const auto field=resized.at("composerBoundsPx");
+        auto send=std::find_if(resized["hits"].begin(),resized["hits"].end(),[](const auto& hit){return hit.value("action","")=="send";});
+        check(send!=resized["hits"].end()&&field[2].template get<int>()<=std::lround((*send)["box"][0].template get<float>()*dpi/96),"Resized native EDIT stays clear of the Send target");
+        for(const auto& hit:resized["hits"]){const auto box=hit.at("box");check(box[0].template get<float>()>=0&&box[1].template get<float>()>=0&&box[2].template get<float>()<=logicalWidth&&box[3].template get<float>()<=logicalHeight,"Current resize targets remain inside the actual canvas");}
+        const auto closeId=named(L"Hide Hyphen");long x=0,y=0,w=0,h=0;
+        check(accessible->accLocation(&x,&y,&w,&h,child(closeId))==S_OK&&w>0&&h>0,"MSAA returns the resized close target's actual geometry");
+        saveCapture((L"ux-resize-"+std::to_wstring(logicalWidth)+L"-"+std::to_wstring(dpi)+L".png").c_str());
+    }
+    MINMAXINFO limits{};SendMessageW(panel,WM_GETMINMAXINFO,0,reinterpret_cast<LPARAM>(&limits));
+    check(limits.ptMinTrackSize.x==std::lround(720*dpi/96.0)&&limits.ptMinTrackSize.y==std::lround(560*dpi/96.0),"Resize minimums are expressed in actual display pixels");
+    check(limits.ptMaxTrackSize.x==std::lround(1280*dpi/96.0)&&limits.ptMaxTrackSize.y==std::lround(960*dpi/96.0),"Isolated DPI capture supports the full logical resize range without changing Windows display settings");
+    RECT resizeRect{};GetWindowRect(panel,&resizeRect);const auto edge=MAKELPARAM(resizeRect.left+1,resizeRect.top+1);
+    check(SendMessageW(panel,WM_NCHITTEST,0,edge)==HTTOPLEFT,"Pinned panel exposes the actual resize corner");
     click(845,33);check(!IsWindowVisible(panel),"X immediately hides under reduced motion");
     accessible->Release();accessible=nullptr;PostMessageW(control,WM_CLOSE,0,0);check(WaitForSingleObject(process.hProcess,4000)==WAIT_OBJECT_0,"Reconnect worker cancels promptly on exit");DWORD code=1;GetExitCodeProcess(process.hProcess,&code);check(code==0,"Native UX session exits successfully");CloseHandle(process.hProcess);process.hProcess=nullptr;
     panel=control=editor=search=nullptr;command+=L" --assistant";process={};

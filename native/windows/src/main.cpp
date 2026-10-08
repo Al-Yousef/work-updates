@@ -22,6 +22,7 @@
 #include <wincodec.h>
 #include <psapi.h>
 #include <algorithm>
+#include <cmath>
 #include <filesystem>
 #include <fstream>
 #include <iomanip>
@@ -75,9 +76,9 @@ constexpr UINT TIMER_LEAVE = 1, TIMER_FINISH = 2, TIMER_AUDIT_EXIT = 3, TIMER_HO
 constexpr UINT MENU_OPEN = 101, MENU_HIDE = 102, MENU_EXIT = 103, MENU_TARGET = 104, MENU_LOGS=105;
 constexpr UINT REPLY_EDIT = 201;
 constexpr UINT SEARCH_EDIT = 202;
-constexpr float WIDTH=chatlayout::width,HEIGHT=chatlayout::height;
-constexpr float CHAT_LEFT=chatlayout::chatLeft,SIDEBAR_RIGHT=chatlayout::sidebarRight;
-constexpr float COMPOSER_TOP=chatlayout::composerTop;
+const float &WIDTH=chatlayout::width,&HEIGHT=chatlayout::height;
+const float &CHAT_LEFT=chatlayout::chatLeft,&SIDEBAR_RIGHT=chatlayout::sidebarRight;
+const float &COMPOSER_TOP=chatlayout::composerTop;
 enum class Mode { Hidden, Peek, Pinned };
 
 std::wstring wide(const std::string& value) {
@@ -473,8 +474,9 @@ struct Renderer {
         if(messages.empty()) {
             label(std::string("Talk to ")+model.state.value("profile",Json::object()).value("displayName","Hyphen"),24,D2D1::RectF(CHAT_LEFT+8,185,WIDTH-36,230),chatstyle::ink(),DWRITE_FONT_WEIGHT_SEMI_BOLD);
             label("Ask about your work, think through an idea, or share an image.",16,D2D1::RectF(CHAT_LEFT+8,244,WIDTH-36,310),muted);
-            button(brush,"What needs me?",D2D1::RectF(CHAT_LEFT+8,334,CHAT_LEFT+196,378),"askNeeds",model.canReply());
-            button(brush,"What changed?",D2D1::RectF(CHAT_LEFT+208,334,CHAT_LEFT+396,378),"askChanges",model.canReply());
+            const auto shortcutWidth=std::min(188.0f,(WIDTH-CHAT_LEFT-56)/2);
+            button(brush,"What needs me?",D2D1::RectF(CHAT_LEFT+8,334,CHAT_LEFT+8+shortcutWidth,378),"askNeeds",model.canReply());
+            button(brush,"What changed?",D2D1::RectF(CHAT_LEFT+20+shortcutWidth,334,CHAT_LEFT+20+2*shortcutWidth,378),"askChanges",model.canReply());
         }
         for(const auto& m:messages) {
             y+=chatBubble(brush,m.value("text",""),y,true,true,m.value("images",Json::array()).empty());
@@ -506,23 +508,24 @@ struct Renderer {
         for(int i=0;i<3;++i)canvas->DrawLine(D2D1::Point2F(filterX-7+i*2,41+i*5),D2D1::Point2F(filterX+7-i*2,41+i*5),brush,1.5f);
         hits.push_back({D2D1::RectF(filterX-22,24,filterX+22,68),"filterMenu",Json::object()});
         const float searchY=chatlayout::searchTop+12;
-        const auto searchBox=D2D1::RoundedRect(D2D1::RectF(28,searchY-22,280,searchY+22),22,22);
+        const auto searchBox=D2D1::RoundedRect(D2D1::RectF(28,searchY-22,SIDEBAR_RIGHT-16,searchY+22),22,22);
         brush->SetColor(chatstyle::inverse());canvas->FillRoundedRectangle(searchBox,brush);
         brush->SetColor(chatstyle::separator());canvas->DrawRoundedRectangle(searchBox,brush,.6f);
         brush->SetColor(muted);canvas->DrawEllipse(D2D1::Ellipse(D2D1::Point2F(42,searchY-2),5,5),brush,1.5f);canvas->DrawLine(D2D1::Point2F(46,searchY+2),D2D1::Point2F(51,searchY+7),brush,1.5f);
-        label(model.search.empty()?"Search chats and tasks":model.search,13,D2D1::RectF(52,chatlayout::searchTop,model.search.empty()?264:240,chatlayout::searchTop+24),muted);
+        label(model.search.empty()?"Search chats and tasks":model.search,13,D2D1::RectF(52,chatlayout::searchTop,SIDEBAR_RIGHT-(model.search.empty()?32:56),chatlayout::searchTop+24),muted);
         if(!model.search.empty()){
-            brush->SetColor(muted);canvas->FillEllipse(D2D1::Ellipse(D2D1::Point2F(262,searchY),7,7),brush);
-            brush->SetColor(chatstyle::inverse());canvas->DrawLine(D2D1::Point2F(259,searchY-3),D2D1::Point2F(265,searchY+3),brush,1.2f);canvas->DrawLine(D2D1::Point2F(265,searchY-3),D2D1::Point2F(259,searchY+3),brush,1.2f);
-            hits.push_back({D2D1::RectF(240,searchY-22,284,searchY+22),"clearSearch",Json::object()});
+            const auto clearX=SIDEBAR_RIGHT-34;
+            brush->SetColor(muted);canvas->FillEllipse(D2D1::Ellipse(D2D1::Point2F(clearX,searchY),7,7),brush);
+            brush->SetColor(chatstyle::inverse());canvas->DrawLine(D2D1::Point2F(clearX-3,searchY-3),D2D1::Point2F(clearX+3,searchY+3),brush,1.2f);canvas->DrawLine(D2D1::Point2F(clearX+3,searchY-3),D2D1::Point2F(clearX-3,searchY+3),brush,1.2f);
+            hits.push_back({D2D1::RectF(clearX-22,searchY-22,clearX+22,searchY+22),"clearSearch",Json::object()});
         }
-        const auto assistantBox=D2D1::RectF(106,94,190,190);
+        const auto assistantBox=D2D1::RectF(chatlayout::pinX-42,94,chatlayout::pinX+42,190);
         if(assistant){brush->SetColor(chatstyle::blue());canvas->DrawEllipse(D2D1::Ellipse(D2D1::Point2F(chatlayout::pinX,chatlayout::pinY),33,33),brush,2);}
         brush->SetColor(chatstyle::blue());canvas->FillEllipse(D2D1::Ellipse(D2D1::Point2F(chatlayout::pinX,chatlayout::pinY),28,28),brush);
-        brush->SetColor(chatstyle::inverse());canvas->FillRoundedRectangle(D2D1::RoundedRect(D2D1::RectF(137,127,159,132),2.5f,2.5f),brush);
+        brush->SetColor(chatstyle::inverse());canvas->FillRoundedRectangle(D2D1::RoundedRect(D2D1::RectF(chatlayout::pinX-11,127,chatlayout::pinX+11,132),2.5f,2.5f),brush);
         const auto profile=model.state.value("profile",Json::object());
-        if(profile.value("avatarStyle","hyphen")=="initials"){brush->SetColor(chatstyle::blue());canvas->FillEllipse(D2D1::Ellipse(D2D1::Point2F(chatlayout::pinX,chatlayout::pinY),28,28),brush);centerLabel(profile.value("initials","H"),22,D2D1::RectF(120,104,176,156),chatstyle::inverse());}
-        centerLabel(profile.value("displayName","Hyphen"),12,D2D1::RectF(70,170,226,190),assistant?chatstyle::ink():muted);
+        if(profile.value("avatarStyle","hyphen")=="initials"){brush->SetColor(chatstyle::blue());canvas->FillEllipse(D2D1::Ellipse(D2D1::Point2F(chatlayout::pinX,chatlayout::pinY),28,28),brush);centerLabel(profile.value("initials","H"),22,D2D1::RectF(chatlayout::pinX-28,104,chatlayout::pinX+28,156),chatstyle::inverse());}
+        centerLabel(profile.value("displayName","Hyphen"),12,D2D1::RectF(chatlayout::pinX-78,170,chatlayout::pinX+78,190),assistant?chatstyle::ink():muted);
         hits.push_back({assistantBox,"assistant",Json::object()});
         auto cards=model.cards();
         for(size_t index=model.offset;index<cards.size()&&index<size_t(model.offset+chatlayout::visibleRows);++index) {
@@ -533,29 +536,29 @@ struct Renderer {
             deviceIcon(brush,card,36,top+11);
             const auto age=std::max(0LL,static_cast<long long>(std::time(nullptr))-card.value("at",0LL));
             const std::string time=card.value("at",0LL)<=0?"":age<60?"Now":age<3600?std::to_string(age/60)+"m":age<86400?std::to_string(age/3600)+"h":std::to_string(age/86400)+"d";
-            label(card.value("chatName",""),15,D2D1::RectF(90,top+4,230,top+27),chatstyle::ink(),DWRITE_FONT_WEIGHT_SEMI_BOLD);
-            label(time,11,D2D1::RectF(238,top+7,268,top+26),muted,DWRITE_FONT_WEIGHT_NORMAL,DWRITE_TEXT_ALIGNMENT_TRAILING);
-            brush->SetColor(muted);canvas->DrawLine(D2D1::Point2F(278,top+12),D2D1::Point2F(282,top+16),brush,1.1f);canvas->DrawLine(D2D1::Point2F(282,top+16),D2D1::Point2F(278,top+20),brush,1.1f);
-            label(card.value("title",""),13,D2D1::RectF(90,top+28,274,top+48),muted);
-            label(statusText(card),11,D2D1::RectF(90,top+49,274,top+66),statusColor(card));
-            brush->SetColor(chatstyle::separator());canvas->DrawLine(D2D1::Point2F(90,top+chatlayout::rowHeight-1),D2D1::Point2F(280,top+chatlayout::rowHeight-1),brush,.5f);
+            label(card.value("chatName",""),15,D2D1::RectF(90,top+4,SIDEBAR_RIGHT-66,top+27),chatstyle::ink(),DWRITE_FONT_WEIGHT_SEMI_BOLD);
+            label(time,11,D2D1::RectF(SIDEBAR_RIGHT-58,top+7,SIDEBAR_RIGHT-28,top+26),muted,DWRITE_FONT_WEIGHT_NORMAL,DWRITE_TEXT_ALIGNMENT_TRAILING);
+            brush->SetColor(muted);canvas->DrawLine(D2D1::Point2F(SIDEBAR_RIGHT-18,top+12),D2D1::Point2F(SIDEBAR_RIGHT-14,top+16),brush,1.1f);canvas->DrawLine(D2D1::Point2F(SIDEBAR_RIGHT-14,top+16),D2D1::Point2F(SIDEBAR_RIGHT-18,top+20),brush,1.1f);
+            label(card.value("title",""),13,D2D1::RectF(90,top+28,SIDEBAR_RIGHT-22,top+48),muted);
+            label(statusText(card),11,D2D1::RectF(90,top+49,SIDEBAR_RIGHT-22,top+66),statusColor(card));
+            brush->SetColor(chatstyle::separator());canvas->DrawLine(D2D1::Point2F(90,top+chatlayout::rowHeight-1),D2D1::Point2F(SIDEBAR_RIGHT-16,top+chatlayout::rowHeight-1),brush,.5f);
             hits.push_back({box,"card",card});
         }
         if(cards.empty()) {
-            centerLabel(model.search.empty()?"You're caught up":"No results",15,D2D1::RectF(30,242,276,268),chatstyle::ink(),DWRITE_FONT_WEIGHT_SEMI_BOLD);
-            centerLabel(model.search.empty()?(view==0?"New updates appear here.":"No chats in this view."):"Try another chat name or task.",12,D2D1::RectF(30,279,276,320),muted);
+            centerLabel(model.search.empty()?"You're caught up":"No results",15,D2D1::RectF(30,242,SIDEBAR_RIGHT-20,268),chatstyle::ink(),DWRITE_FONT_WEIGHT_SEMI_BOLD);
+            centerLabel(model.search.empty()?(view==0?"New updates appear here.":"No chats in this view."):"Try another chat name or task.",12,D2D1::RectF(30,279,SIDEBAR_RIGHT-20,320),muted);
         }
         const auto health=model.state.value("health",Json::object());
         const char* views[]{"Updates","Queued","History","Done"};
-        label(model.connected?(health.value("ok",false)?std::to_string(cards.size())+(cards.size()==1?" chat · ":" chats · ")+views[view]:"Codex reconnecting"):"Reconnecting",11,D2D1::RectF(32,562,200,585),muted);
+        label(model.connected?(health.value("ok",false)?std::to_string(cards.size())+(cards.size()==1?" chat · ":" chats · ")+views[view]:"Codex reconnecting"):"Reconnecting",11,D2D1::RectF(32,HEIGHT-98,SIDEBAR_RIGHT-96,HEIGHT-75),muted);
         if(cards.size()>chatlayout::visibleRows) {
-            circleButton(brush,D2D1::Point2F(222,570),"previous",model.offset>0);
-            circleButton(brush,D2D1::Point2F(266,570),"next",model.offset+chatlayout::visibleRows<static_cast<int>(cards.size()));
+            circleButton(brush,D2D1::Point2F(SIDEBAR_RIGHT-74,HEIGHT-90),"previous",model.offset>0);
+            circleButton(brush,D2D1::Point2F(SIDEBAR_RIGHT-30,HEIGHT-90),"next",model.offset+chatlayout::visibleRows<static_cast<int>(cards.size()));
         }
     }
     void popoverPaint(ID2D1SolidColorBrush* brush) {
         hits.clear();const bool assistant=model.chatting();const auto card=model.selected();
-        float left=popover=="copy"?contextX:popover=="filters"?SIDEBAR_RIGHT-240:popover=="add"?CHAT_LEFT-8:chatlayout::contactCenter-160;
+        float left=popover=="copy"?contextX:popover=="filters"?std::max(12.0f,SIDEBAR_RIGHT-240):popover=="add"?CHAT_LEFT-8:chatlayout::contactCenter-160;
         float top=popover=="copy"?contextY:popover=="filters"?72:popover=="add"?composeY()-182:86;
         const float width=popover=="copy"?180:popover=="details"?320:224;
         const auto source=model.currentSource();const bool recovery=!source.value("deliveryIssue","").empty()||source.value("queuedMessages",0)>0;
@@ -1187,6 +1190,16 @@ struct App {
         renderer.paint();
         log("ui-scroll");
     }
+    void resized(HWND window) {
+        if(!renderer.canvas.get())return;
+        RECT client{};GetClientRect(window,&client);if(client.right<=0||client.bottom<=0)return;
+        const auto width=client.right*96/renderer.dpi,height=client.bottom*96/renderer.dpi;
+        const bool changed=std::abs(width-WIDTH)>.01f||std::abs(height-HEIGHT)>.01f;
+        if(changed){cancelPress();chatlayout::resize(width,height);renderer.layouts.clear();renderer.bubbleLayouts.clear();
+            renderer.model.offset=std::clamp(renderer.model.offset,0,std::max(0,static_cast<int>(renderer.model.cards().size())-chatlayout::visibleRows));}
+        renderer.resize(window);layoutEditors();
+        if(mode!=Mode::Hidden)renderer.paint();
+    }
     void moveHome() {
         const POINT origin{0,0}; MONITORINFO info{}; info.cbSize=sizeof(info);
         GetMonitorInfoW(MonitorFromPoint(origin,MONITOR_DEFAULTTOPRIMARY),&info);
@@ -1389,7 +1402,7 @@ LRESULT CALLBACK panelProc(HWND window, UINT message, WPARAM wp, LPARAM lp) {
         case WM_APP+217:app.accessibleAction(static_cast<long>(wp),true);return 0;
         case WM_APP+215: {
             if(app.auditCapturePath.empty())return 0;
-            Json report={{"dpi",app.renderer.dpi},{"focused",app.renderer.focused},{"connected",app.renderer.model.connected},{"canDraft",app.renderer.model.canDraft()},{"canReply",app.renderer.model.canReply()},{"notice",app.renderer.notice},{"noticeHeight",app.renderer.noticeHeight},{"transcriptBottom",app.renderer.transcriptBottom()},{"reducedMotion",app.reducedMotion()},{"hits",Json::array()}};
+            Json report={{"dpi",app.renderer.dpi},{"width",WIDTH},{"height",HEIGHT},{"focused",app.renderer.focused},{"connected",app.renderer.model.connected},{"canDraft",app.renderer.model.canDraft()},{"canReply",app.renderer.model.canReply()},{"notice",app.renderer.notice},{"noticeHeight",app.renderer.noticeHeight},{"transcriptBottom",app.renderer.transcriptBottom()},{"reducedMotion",app.reducedMotion()},{"hits",Json::array()}};
             auto& m=app.renderer.model;report["selected"]=m.selectedId;report["detailPending"]=m.detailPending;report["pending"]=m.pending;report["source"]=m.sourceId;report["detailMatchesSelection"]=m.detail.value("id","")==m.selectedId&&m.detail.value("taskKey","")==m.selectedKey;
             report["lastPress"]=app.lastPressAudit;
             report["accessibilityIds"]=app.accessible?app.accessible->retainedIds():0;
@@ -1437,6 +1450,28 @@ LRESULT CALLBACK panelProc(HWND window, UINT message, WPARAM wp, LPARAM lp) {
             if(app.auditCapturePath.empty())return 0;unsigned tails=0;for(const auto& target:app.renderer.messageTargets)if(target.card.value("tail",false))++tails;
             return MAKELONG(app.renderer.messageTargets.size(),tails);
         }
+        case WM_NCCALCSIZE: return 0; // Preserve the accepted custom canvas over the resize frame.
+        case WM_NCACTIVATE: return TRUE;
+        case WM_GETMINMAXINFO: {
+            auto limits=reinterpret_cast<MINMAXINFO*>(lp);if(!limits)return 0;
+            limits->ptMinTrackSize={app.px(chatlayout::minWidth),app.px(chatlayout::minHeight)};
+            // Explicit isolated DPI captures already render beyond the runner's
+            // desktop. Do not confuse that fixture with production monitor fit.
+            const auto workWidth=app.auditDpi>0?app.px(chatlayout::maxWidth):app.workArea.right-app.workArea.left;
+            const auto workHeight=app.auditDpi>0?app.px(chatlayout::maxHeight):app.workArea.bottom-app.workArea.top;
+            limits->ptMaxTrackSize={std::max<LONG>(limits->ptMinTrackSize.x,std::min(app.px(chatlayout::maxWidth),workWidth>0?static_cast<int>(workWidth):app.px(chatlayout::maxWidth))),
+                std::max<LONG>(limits->ptMinTrackSize.y,std::min(app.px(chatlayout::maxHeight),workHeight>0?static_cast<int>(workHeight):app.px(chatlayout::maxHeight)))};
+            return 0;
+        }
+        case WM_WINDOWPOSCHANGING: {
+            auto position=reinterpret_cast<WINDOWPOS*>(lp);
+            if(app.renderer.canvas.get()&&position&&!(position->flags&SWP_NOSIZE)){
+                position->cx=std::clamp(position->cx,app.px(chatlayout::minWidth),app.px(chatlayout::maxWidth));
+                position->cy=std::clamp(position->cy,app.px(chatlayout::minHeight),app.px(chatlayout::maxHeight));
+            }
+            break;
+        }
+        case WM_SIZE: if(wp!=SIZE_MINIMIZED)app.resized(window);return 0;
         case WM_ERASEBKGND: return 1;
         case WM_PAINT: { PAINTSTRUCT paint; BeginPaint(window,&paint); EndPaint(window,&paint); return 0; }
         case WM_MOUSEMOVE:
@@ -1457,6 +1492,10 @@ LRESULT CALLBACK panelProc(HWND window, UINT message, WPARAM wp, LPARAM lp) {
             for(UINT i=0;i<std::min(count,5U);++i){wchar_t file[32768]{};DragQueryFileW(drop,i,file,32768);paths.push_back(utf8(file));}DragFinish(drop);app.attach(paths);return 0;}
         case WM_NCHITTEST: {
             POINT p{GET_X_LPARAM(lp),GET_Y_LPARAM(lp)}; ScreenToClient(window,&p);
+            if(app.mode==Mode::Pinned){RECT client{};GetClientRect(window,&client);const int edge=std::max(5,app.px(6));
+                const bool left=p.x<edge,right=p.x>=client.right-edge,top=p.y<edge,bottom=p.y>=client.bottom-edge;
+                if(top&&left)return HTTOPLEFT;if(top&&right)return HTTOPRIGHT;if(bottom&&left)return HTBOTTOMLEFT;if(bottom&&right)return HTBOTTOMRIGHT;
+                if(left)return HTLEFT;if(right)return HTRIGHT;if(top)return HTTOP;if(bottom)return HTBOTTOM;}
             for(const auto& hit:app.renderer.hits)if(p.x>=app.px(hit.box.left)&&p.x<=app.px(hit.box.right)&&p.y>=app.px(hit.box.top)&&p.y<=app.px(hit.box.bottom))return HTCLIENT;
             if(p.y>=app.px(24) && p.y<app.px(74) && p.x<app.px(WIDTH-72)) return HTCAPTION;
             return HTCLIENT;
@@ -1650,7 +1689,7 @@ int WINAPI wWinMain(HINSTANCE instance,HINSTANCE,PWSTR,int) {
         wc.lpszClassName=L"NativeHoverTrigger"; wc.lpfnWndProc=triggerProc;
         if(!RegisterClassExW(&wc)) throw std::runtime_error("Trigger class registration failed");
         app.panel=CreateWindowExW(WS_EX_TOPMOST|(uiAudit?WS_EX_APPWINDOW:WS_EX_TOOLWINDOW)|WS_EX_NOACTIVATE|WS_EX_NOREDIRECTIONBITMAP,
-            L"NativeHoverPanel",L"Hyphen",WS_POPUP,0,0,static_cast<int>(WIDTH),static_cast<int>(HEIGHT),
+            L"NativeHoverPanel",L"Hyphen",WS_POPUP|WS_THICKFRAME,0,0,static_cast<int>(WIDTH),static_cast<int>(HEIGHT),
             nullptr,nullptr,instance,nullptr);
         if(!app.panel) throw std::runtime_error("Panel creation failed");
         app.renderer.dpi=static_cast<float>(GetDpiForWindow(app.panel)); app.moveHome();
