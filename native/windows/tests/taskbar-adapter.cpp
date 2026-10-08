@@ -1,10 +1,13 @@
 #include <iostream>
 #include <vector>
 #include <stdexcept>
+#include <thread>
 #include "../taskbar-adapter/adapter.cpp"
+#include "../src/text-scale.h"
 
 namespace test {
 unsigned hoverCalls=0,taskbarClicks=0,launchClicks=0,leaveCalls=0,checks=0;
+unsigned textNotifications=0;DWORD notificationThread=0;
 std::atomic<bool> stallHello{false};std::atomic<HWND> healthWindow{nullptr};std::atomic<ULONG_PTR> healthCookie{0};
 std::vector<taskbar::Command> received;
 void check(bool result,const char* name) {++checks; if(!result)throw std::runtime_error(name);}
@@ -29,6 +32,7 @@ struct Sender final:IInspectable {
     HRESULT STDMETHODCALLTYPE GetTrustLevel(TrustLevel* value) override {*value=FullTrust; return S_OK;}
 };
 LRESULT CALLBACK windowProc(HWND window,UINT message,WPARAM wp,LPARAM lp) {
+    if(message==WM_APP+230){++textNotifications;notificationThread=GetCurrentThreadId();return 0;}
     if(message==taskbar::message) {
         if(window==healthWindow.load()?wp!=healthCookie.load():!taskbar::accepted(endpoint,wp))return 0;
         if(lp==static_cast<LPARAM>(taskbar::Command::Hello)){if(stallHello)Sleep(1000);return 1;}
@@ -60,6 +64,13 @@ int main() {
         check(RegisterClassW(&wc)!=0,"Register test control");
         HWND window=CreateWindowW(wc.lpszClassName,L"",WS_POPUP,0,0,0,0,nullptr,nullptr,wc.hInstance,nullptr);
         check(window!=nullptr,"Create hidden test control");
+        auto handler=new textscale::Handler(window,WM_APP+230);void* typed=nullptr;
+        check(handler->QueryInterface(textscale::handlerId,&typed)==S_OK&&typed,"Text notification exposes the exact system delegate ABI");static_cast<IUnknown*>(typed)->Release();
+        check(handler->QueryInterface(textscale::agileId,&typed)==S_OK&&typed,"Text notification can arrive from the system's background thread");static_cast<IUnknown*>(typed)->Release();
+        check(handler->QueryInterface(IID_IInspectable,&typed)==E_NOINTERFACE&&!typed,"Text delegate refuses unrelated interfaces");
+        std::thread notification([&]{handler->Invoke(nullptr,nullptr);});notification.join();check(textNotifications==0,"System callback does not mutate the UI from its thread");drain();
+        check(textNotifications==1&&notificationThread==GetCurrentThreadId(),"Owned UI thread handles the posted text-size notification");
+        handler->detach();handler->Invoke(nullptr,nullptr);drain();check(textNotifications==1,"Detached settings callbacks cannot target a destroyed or reused window");handler->Release();
         const auto testDirectory=std::filesystem::temp_directory_path()/(L"work-updates-adapter-test-"+std::to_wstring(GetCurrentProcessId()));
         std::filesystem::create_directories(testDirectory/L"artifacts");
         endpoint=taskbar::publish(window,testDirectory/L"test-endpoint.exe");
