@@ -15,7 +15,7 @@ foreach($taskScale in $Scales){
         $taskReady=Join-Path $taskFixture 'fixture-ready.json'
         for($taskAttempt=0;$taskAttempt -lt 50 -and -not(Test-Path -LiteralPath $taskReady);$taskAttempt++){Start-Sleep -Milliseconds 100}
         if(-not(Test-Path -LiteralPath $taskReady)){throw 'Synthetic fixture did not start'}
-        $taskPython=if($env:WORK_UPDATES_PYTHON){(Get-Command $env:WORK_UPDATES_PYTHON -CommandType Application -ErrorAction Stop).Source}else{(Get-Command python -CommandType Application -ErrorAction Stop).Source}
+        $taskPython=if($env:WORK_UPDATES_PYTHON){(Get-Command $env:WORK_UPDATES_PYTHON -CommandType Application -ErrorAction Stop | Select-Object -First 1).Source}else{(Get-Command python -CommandType Application -ErrorAction Stop | Select-Object -First 1).Source}
         & $taskPython -c 'import pathlib,sys
 from PIL import Image
 for index in range(4):
