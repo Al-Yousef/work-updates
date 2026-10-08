@@ -40,13 +40,24 @@ jobs:
       - name: Ten-minute navigation and reconnect observation
         shell: pwsh
         run: ./scripts/native-performance-audit.ps1 -SecondsPerPhase 30 -ChatCounts @(1500) -SoakSeconds 600 -OutputDirectory "$pwd/artifacts/performance/qualification/soak"
-      - name: Five fresh process trees on matching runner hardware
+      - name: Fresh baseline 1 of 5 on matching runner hardware
         shell: pwsh
-        run: |
-          foreach ($taskRun in 1..5) {
-            ./scripts/native-performance-audit.ps1 -SecondsPerPhase 30 -OutputDirectory "$pwd/artifacts/performance/qualification/baseline-$taskRun"
-          }
-          ./scripts/native-performance-audit.ps1 -SecondsPerPhase 30 -OutputDirectory "$pwd/artifacts/performance/qualification/current"
+        run: ./scripts/native-performance-audit.ps1 -SecondsPerPhase 30 -OutputDirectory "$pwd/artifacts/performance/qualification/baseline-1"
+      - name: Fresh baseline 2 of 5 on matching runner hardware
+        shell: pwsh
+        run: ./scripts/native-performance-audit.ps1 -SecondsPerPhase 30 -OutputDirectory "$pwd/artifacts/performance/qualification/baseline-2"
+      - name: Fresh baseline 3 of 5 on matching runner hardware
+        shell: pwsh
+        run: ./scripts/native-performance-audit.ps1 -SecondsPerPhase 30 -OutputDirectory "$pwd/artifacts/performance/qualification/baseline-3"
+      - name: Fresh baseline 4 of 5 on matching runner hardware
+        shell: pwsh
+        run: ./scripts/native-performance-audit.ps1 -SecondsPerPhase 30 -OutputDirectory "$pwd/artifacts/performance/qualification/baseline-4"
+      - name: Fresh baseline 5 of 5 on matching runner hardware
+        shell: pwsh
+        run: ./scripts/native-performance-audit.ps1 -SecondsPerPhase 30 -OutputDirectory "$pwd/artifacts/performance/qualification/baseline-5"
+      - name: Sixth fresh process comparison
+        shell: pwsh
+        run: ./scripts/native-performance-audit.ps1 -SecondsPerPhase 30 -OutputDirectory "$pwd/artifacts/performance/qualification/current"
       - name: Enforce comparable baseline and bounded growth
         if: always()
         run: node scripts/performance-qualification-report.cjs artifacts/performance/qualification
