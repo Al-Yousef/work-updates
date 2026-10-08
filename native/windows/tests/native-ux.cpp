@@ -15,6 +15,7 @@
 #include <stdexcept>
 #include <algorithm>
 #include <cmath>
+#include <set>
 #include "../vendor/nlohmann/json.hpp"
 #include "../src/chat-layout.h"
 #include "../src/ui-audit.h"
@@ -53,6 +54,7 @@ try {
     wait([]{EnumWindows(find,0);return panel&&control;},"Locate only this test child's windows");editor=GetDlgItem(panel,201);search=GetDlgItem(panel,202);
     wait([]{return state().value("connected",false);},"Initial subscription connects");
     auto initial=state();check(initial.value("dpi",0)==dpi,"Renderer uses the requested isolated scale");check(initial.value("reducedMotion",false),"Reduced-motion policy is exercised without changing Windows settings");
+    check(initial.value("textScaleApiRead",false)&&initial.value("textScaleWatching",false),"Actual native child reads UISettings and subscribes to TextScaleFactorChanged");
     if(highContrast){check(initial.value("highContrast",false),"Actual native child uses the isolated high-contrast palette");check(initial.value("editorForeground",0UL)==RGB(255,255,255)&&initial.value("editorBackground",0UL)==RGB(0,0,0),"Real EDIT foreground and background use the matched contrast pair");}
     RECT client{};GetClientRect(panel,&client);check(client.right==dpi*880/96&&client.bottom==dpi*660/96,"Native window uses both scaled dimensions");
     check(SUCCEEDED(AccessibleObjectFromWindow(panel,OBJID_CLIENT,IID_IAccessible,reinterpret_cast<void**>(&accessible))),"Windows exposes the custom native controls through MSAA");
@@ -203,6 +205,39 @@ try {
     check(limits.ptMaxTrackSize.x==std::lround(1280*dpi/96.0)&&limits.ptMaxTrackSize.y==std::lround(960*dpi/96.0),"Isolated DPI capture supports the full logical resize range without changing Windows display settings");
     RECT resizeRect{};GetWindowRect(panel,&resizeRect);const auto edge=MAKELPARAM(resizeRect.left+1,resizeRect.top+1);
     check(SendMessageW(panel,WM_NCHITTEST,0,edge)==HTTOPLEFT,"Pinned panel exposes the actual resize corner");
+    for(const int percent:{150,225}){
+        RECT position{};GetWindowRect(panel,&position);SetWindowPos(panel,nullptr,position.left,position.top,std::lround(720*dpi/96.0),std::lround(560*dpi/96.0),SWP_NOZORDER|SWP_NOACTIVATE);
+        const auto beforeScale=state();const auto oldDraft=draft();DWORD begin=0,end=0;SendMessageW(editor,EM_GETSEL,reinterpret_cast<WPARAM>(&begin),reinterpret_cast<LPARAM>(&end));
+        check(SendMessageW(panel,WM_APP+231,percent,0)==1,"Only the owned isolated audit changes its text-scale fixture");const auto scaled=state();
+        check(std::abs(scaled.value("textScale",0.0f)-percent/100.0f)<.001f&&scaled.value("dpi",0)==dpi&&scaled.value("width",0)==720&&scaled.value("height",0)==560,"Text scaling is independent of display DPI and window dimensions");
+        check(scaled.value("composerFontPixels",0)==std::lround(15*percent*dpi/9600.0)&&scaled.value("searchFontPixels",0)==std::lround(13*percent*dpi/9600.0),"Real native GDI field fonts adopt the requested text scale");
+        DWORD currentBegin=0,currentEnd=0;SendMessageW(editor,EM_GETSEL,reinterpret_cast<WPARAM>(&currentBegin),reinterpret_cast<LPARAM>(&currentEnd));
+        check(draft()==oldDraft&&currentBegin==begin&&currentEnd==end&&focus()==editor&&scaled.value("source","")==beforeScale.value("source",""),"Text-size changes preserve native Unicode input, selection, focus and source ownership");
+        check(scaled.value("transcriptBottom",0.0f)-scaled.value("transcriptTop",0.0f)>=32*percent/100.0f-1,"Error notice and wrapped draft retain a complete readable large-text chat line");
+        if(scaled.value("noticeHeight",0.0f)>0)check(std::abs(scaled.value("noticeHeight",0.0f)-20-scaled.value("noticeLineHeight",0.0f)*scaled.value("noticeVisibleLines",0))<.1f,"Large status notice reserves whole rendered text lines");
+        const auto field=scaled.at("composerBoundsPx"),searchField=scaled.at("searchBoundsPx");
+        check(field[3].get<int>()-field[1].get<int>()>=scaled.value("composerLinePixels",0)&&searchField[3].get<int>()-searchField[1].get<int>()>=scaled.value("searchFontPixels",0),"Native fields grow to contain their real scaled text");
+        for(const auto& hit:scaled["hits"]){const auto box=hit.at("box");check(box[0].get<float>()>=0&&box[1].get<float>()>=0&&box[2].get<float>()<=720&&box[3].get<float>()<=560,"Large-text controls remain inside the narrow native canvas");}
+        const auto sendHit=std::find_if(scaled["hits"].begin(),scaled["hits"].end(),[](const auto& hit){return hit.value("action","")=="send";});
+        check(sendHit!=scaled["hits"].end()&&field[2].get<int>()<=std::lround((*sendHit)["box"][0].get<float>()*dpi/96),"Large native text retains actual Send clearance");
+        check(SendMessageW(panel,WM_APP+231,226,0)==0&&state().value("textScale",0.0f)==scaled.value("textScale",0.0f),"Invalid scale fixture cannot change native layout");
+        saveCapture((L"ux-text-"+std::to_wstring(percent)+L"-"+std::to_wstring(dpi)+(highContrast?L"-contrast":L"")+L".png").c_str());
+    }
+    std::vector<std::wstring> textImages;for(int index=0;index<4;++index)textImages.push_back((fixture/(L"text-image-"+std::to_wstring(index)+L".png")).wstring());drop(textImages);
+    wait([&]{const auto current=state();return !current.value("pending",true)&&std::count_if(current["hits"].begin(),current["hits"].end(),[](const auto& hit){return hit.value("action","")=="removeImage";})==4;},"Four distinct owned image fixtures are imported into the large-text draft");
+    drop({invalid.wstring()});const auto imageTextState=state();check(!imageTextState.value("notice","").empty()&&imageTextState.value("transcriptBottom",0.0f)-imageTextState.value("transcriptTop",0.0f)>=71,"Four images, an error notice and a wrapped draft retain readable chat space at 225 percent");
+    for(const auto& hit:imageTextState["hits"]){const auto box=hit["box"];check(box[0].get<float>()>=0&&box[1].get<float>()>=0&&box[2].get<float>()<=720&&box[3].get<float>()<=560,"Maximum image draft controls remain inside the large-text canvas");if(hit.value("action","")=="removeImage")check(box[2].get<float>()-box[0].get<float>()>=44&&box[3].get<float>()-box[1].get<float>()>=44,"Compact image previews retain full 44-pixel removal targets");}
+    check(draft()==resizeDraft,"Maximum image draft reflow preserves Unicode input");saveCapture((L"ux-text-images-"+std::to_wstring(dpi)+(highContrast?L"-contrast":L"")+L".png").c_str());
+    for(int remaining=4;remaining>0;--remaining){accessible->accDoDefaultAction(child(named(L"Remove image")));wait([&]{const auto current=state();return std::count_if(current["hits"].begin(),current["hits"].end(),[](const auto& hit){return hit.value("action","")=="removeImage";})==remaining-1;},"Accessible removal preserves exact remaining image controls");}
+    const auto textState=state();const auto sourceHit=std::find_if(textState["hits"].begin(),textState["hits"].end(),[](const auto& hit){return hit.value("action","")=="card"&&hit.value("enabled",true);});
+    check(sourceHit!=textState["hits"].end(),"Narrow large-text layout retains a source row");const auto sourceBox=(*sourceHit)["box"];click(static_cast<int>((sourceBox[0].get<float>()+sourceBox[2].get<float>())/2),static_cast<int>((sourceBox[1].get<float>()+sourceBox[3].get<float>())/2));
+    action(AuditAction::DetailsMenu);auto firstPage=state();check(firstPage.value("menuPages",0)>1,"Large-text task menu exposes bounded pages for every action");
+    const auto nextPage=named(L"Next menu actions");select(nextPage);SendMessageW(panel,WM_KEYDOWN,VK_RETURN,0);check(state().value("menuPage",0)==1,"Keyboard activation advances the actual visible menu page");SendMessageW(panel,WM_KEYDOWN,VK_PRIOR,0);check(state().value("menuPage",-1)==0,"Page Up restores the previous menu actions");
+    std::set<std::string> menuActions;for(int page=0;page<firstPage.value("menuPages",0);++page){const auto currentPage=state();for(const auto& hit:currentPage["hits"]){const auto box=hit["box"];check(box[0].get<float>()>=0&&box[1].get<float>()>=0&&box[2].get<float>()<=720&&box[3].get<float>()<=560,"Paged large-text menu targets stay inside their native canvas");menuActions.insert(hit.value("action",""));}if(page+1<firstPage.value("menuPages",0))SendMessageW(panel,WM_KEYDOWN,VK_NEXT,0);}
+    check(menuActions.contains("open")&&menuActions.contains("reviewed")&&menuActions.contains("snooze")&&menuActions.contains("done"),"All original task actions remain reachable at 225 percent text size");saveCapture((L"ux-text-menu-"+std::to_wstring(dpi)+(highContrast?L"-contrast":L"")+L".png").c_str());
+    SendMessageW(panel,WM_KEYDOWN,VK_ESCAPE,0);action(AuditAction::Assistant);check(draft()==resizeDraft,"Source navigation during text-scale checks preserves the assistant's saved Unicode draft");
+    check(SendMessageW(panel,WM_APP+231,0,0)==1&&!state().value("textScaleFixture",true),"Owned audit restores the actual system text scale");
+    RECT finalPosition{};GetWindowRect(panel,&finalPosition);SetWindowPos(panel,nullptr,finalPosition.left,finalPosition.top,std::lround(880*dpi/96.0),std::lround(660*dpi/96.0),SWP_NOZORDER|SWP_NOACTIVATE);
     click(845,33);check(!IsWindowVisible(panel),"X immediately hides under reduced motion");
     accessible->Release();accessible=nullptr;PostMessageW(control,WM_CLOSE,0,0);check(WaitForSingleObject(process.hProcess,4000)==WAIT_OBJECT_0,"Reconnect worker cancels promptly on exit");DWORD code=1;GetExitCodeProcess(process.hProcess,&code);check(code==0,"Native UX session exits successfully");CloseHandle(process.hProcess);process.hProcess=nullptr;
     panel=control=editor=search=nullptr;command+=L" --assistant";process={};

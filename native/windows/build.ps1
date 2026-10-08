@@ -28,7 +28,7 @@ Push-Location $taskRoot
 try {
     & (Join-Path $taskToolchain 'llvm-rc.exe') /no-preprocess /FO (Join-Path $taskBuild 'app.res') app.rc
     if($LASTEXITCODE -ne 0) {throw 'Resource build failed'}
-    & $taskCompiler @taskCompilerFlags src/main.cpp (Join-Path $taskBuild 'app.res') -std=c++20 -O2 -DNDEBUG -municode -mwindows -static -Wall -Wextra -o (Join-Path $taskBuild 'Native Hover.exe') -ldcomp -ld2d1 -ld3d11 -ldxgi -ldwrite -lshell32 -luser32 -lole32 -loleaut32 -loleacc -lcomctl32 -luuid -lgdi32 -lpsapi -ladvapi32 -lbcrypt -lwindowscodecs -lcomdlg32
+    & $taskCompiler @taskCompilerFlags src/main.cpp (Join-Path $taskBuild 'app.res') -std=c++20 -O2 -DNDEBUG -municode -mwindows -static -Wall -Wextra -o (Join-Path $taskBuild 'Native Hover.exe') -ldcomp -ld2d1 -ld3d11 -ldxgi -ldwrite -lshell32 -luser32 -lole32 -loleaut32 -loleacc -lcomctl32 -luuid -lgdi32 -lpsapi -ladvapi32 -lbcrypt -lwindowscodecs -lcomdlg32 -lruntimeobject
     if($LASTEXITCODE -ne 0) {throw 'Native build failed'}
     & $taskCompiler @taskCompilerFlags src/launch.cpp (Join-Path $taskBuild 'app.res') -std=c++20 -O2 -municode -mwindows -static -Wall -Wextra -o (Join-Path $taskBuild 'Start Native Preview.exe') -luser32 -lshell32
     if($LASTEXITCODE -ne 0) {throw 'Native launcher build failed'}
