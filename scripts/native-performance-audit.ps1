@@ -8,6 +8,7 @@ $taskRepo=[IO.Path]::GetFullPath((Join-Path $PSScriptRoot '..'))
 . (Join-Path $PSScriptRoot 'dev-paths.ps1')
 . (Join-Path $PSScriptRoot 'performance-press-proof.ps1')
 $taskNode=Get-HyphenNode
+$taskPython=(Get-Command python -CommandType Application -ErrorAction Stop | Select-Object -First 1).Source
 $taskElectron=Join-Path $taskRepo 'node_modules/electron/dist/electron.exe'
 $taskCandidate=Join-Path $taskRepo 'native/windows/build/candidate'
 $taskNative=Join-Path $taskCandidate 'Native Hover.exe'
@@ -67,12 +68,12 @@ function Click-PerfHit([IntPtr]$Panel,$Hit,[string]$Run=''){
 }
 foreach($taskCount in $ChatCounts){
     $taskRun=Join-Path $taskOutput ([string]$taskCount);New-Item -ItemType Directory -Path $taskRun | Out-Null
-    & python (Join-Path $PSScriptRoot 'performance-source-fixture.py') (Join-Path $taskRun 'source') $taskCount
+    & $taskPython (Join-Path $PSScriptRoot 'performance-source-fixture.py') (Join-Path $taskRun 'source') $taskCount
     if($LASTEXITCODE -ne 0){throw 'Synthetic source creation failed'}
-    & python -c 'from PIL import Image; import sys; Image.new("RGB",(4096,4096),(40,100,200)).save(sys.argv[1])' (Join-Path $taskRun 'large-preview.png')
+    & $taskPython -c 'from PIL import Image; import sys; Image.new("RGB",(4096,4096),(40,100,200)).save(sys.argv[1])' (Join-Path $taskRun 'large-preview.png')
     if($LASTEXITCODE -ne 0){throw 'Synthetic image creation failed'}
     $env:HYPHEN_PERFORMANCE_RUN=$taskRun
-    $env:WORK_UPDATES_PYTHON=(Get-Command python).Source
+    $env:WORK_UPDATES_PYTHON=$taskPython
     Remove-Item Env:ELECTRON_RUN_AS_NODE -ErrorAction SilentlyContinue
     $taskProfile=Join-Path $taskRun 'profile'
     $taskBackend=$null;$taskShell=$null;$taskCollector=$null;$taskPanel=[IntPtr]::Zero;$taskTrigger=[IntPtr]::Zero
