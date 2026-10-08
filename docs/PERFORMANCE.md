@@ -32,7 +32,10 @@ their claimed parent are refused. Raw samples retain timestamp, instance
 identity, process name, cumulative CPU, working/private bytes, handles and
 threads. Commands, account identifiers and environment variables are omitted.
 CPU differences divide by actual elapsed sample time and logical processors.
-The sampler pins original kernel handles. A newly born child contributes its
+The sampler pins every discovered original kernel handle before reading live
+counters, handling newly born processes first. Thread enumeration on one process
+cannot delay pinning a short-lived sibling. Failure records identify the stage
+and exception type without exposing commands or environment variables. A newly born child contributes its
 measured cumulative CPU only when its exact creation time falls within the
 observed interval. An observed exit contributes final cumulative CPU and exit
 time read through that same handle, once, then releases the handle. Its live
@@ -104,7 +107,8 @@ allow reviewing evidence without downloading a native executable or package.
 This exit accounting follows the Windows [.NET Process implementation](https://github.com/dotnet/runtime/blob/main/src/libraries/System.Diagnostics.Process/src/System/Diagnostics/Process.Windows.cs)
 and [GetProcessTimes contract](https://learn.microsoft.com/en-us/windows/win32/api/processthreadsapi/nf-processthreadsapi-getprocesstimes).
 An actual owned Node-child test verifies final CPU after normal exit, unchanged
-creation identity, null live counters and immediate handle release. Unknown
+creation identity, exit between pinning and live counter reads, null live
+counters and immediate handle release. Unknown
 departures and forged/revived exits remain failed report-policy tests. The
 qualification artifact also retains its synthetic startup count/owner record
 and reconnect counters.

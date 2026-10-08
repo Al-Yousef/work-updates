@@ -31,11 +31,15 @@ try {
     $taskWrong=Get-OwnedProcessSample -Roots $taskWrongRoots -Seen @{} -Tracked @{}
     if(@($taskWrong.processes).Count){throw 'A reused or mismatched root identity admitted a process'}
     $taskOriginal=@($taskSample.processes|Where-Object {$_.pid -eq $taskReady.childPid})[0]
-    Set-Content -LiteralPath (Join-Path $taskDirectory 'stop-child') -Value 'Owned fixture: normal child exit'
-    for($taskTry=0;$taskTry -lt 100 -and -not(Test-Path -LiteralPath (Join-Path $taskDirectory 'child-exited.json'));$taskTry++){Start-Sleep -Milliseconds 50}
+    $taskAfter=Get-OwnedProcessSample -Roots $taskRoots -Seen $taskSeen -Tracked $taskTracked -HandlesPinned {
+        $taskKey=([string]$taskReady.childPid)+':'+$taskOriginal.creationTicks
+        if(-not $taskTracked.ContainsKey($taskKey)){throw 'Original child handle was not pinned before counter reads'}
+        Set-Content -LiteralPath (Join-Path $taskDirectory 'stop-child') -Value 'Owned fixture: normal child exit before live counter reads'
+        for($taskTry=0;$taskTry -lt 100 -and -not(Test-Path -LiteralPath (Join-Path $taskDirectory 'child-exited.json'));$taskTry++){Start-Sleep -Milliseconds 50}
+        if(-not(Test-Path -LiteralPath (Join-Path $taskDirectory 'child-exited.json'))){throw 'Owned child did not exit before counter reads'}
+    }
     $taskExit=Get-Content -LiteralPath (Join-Path $taskDirectory 'child-exited.json') -Raw|ConvertFrom-Json
     if($taskExit.code -ne 0){throw 'Owned metrics child did not exit normally'}
-    $taskAfter=Get-OwnedProcessSample -Roots $taskRoots -Seen $taskSeen -Tracked $taskTracked
     $taskFinal=@($taskAfter.processes|Where-Object {$_.pid -eq $taskReady.childPid})[0]
     if($taskFinal.lifecycle -ne 'exited' -or -not $taskFinal.handlePinned -or $taskFinal.unavailable -or $taskFinal.creationTicks -ne $taskOriginal.creationTicks -or $taskFinal.cpuSeconds -lt $taskOriginal.cpuSeconds -or $taskFinal.exitCode -ne 0 -or -not $taskFinal.exitedAt){throw 'Original exited child CPU was not retained through its kernel handle'}
     foreach($taskMetric in @('workingSetBytes','privateBytes','handles','threads')){if($null -ne $taskFinal[$taskMetric]){throw 'Exited child gained fabricated live counters'}}
@@ -43,7 +47,7 @@ try {
     if(@($taskAgain.processes|Where-Object {$_.pid -eq $taskReady.childPid}).Count){throw 'Final exit record was duplicated'}
     $taskKey=([string]$taskReady.childPid)+':'+$taskOriginal.creationTicks
     if($taskTracked.ContainsKey($taskKey)){throw 'Original exited handle was retained after final accounting'}
-    @{passed=$true;synthetic=$true;ownedProcessCount=$taskIds.Count;reusedIdentityRefused=$true;finalCpuFromOriginalHandle=$true;finalExitRecordedOnce=$true;exitedHandleReleased=$true;accountsUsed=0}|ConvertTo-Json -Compress
+    @{passed=$true;synthetic=$true;ownedProcessCount=$taskIds.Count;reusedIdentityRefused=$true;finalCpuFromOriginalHandle=$true;exitBetweenPinningAndCounters=$true;finalExitRecordedOnce=$true;exitedHandleReleased=$true;accountsUsed=0}|ConvertTo-Json -Compress
 } finally {
     # The process object is the handle returned by this test's own launch.
     try {if(-not $taskChild.HasExited){$taskChild.Kill($true);if(-not $taskChild.WaitForExit(6000)){throw 'Owned metrics fixture did not exit'}}}
