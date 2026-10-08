@@ -15,7 +15,8 @@ const target = require('../src/responsibility-target.cjs'),
   bridge = require('../src/scheduled-responsibility.cjs'),
   { outcome } = require('../src/assistant-coordination.cjs'),
   { atomicJSON } = require('../src/private-store.cjs');
-async function audit() {
+async function audit({ preparationDelayMs = 0 } = {}) {
+  assert.ok(Number.isSafeInteger(preparationDelayMs) && preparationDelayMs >= 0 && preparationDelayMs <= 5000);
   const root = path.resolve(__dirname, '..'),
     reportFile = path.join(root, 'artifacts/schedule-audit/verification.json');
   fs.rmSync(reportFile, { force: true });
@@ -38,7 +39,11 @@ async function audit() {
     workerProcesses = 0,
     sourceDispatches = 0,
     admissions = 0,
-    modelCalls = 0;
+    modelCalls = 0,
+    timerStartedAt = null;
+  // Hold the fixture clock while creating the schedule. Disk writes must not
+  // consume its future deadline before the real polling timer is started.
+  const scheduleEpoch = Date.now();
   try {
     const queue = new Queue(directory);
     queue.setFeed(feed());
@@ -97,6 +102,7 @@ async function audit() {
     const options = {
       directory,
       pollMs: 20,
+      now: () => scheduleEpoch + (timerStartedAt === null ? 0 : Date.now() - timerStartedAt),
       probe: (entry) => bridge.probe(responsibilities, entry),
       run: (entry) => {
         admissions++;
@@ -129,9 +135,10 @@ async function audit() {
           description: 'The fixture independently reviews the requested artifact',
         },
       ),
-      wake = Date.now() + 350,
-      end = Date.now() + 60000,
+      wake = scheduleEpoch + 350,
+      end = scheduleEpoch + 60000,
       messageId = crypto.randomUUID();
+    if (preparationDelayMs) await new Promise((resolve) => setTimeout(resolve, preparationDelayMs));
     assistant.ask({
       messageId,
       text:
@@ -148,6 +155,7 @@ async function audit() {
     assert.equal(request.status, 'completed', request.error);
     const scheduleId = request.scheduleId;
     assert.equal(schedules.entry(scheduleId).runs.length, 0);
+    timerStartedAt = Date.now();
     schedules.start();
     const wait = async (check) => {
       const limit = Date.now() + 5000;
@@ -204,6 +212,8 @@ async function audit() {
       sourceRevision,
       sourceDirty,
       timerWokeRun: true,
+      fixtureClockHeldDuringPreparation: true,
+      preparationDelayMs,
       runTrigger: accepted.trigger,
       namedTimeZone: schedules.entry(scheduleId).schedule.timeZone,
       plannedAt: accepted.plannedAt,
@@ -220,7 +230,7 @@ async function audit() {
       modelCalls,
       installedAppChanged: false,
       limits:
-        'Own synthetic worker transport and human verification fixture; no real Codex account, physical input or OS wake-from-shutdown evidence.',
+        'Own synthetic worker transport and human verification fixture. The fixture clock is held during preparation, then advances with the real polling timer; no real Codex account, physical input or OS wake-from-shutdown evidence.',
     };
     atomicJSON(reportFile, report);
     console.log(JSON.stringify(report));
