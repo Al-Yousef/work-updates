@@ -3,7 +3,7 @@ const assert=require('node:assert/strict'),fs=require('node:fs'),path=require('n
 const {percentile,hardwareKey}=require('../src/performance-report.cjs');
 const {phases}=require('../src/performance-qualification.cjs');
 const beforeRevision='ca7e08e63b159b2fc00b675abe00bea713b076be';
-const afterRevision='aa150bd8cf213445ea11c55655a8c32d47aaa14c';
+const afterRevision='39420dad992f1c67f7e237afcf3f3199e9b4e7f7';
 const counts=[100,1500];
 function compare(before,after){
   assert.equal(before.length,5);assert.equal(after.length,5);
