@@ -23,6 +23,8 @@ New-Item -ItemType Directory -Path $taskPackage | Out-Null
 foreach($taskFile in @('Native Hover.exe','Start Native Preview.exe','WorkUpdatesTaskbar-v2.dll','Taskbar Adapter Control.exe','build-verification.json')){
     Copy-Item -LiteralPath (Join-Path $taskCandidate $taskFile) -Destination (Join-Path $taskPackage $taskFile)
 }
+Copy-Item -LiteralPath (Join-Path $taskRepo 'LICENSE') -Destination (Join-Path $taskPackage 'LICENSE')
+Copy-Item -LiteralPath (Join-Path $taskNative 'THIRD_PARTY_NOTICES.txt') -Destination (Join-Path $taskPackage 'THIRD_PARTY_NOTICES.txt')
 @"
 Hyphen $taskVersion native Windows development candidate
 
@@ -53,4 +55,8 @@ try {
 } finally {$taskArchive.Dispose()}
 Move-Item -LiteralPath ($taskZip+'.partial.zip') -Destination $taskZip
 ((Get-FileHash -LiteralPath $taskZip).Hash.ToLowerInvariant()+'  '+(Split-Path -Leaf $taskZip)) | Set-Content -LiteralPath $taskChecksum -Encoding utf8NoBOM
+$taskPackageBuild=Get-Content -LiteralPath (Join-Path $taskCandidate 'build-verification.json') -Raw | ConvertFrom-Json
+$taskPackageEvidence=Join-Path $taskCandidate 'artifacts/package-verification.json'
+New-Item -ItemType Directory -Path (Split-Path -Parent $taskPackageEvidence) -Force | Out-Null
+@{schema=1;passed=$true;sourceRevision=$taskPackageBuild.revision;version=$taskVersion;unsignedDevelopmentBuild=$true;installedAppChanged=$false;archiveEntriesVerified=$true;archiveName=(Split-Path -Leaf $taskZip);archiveSha256=(Get-FileHash -LiteralPath $taskZip).Hash.ToLowerInvariant();entries=@(Get-ChildItem -LiteralPath $taskPackage -File | Sort-Object Name | ForEach-Object { @{name=$_.Name;sha256=(Get-FileHash -LiteralPath $_.FullName).Hash.ToLowerInvariant()} })} | ConvertTo-Json -Depth 5 | Set-Content -LiteralPath $taskPackageEvidence -Encoding utf8NoBOM
 Write-Output ('Native development package verified: '+(Split-Path -Leaf $taskZip))

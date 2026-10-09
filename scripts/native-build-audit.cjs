@@ -127,7 +127,7 @@ function verifyCandidate(directory) {
 function verifyPackage(directory, record) {
   assert.deepEqual(
     fs.readdirSync(directory).sort(),
-    [...releaseFiles, 'build-verification.json', 'README.txt'].sort(),
+    [...releaseFiles, 'build-verification.json', 'README.txt', 'LICENSE', 'THIRD_PARTY_NOTICES.txt'].sort(),
     'Unexpected native package resource',
   );
   const packaged = JSON.parse(
@@ -140,6 +140,11 @@ function verifyPackage(directory, record) {
       record.binaryHashes[file].toLowerCase(),
       'Stale packaged binary: ' + file,
     );
+  for (const [file, source] of [
+    ['LICENSE', path.join(root, 'LICENSE')],
+    ['THIRD_PARTY_NOTICES.txt', path.join(native, 'THIRD_PARTY_NOTICES.txt')],
+  ])
+    assert.equal(hash(path.join(directory, file)), hash(source), 'Packaged license or notices changed: ' + file);
   const readme = fs.readFileSync(path.join(directory, 'README.txt'), 'utf8');
   assert.ok(
     readme.includes(record.version) && readme.includes('HYPHEN_INSTALL_ROOT'),
