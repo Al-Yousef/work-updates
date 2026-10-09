@@ -34,6 +34,14 @@ int main(int argc,char** argv){
         {"sources",Json::array({{{"id","chat-a"}},{{"id","chat-b"}}})}};
     Json second={{"id","b"},{"taskKey","b1"},{"kind","observed"},{"at",50},{"status","working"}};
     Json state={{"cards",Json::array({first,second})},{"done",Json::array()}, {"settings",{{"queueSince",100}}}};
+    auto heartbeat=state;heartbeat["connectionHealth"]={{"collector",{{"ageMs",123}}}};
+    assert(sameRenderedState(state,heartbeat)&&sameRenderedState(heartbeat,state));
+    auto visibleChange=heartbeat;visibleChange["cards"][0]["title"]="Changed visible title";
+    assert(!sameRenderedState(heartbeat,visibleChange));
+    visibleChange=heartbeat;visibleChange["health"]={{"ok",false},{"message","Unavailable"}};
+    assert(!sameRenderedState(heartbeat,visibleChange));
+    visibleChange=heartbeat;visibleChange["futureField"]=true;
+    assert(!sameRenderedState(heartbeat,visibleChange)&&!sameRenderedState(visibleChange,heartbeat));
     model.update(state);assert(model.cards().size()==1);model.browseAll=true;assert(model.cards().size()==2);
     assert(model.cards()[0]["id"]=="a");model.choose(first);assert(model.input()["sourceId"]=="chat-a");
     model.response({{"ok",true},{"command","details"},{"input",model.input()},

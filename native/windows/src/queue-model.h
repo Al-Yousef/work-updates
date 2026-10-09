@@ -7,6 +7,16 @@
 #include <cctype>
 #include "chat-layout.h"
 using Json = nlohmann::json;
+// Collector freshness metadata is retained, but is not drawn by the native UI.
+// Every other field, including unknown additions, conservatively invalidates it.
+inline bool sameRenderedState(const Json& before,const Json& after) {
+    if(!before.is_object()||!after.is_object())return before==after;
+    for(const auto& [key,value]:before.items())
+        if(key!="connectionHealth"&&(!after.contains(key)||after.at(key)!=value))return false;
+    for(const auto& [key,value]:after.items())
+        if(key!="connectionHealth"&&!before.contains(key))return false;
+    return true;
+}
 struct QueueModel {
     Json state=Json::object(), detail=Json::object();
     std::string selectedId,selectedKey,sourceId,message,search,pendingCommand;

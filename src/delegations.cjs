@@ -555,6 +555,7 @@ class Delegations extends EventEmitter {
     });
   }
   observe() {
+    if (!this.state.entries.length) return;
     const updates = [],
       snapshot = this.options.snapshot();
     for (const e of this.state.entries) {

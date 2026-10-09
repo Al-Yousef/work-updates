@@ -327,7 +327,7 @@ schedules.on('change',()=>publish());
 responsibilities.on('change',()=>{publish();queueMicrotask(()=>responsibilities.pump());queueMicrotask(driveSchedules);queueMicrotask(driveDelegations);queueMicrotask(driveTriage);});
 schedules.start();
 devices.on('change', () => {
-  responsibilities.observe(devices.snapshot());
+  if(responsibilities.state.entries.length)responsibilities.observe(devices.snapshot());
   try{workControls.reconcile();}catch{diagnostics.write('work.recovery_failed',{code:'WORK_CONTROL_RECOVERY_FAILED',noResend:true});}
   driveDelegations();
   driveSchedules();
@@ -341,7 +341,7 @@ devices.on('change', () => {
 });
 let publication;
 queue.on('change', () => {
-  responsibilities.observe(devices.snapshot());
+  if(responsibilities.state.entries.length)responsibilities.observe(devices.snapshot());
   driveDelegations();
   driveSchedules();
   void responsibilities.pump();

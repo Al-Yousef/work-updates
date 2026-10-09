@@ -123,7 +123,7 @@ class Messages extends EventEmitter {
   schedule(){if(this.closed||this.scheduled)return;this.scheduled=setTimeout(()=>{this.scheduled=null;this.pump().catch(error=>this.log?.write('message.queue.error',{code:error.code||'QUEUE_ERROR'}));},100);this.scheduled.unref();}
   async pump(){
     if(maintenanceActive(this.queue.directory))return;
-    if(this.budgets)this.budgets.reconcile(this.budgets.options.snapshot?.()||this.queue.snapshot());
+    if(this.budgets)this.budgets.reconcile(()=>this.budgets.options.snapshot?.()||this.queue.snapshot());
     const age=Date.now()/1000-this.queue.feed.collectedAt;
     if(this.closed||!this.queue.health.ok||!Number.isFinite(age)||age< -5||age>30)return;
     const sources=new Set(this.state.entries.filter(e=>e.status==='queued').map(e=>e.sourceId));

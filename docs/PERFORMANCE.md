@@ -213,6 +213,26 @@ are released. The unchanged report policy reproduces those raw samples without
 gaps. This faster polling still cannot establish an exhaustive ETW lifecycle
 trace; children shorter than an actual discovery gap may remain unobserved.
 
+## Idle work and bounded attribution
+
+A separate opt-in CI probe takes five in-process V8 profiles of owned synthetic
+100-source fixtures. It writes only weighted attribution to tracked public source
+paths, with runtime/dependency frames redacted. It opens no inspector listener and
+uses no account or model. Profiling overhead and overlapping inclusive stacks make
+these reports unsuitable as CPU budgets or before/after savings measurements.
+
+The five initial profiles consistently identified full device snapshots in idle
+resource reconciliation. Snapshot construction is now deferred until an accepted
+active worker requires terminal evidence; uncertain workers after restart still
+require the same fresh owner, task, source and turn match. Empty responsibility and
+delegation journals also avoid unused snapshots. Native freshness-only frames keep
+their metadata without relayout or redraw; connection changes, visible fields,
+details, command receipts and explicit capture/focus work still invalidate the UI.
+Actual isolated native tests check ten received metadata updates, unchanged draw
+counts, preserved Unicode draft/selection/focus and a genuine visible repaint at
+all six DPI/contrast configurations. These changes require fresh qualification;
+the earlier failed comparisons remain failures and thresholds are unchanged.
+
 ## Owned event trace
 
 `scripts/owned-etw-audit.ps1` runs only on the isolated Windows CI runner. It starts a unique non-restarting ETW file session using the pinned Microsoft TraceEvent 3.2.8 package, keeps original root handles until analysis, and records process/thread/context-switch events around eight short-lived owned Node children and a fresh 100-source native pilot. Actual process start/stop kernel keys, parent lifetimes and timestamps establish each retained descendant. A changed original identity, overlapping lifetime, missing exit, reported event loss, missing scheduling data, oversized trace or uncertain owned shutdown fails the report. The trace observes events separately from the polling sampler; it does not fabricate counters for processes absent from that sampler.

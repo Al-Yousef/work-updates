@@ -151,6 +151,26 @@ try {
     const auto focusCard=cards[0];const auto focusName=focusCard.value("chatName","");
     accessible->accDoDefaultAction(child(named(std::wstring(focusName.begin(),focusName.end()))));
     wait([&]{return state().value("selected","")==focusCard.value("id","")&&!state().value("detailPending",true);},"Owned source is selected before the composer cancellation check");
+    // Keep every rendered fixture field fixed while freshness metadata changes.
+    // Actual receipt, draw count and EDIT state come from the original child.
+    const auto idleDraft=draft();setDraft(L"Unsent idle draft 漢字 😀");SendMessageW(editor,EM_SETSEL,2,7);
+    auto heartbeat=original;heartbeat["connectionHealth"]={{"collector",{{"state","fresh"},{"ageMs",10000}}}};
+    fault("patch",heartbeat);
+    wait([]{return state().value("connectionHealth",Json::object()).value("collector",Json::object()).value("ageMs",0)==10000;},"Original native child receives the fixed idle frame");
+    const auto idleBefore=state();
+    for(int n=1;n<=10;++n){
+        heartbeat["connectionHealth"]["collector"]["ageMs"]=10000+n;fault("patch",heartbeat);
+        wait([&]{return state().value("connectionHealth",Json::object()).value("collector",Json::object()).value("ageMs",0)==10000+n;},"Freshness update is retained by the original native child");
+    }
+    const auto idleAfter=state();DWORD idleSelectionStart=0,idleSelectionEnd=0;SendMessageW(editor,EM_GETSEL,reinterpret_cast<WPARAM>(&idleSelectionStart),reinterpret_cast<LPARAM>(&idleSelectionEnd));
+    check(idleAfter.value("queueStateFrames",0)>=idleBefore.value("queueStateFrames",0)+10,"All ten metadata frames were actually processed");
+    check(idleAfter.at("surfaceDraws")==idleBefore.at("surfaceDraws"),"Unchanged rendered state avoids redundant native draws");
+    check(draft()==L"Unsent idle draft 漢字 😀"&&idleSelectionStart==2&&idleSelectionEnd==7&&focus()==editor,"Idle updates preserve Unicode draft, caret selection and focus");
+    auto visibleIdle=heartbeat;visibleIdle["cards"][0]["title"]="Visible synthetic title change";fault("patch",visibleIdle);
+    wait([&]{return state().value("surfaceDraws",0)>idleAfter.value("surfaceDraws",0);},"A real visible update still repaints the original child");
+    const auto idleVisible=state();
+    {std::ofstream out(artifacts/(L"idle-repaint-proof-"+std::to_wstring(dpi)+(highContrast?L"-contrast":L"")+L".json"));out<<Json({{"synthetic",true},{"before",idleBefore},{"after",idleAfter},{"visibleUpdate",idleVisible},{"metadataFrames",10},{"draftPreserved",true},{"selectionPreserved",true},{"focusPreserved",true}}).dump(2);}
+    fault("reset");wait([&]{return state().value("surfaceDraws",0)>idleVisible.value("surfaceDraws",0);},"Restoring the visible source also repaints");setDraft(idleDraft.c_str());
     const auto priorSourceDraft=draft();setDraft(L"Owned source draft survives a stale focus press");
     const auto focusBefore=state();check(focusBefore.value("canDraft",false),"Original selected source has a usable composer");const auto focusBounds=focusBefore.at("composerBoundsPx");
     const auto focusPoint=MAKELPARAM((focusBounds[0].get<int>()+focusBounds[2].get<int>())/2,(focusBounds[1].get<int>()+focusBounds[3].get<int>())/2);
