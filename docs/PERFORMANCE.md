@@ -21,6 +21,13 @@ network or model completion. The messaging phase also clicks the actual owned
 composer, verifies its focus and unchanged source/selection, and records focus
 handler timing separately. A snapshot whose row moved before mouse-down is
 cancelled before release and cannot count as an accepted selection. The report
+also binds composer focus to the fresh original mouse-down and release decision.
+If the task disappears, the verified cancelled press records no accepted focus
+latency and attempts no send. Missing decision records, reused sequences, changed
+original PIDs, unexplained context changes and lost focus on an unchanged target
+still fail. The native fixture removes an actual selected task during its held
+composer press and verifies no message submission and preserved source drafts.
+The report
 gives sample counts, p50/p95/p99 handler
 latency and measured exceptions to the 100 ms local-response goal. These are
 simulated owned-window inputs; physical input remains a separate gate.

@@ -28,4 +28,25 @@ $taskCancelled.sequence=2;$taskCancelled.sourceAfterDecision='different-source'
 Check-Press $taskCancelled '' 'invalid' $taskDown
 $taskCancelled.sourceAfterDecision='old-source';$taskDown.lastPress.sequence=1
 Check-Press $taskCancelled '' 'invalid' $taskDown
-Write-Output ('PASS '+$taskChecks+' native press proof gates; stale, unbound and changed-selection records are refused')
+$taskFocusChecks=0
+function Focus-Case([string]$Expected,$Change){
+    $taskBeforeFocus=[pscustomobject]@{pid=42;selected='task-a';source='source-a';canDraft=$true;lastPress=[pscustomobject]@{sequence=4}}
+    $taskDownFocus=[pscustomobject]@{pid=42;selected='task-a';source='source-a';lastPress=[pscustomobject]@{sequence=5;disposition='down';expectedKey='';selectedBefore='task-a';sourceBefore='source-a'}}
+    $taskAfterFocus=[pscustomobject]@{pid=42;selected='task-a';source='source-a';composerFocused=$true;lastPress=[pscustomobject]@{sequence=5;disposition='cancelled';expectedKey='';actualKey='';selectedAtDecision='task-a';sourceAtDecision='source-a';selectedAfterDecision='task-a';sourceAfterDecision='source-a'}}
+    & $Change $taskBeforeFocus $taskDownFocus $taskAfterFocus
+    $taskActual=Get-HyphenComposerFocusProof $taskBeforeFocus $taskDownFocus $taskAfterFocus
+    if($taskActual -ne $Expected){throw ('Expected '+$Expected+' focus proof; received '+$taskActual)}
+    $script:taskFocusChecks++
+}
+Focus-Case 'accepted' {}
+Focus-Case 'invalid' {param($b,$d,$a) $a.composerFocused=$false}
+Focus-Case 'invalid' {param($b,$d,$a) $a.pid=43}
+Focus-Case 'invalid' {param($b,$d,$a) $a.lastPress.sequence=6}
+Focus-Case 'invalid' {param($b,$d,$a) $d.lastPress.sequence=4;$a.lastPress.sequence=4}
+Focus-Case 'invalid' {param($b,$d,$a) $a.lastPress.PSObject.Properties.Remove('sourceAtDecision')}
+Focus-Case 'invalid' {param($b,$d,$a) $a.source='different-source'}
+Focus-Case 'invalid' {param($b,$d,$a) $a.lastPress.sourceAfterDecision='different-source'}
+Focus-Case 'cancelled' {param($b,$d,$a) $a.source='';$a.selected='';$a.lastPress.sourceAtDecision='';$a.lastPress.sourceAfterDecision='';$a.lastPress.selectedAtDecision='';$a.lastPress.selectedAfterDecision=''}
+Focus-Case 'stale_snapshot_cancelled' {param($b,$d,$a) $d.source='';$d.selected='';$d.lastPress.sourceBefore='';$d.lastPress.selectedBefore='';$a.source='';$a.selected='';$a.lastPress.sourceAtDecision='';$a.lastPress.sourceAfterDecision='';$a.lastPress.selectedAtDecision='';$a.lastPress.selectedAfterDecision=''}
+Focus-Case 'stale_snapshot_cancelled' {param($b,$d,$a) $d.lastPress.expectedKey='moved-control';$a.lastPress.expectedKey='moved-control';$a.lastPress.PSObject.Properties.Remove('actualKey')}
+Write-Output ('PASS '+$taskChecks+' selection and '+$taskFocusChecks+' composer focus proof gates; unchanged-target focus failure, stale identity and unbound records are refused')

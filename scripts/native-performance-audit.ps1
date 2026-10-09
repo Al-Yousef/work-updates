@@ -65,6 +65,17 @@ function Click-PerfHit([IntPtr]$Panel,$Hit,[string]$Run=''){
     if($Run){return @{ms=$taskWatch.Elapsed.TotalMilliseconds;down=$taskDown}}
     return $taskWatch.Elapsed.TotalMilliseconds
 }
+function Focus-PerfComposer([IntPtr]$Panel,$Before,[string]$Run){
+    $taskX=[int](($Before.composerBoundsPx[0]+$Before.composerBoundsPx[2])/2)
+    $taskY=[int](($Before.composerBoundsPx[1]+$Before.composerBoundsPx[3])/2)
+    $taskPoint=[IntPtr](($taskY -shl 16) -bor ($taskX -band 65535))
+    $taskWatch=[Diagnostics.Stopwatch]::StartNew();Send-PerfMessage $Panel 0x201 ([IntPtr]1) $taskPoint
+    $taskDown=Get-PerfState $Panel $Run
+    if($taskDown.lastPress.disposition -ne 'down' -or $taskDown.lastPress.expectedKey -ne '' -or $taskDown.lastPress.selectedBefore -ne $Before.selected -or $taskDown.lastPress.sourceBefore -ne $Before.source -or $taskDown.selected -ne $Before.selected -or $taskDown.source -ne $Before.source){Send-PerfMessage $Panel 0x1F}
+    Send-PerfMessage $Panel 0x202 ([IntPtr]::Zero) $taskPoint;$taskWatch.Stop()
+    $taskAfter=Get-PerfState $Panel $Run
+    return @{ms=$taskWatch.Elapsed.TotalMilliseconds;down=$taskDown;after=$taskAfter;proof=(Get-HyphenComposerFocusProof $Before $taskDown $taskAfter)}
+}
 foreach($taskCount in $ChatCounts){
     $taskRun=Join-Path $taskOutput ([string]$taskCount);New-Item -ItemType Directory -Path $taskRun | Out-Null
     & $taskPython (Join-Path $PSScriptRoot 'performance-source-fixture.py') (Join-Path $taskRun 'source') $taskCount
@@ -155,22 +166,26 @@ foreach($taskCount in $ChatCounts){
                         }
                     }else{$taskSelectedSources[[string]$taskLive.source]=$true;$taskLatencies+=@{operation='chat_selection_handler';ms=$taskLatency;detailPending=$taskLive.detailPending;selectionAccepted=$true}}
                     if($taskSelectionAccepted -and $taskPhase -eq 'messaging' -and -not $taskLive.pending){
+                        $taskCanSend=$true
                         if($taskLive.canDraft){
-                            $taskScale=$script:taskDpi/96.0
-                            $taskComposerHit=@{box=@($taskLive.composerBoundsPx|ForEach-Object {$_/$taskScale})}
-                            $taskFocusLatency=Click-PerfHit $taskPanel $taskComposerHit
-                            $taskFocusState=Get-PerfState $taskPanel $taskRun
-                            if(-not $taskFocusState.composerFocused -or $taskFocusState.source -ne $taskLive.source -or $taskFocusState.selected -ne $taskLive.selected){
-                                @{count=$taskCount;phase=$taskPhase;iteration=$taskIteration;before=$taskLive;hit=$taskComposerHit;after=$taskFocusState}|ConvertTo-Json -Depth 12|Set-Content -LiteralPath (Join-Path $taskRun 'focus-failure.json') -Encoding utf8
+                            $taskFocus=Focus-PerfComposer $taskPanel $taskLive $taskRun
+                            if($taskFocus.proof -eq 'accepted'){
+                                $taskLatencies+=@{operation='composer_focus_handler';ms=$taskFocus.ms;sourceSelectionVerified=$true;provider='local owned-window focus; network/model latency excluded'}
+                            }elseif($taskFocus.proof -in @('cancelled','stale_snapshot_cancelled')){
+                                $taskCanSend=$false
+                                $taskLatencies+=@{operation='cancelled_composer_focus_press';ms=$taskFocus.ms;reason=$taskFocus.proof;selectionAccepted=$false;sendAttempted=$false}
+                            }else{
+                                @{count=$taskCount;phase=$taskPhase;iteration=$taskIteration;before=$taskLive;down=$taskFocus.down;after=$taskFocus.after}|ConvertTo-Json -Depth 12|Set-Content -LiteralPath (Join-Path $taskRun 'focus-failure.json') -Encoding utf8
                                 throw 'Owned composer focus was not confirmed on the selected source'
                             }
-                            $taskLatencies+=@{operation='composer_focus_handler';ms=$taskFocusLatency;sourceSelectionVerified=$true;provider='local owned-window focus; network/model latency excluded'}
                         }
+                        if($taskCanSend){
                         $taskEditor=[HyphenPerfWindows]::GetDlgItem($taskPanel,201);$taskTextResult=[UIntPtr]::Zero
                         Assert-PerfWindow $taskEditor
                         if([HyphenPerfWindows]::SendText($taskEditor,0xC,[IntPtr]::Zero,'Synthetic benchmark follow-up',2,2000,[ref]$taskTextResult) -eq [IntPtr]::Zero){throw 'Owned composer did not accept the fixture text'}
                         $taskLive=Get-PerfState $taskPanel $taskRun;$taskSend=$taskLive.hits|Where-Object {$_.action -eq 'send' -and $_.enabled}|Select-Object -First 1
                         if($taskSend){$taskLatencies+=@{operation='send_handler';ms=(Click-PerfHit $taskPanel $taskSend);provider='synthetic transport; network/model latency excluded'}}
+                        }
                     }
                 }
                 $taskSample=Get-OwnedProcessSample -Roots $taskRoots -Seen $taskSeen -Tracked $taskTracked -Observer $taskObserver

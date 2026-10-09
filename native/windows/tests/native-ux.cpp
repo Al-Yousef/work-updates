@@ -145,6 +145,28 @@ try {
     SendMessageW(panel,WM_APP+218,1,0);check(focus()==search&&draft()==L"Keep this unsent draft","Ctrl+F focuses Search and preserves the draft");select(named(L"Message"));setDraft(L"Line one");const auto end=SendMessageW(editor,WM_GETTEXTLENGTH,0,0);SendMessageW(editor,EM_SETSEL,end,end);SendMessageW(panel,WM_APP+218,3,0);check(draft()==L"Line one\r\n","Shift+Enter inserts a real native newline without sending");setDraft(L"Keep this unsent draft");
     // Reorder and then remove a focused card without changing its child ID.
     const auto original=read(fixture/L"view.json");const auto cards=original.at("cards");check(cards.size()>2,"Reorder fixture has multiple chats");
+    // Remove the exact selected task while an actual composer press is held.
+    // This is a stale target, not a lost-focus sample or permission to send to
+    // the replacement Hyphen conversation.
+    const auto focusCard=cards[0];const auto focusName=focusCard.value("chatName","");
+    accessible->accDoDefaultAction(child(named(std::wstring(focusName.begin(),focusName.end()))));
+    wait([&]{return state().value("selected","")==focusCard.value("id","")&&!state().value("detailPending",true);},"Owned source is selected before the composer cancellation check");
+    const auto priorSourceDraft=draft();setDraft(L"Owned source draft survives a stale focus press");
+    const auto focusBefore=state();check(focusBefore.value("canDraft",false),"Original selected source has a usable composer");const auto focusBounds=focusBefore.at("composerBoundsPx");
+    const auto focusPoint=MAKELPARAM((focusBounds[0].get<int>()+focusBounds[2].get<int>())/2,(focusBounds[1].get<int>()+focusBounds[3].get<int>())/2);
+    SendMessageW(panel,WM_LBUTTONDOWN,MK_LBUTTON,focusPoint);const auto focusDown=state();
+    check(focusDown.at("lastPress").value("disposition","")=="down"&&focusDown.at("lastPress").value("sequence",0)>focusBefore.at("lastPress").value("sequence",0),"Composer proof captures the fresh original mouse-down");
+    auto focusRemoved=cards;focusRemoved.erase(focusRemoved.begin());fault("patch",{{"cards",focusRemoved}});
+    wait([]{return state().value("selected","").empty();},"Selected task disappears during the owned composer press");
+    SendMessageW(panel,WM_LBUTTONUP,0,focusPoint);const auto focusAfter=state();const auto focusPress=focusAfter.at("lastPress");
+    check(focusPress.value("sequence",0)==focusDown.at("lastPress").value("sequence",0)&&focusPress.value("disposition","")=="cancelled","The same original composer press is cancelled");
+    check(focusPress.value("selectedAtDecision","missing").empty()&&focusPress.value("sourceAtDecision","missing").empty()&&focusPress.value("selectedAfterDecision","missing").empty()&&focusPress.value("sourceAfterDecision","missing").empty(),"Cancelled composer release preserves the replacement context without selecting another task");
+    check(!std::filesystem::exists(fixture/L"sent.json")&&!std::filesystem::exists(fixture/L"assistant.json"),"Stale composer press submits no source or assistant message");
+    {std::ofstream out(artifacts/(L"composer-focus-proof-"+std::to_wstring(dpi)+(highContrast?L"-contrast":L"")+L".json"));out<<Json({{"synthetic",true},{"before",focusBefore},{"down",focusDown},{"after",focusAfter},{"sendAttempted",false}}).dump(2);}
+    fault("reset");wait([&]{try{return named(std::wstring(focusName.begin(),focusName.end()))>0;}catch(...){return false;}},"Restored source card reaches the owned native window");accessible->accDoDefaultAction(child(named(std::wstring(focusName.begin(),focusName.end()))));
+    wait([&]{return state().value("selected","")==focusCard.value("id","");},"Original source is restored for draft readback");
+    check(draft()==L"Owned source draft survives a stale focus press","Stale target cancellation preserves its original source draft");setDraft(priorSourceDraft.c_str());action(AuditAction::Assistant);
+    check(draft()==L"Keep this unsent draft","Replacement assistant draft was preserved independently");
     std::string firstName=cards[0].value("chatName","");long cardId=named(std::wstring(firstName.begin(),firstName.end()));select(cardId);
     auto reordered=cards;std::swap(reordered[0],reordered[1]);fault("patch",{{"cards",reordered}});
     wait([&]{auto s=state();for(const auto& h:s["hits"])if(h["action"]=="card")return h.value("key","").find(cards[1].value("id",""))!=std::string::npos;return false;},"Reordered cards reach the actual painted list");
