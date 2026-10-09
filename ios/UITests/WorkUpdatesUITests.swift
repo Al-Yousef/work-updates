@@ -95,6 +95,11 @@ final class WorkUpdatesUITests:XCTestCase {
         wait(for:[keyboardHidden],timeout:5)
         XCTAssertTrue(app.buttons["assistant-channel-send"].isHittable)
         capture("Private assistant accepted answer")
+        XCUIDevice.shared.press(.home)
+        app.activate()
+        XCTAssertTrue(app.staticTexts["Synthetic private answer: Native phone private question"].waitForExistence(timeout:20))
+        XCTAssertEqual(app.staticTexts.matching(identifier:"Native phone private question").count,1,"Foreground reconnect reads the existing question without resubmitting it")
+        capture("Private assistant after foreground reconnect")
         app.navigationBars["Assistant"].buttons["Done"].tap()
         XCTAssertTrue(app.buttons["queue-menu"].waitForExistence(timeout:5))
     }
