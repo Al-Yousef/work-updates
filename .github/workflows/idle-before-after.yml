@@ -1,14 +1,14 @@
 name: Bounded idle before and after comparison
 on:
   push:
-    branches: [diagnose/idle-before-after]
+    branches: [diagnose/task-key-before-after]
 permissions:
   contents: read
 jobs:
   comparison:
     name: Five alternating synthetic comparisons (not qualification)
     runs-on: windows-2025
-    timeout-minutes: 60
+    timeout-minutes: 95
     steps:
       - uses: actions/checkout@v4
         with:
@@ -20,7 +20,7 @@ jobs:
           persist-credentials: false
       - uses: actions/checkout@v4
         with:
-          ref: 02217f7ef9e120505f01e7ee87ae7b110cf11896
+          ref: aa150bd8cf213445ea11c55655a8c32d47aaa14c
           path: after
           persist-credentials: false
       - uses: actions/setup-node@v4
@@ -59,7 +59,7 @@ jobs:
               Push-Location $taskSide
               try {
                 $taskResult="$pwd/artifacts/performance/comparison-$taskRound"
-                ./scripts/native-performance-audit.ps1 -SecondsPerPhase 30 -ChatCounts @(100) -OutputDirectory $taskResult
+                ./scripts/native-performance-audit.ps1 -SecondsPerPhase 30 -ChatCounts @(100,1500) -OutputDirectory $taskResult
                 Copy-Item -LiteralPath $taskResult -Destination "$taskDriver/artifacts/before-after/$taskSide-$taskRound" -Recurse
               } finally { Pop-Location }
             }
