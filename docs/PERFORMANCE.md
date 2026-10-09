@@ -21,6 +21,13 @@ network or model completion. The messaging phase also clicks the actual owned
 composer, verifies its focus and unchanged source/selection, and records focus
 handler timing separately. A snapshot whose row moved before mouse-down is
 cancelled before release and cannot count as an accepted selection. The report
+also binds composer focus to the fresh original mouse-down and release decision.
+If the task disappears, the verified cancelled press records no accepted focus
+latency and attempts no send. Missing decision records, reused sequences, changed
+original PIDs, unexplained context changes and lost focus on an unchanged target
+still fail. The native fixture removes an actual selected task during its held
+composer press and verifies no message submission and preserved source drafts.
+The report
 gives sample counts, p50/p95/p99 handler
 latency and measured exceptions to the 100 ms local-response goal. These are
 simulated owned-window inputs; physical input remains a separate gate.
@@ -75,6 +82,29 @@ threshold is enforced from a single pilot. Repeated comparable baselines,
 long-run growth checks, wakeups, before/after optimization comparisons and
 physical interaction remain required before #13 closes.
 
+CPU consumption is now gated using the sum of complete original-handle CPU deltas
+over their measured phase time, divided by logical processors. It is time weighted;
+an arithmetic average of unequal sample percentages is incorrect. Memory retains
+its p95 gate, and the five-baseline median/IQR/15-percent allowance is unchanged.
+The original one-second CPU p50/p95/p99 and the former p95 comparison stay published
+as an explicit non-gating burst diagnostic. Sustained CPU increases, missing phase
+time, partial originals, memory regressions and growth still fail. A phase-average
+pass does not establish burst stability or the separate local-response target.
+[Microsoft process times](https://learn.microsoft.com/en-us/windows/win32/api/processthreadsapi/nf-processthreadsapi-getprocesstimes)
+defines cumulative kernel/user time summed over the process's threads.
+
+The prior full run 37910734378 on source 9e00a403 failed two independently measured
+attempts under the former burst gate: 100-source idle CPU p95 was 1.951% versus
+1.797%, then 1,500-source idle was 9.631% versus 9.303%. Their phase-average CPU
+was respectively 0.523% and 2.894%, within their baseline phase-average ranges.
+All memory and ten-minute growth checks passed. Those raw failures remain retained;
+the exact causes of burst variation are unestablished. Tests redistribute identical
+cumulative CPU across intervals, retain the changed p95, and require an actual
+sustained consumption increase to fail. This is a disclosed budget-statistic change,
+not an app optimization, a wider numerical allowance, or a conversion of those
+older failed reports into successful qualification. Fresh current-source baselines
+and comparison are required for the new contract.
+
 The QA runner now records stop-to-observed-exit duration separately from total
 startup/run time. Cleanup tests check the actual exit precedes the child's
 self-cleanup guard, observes exit, and meets the enforced cleanup deadline.
@@ -90,7 +120,7 @@ cases. Live account/model/installed data checks are not part of this pilot.
 The separate `Repeated whole-process performance qualification` workflow now
 launches five independent complete baselines, a sixth comparison, and a ten-minute
 1,500-source navigation/reconnect observation. All run sequentially on the same
-Windows runner with thirty seconds per ordinary phase. Run UUIDs and original
+Windows runner with sixty seconds per ordinary phase. Run UUIDs and original
 backend/native/collector creation identities prevent copied runs from counting as
 independent. Missing process measurements, changed hardware/workloads, short raw
 measurements, missing accepted interactions, cache overflows, uncertain shutdown
@@ -182,3 +212,61 @@ and null live counters once, then reproduces error 87 after all original handles
 are released. The unchanged report policy reproduces those raw samples without
 gaps. This faster polling still cannot establish an exhaustive ETW lifecycle
 trace; children shorter than an actual discovery gap may remain unobserved.
+
+## Idle work and bounded attribution
+
+A separate opt-in CI probe takes five in-process V8 profiles of owned synthetic
+100-source fixtures. It writes only weighted attribution to tracked public source
+paths, with runtime/dependency frames redacted. It opens no inspector listener and
+uses no account or model. Profiling overhead and overlapping inclusive stacks make
+these reports unsuitable as CPU budgets or before/after savings measurements.
+
+The five initial profiles consistently identified full device snapshots in idle
+resource reconciliation. Snapshot construction is now deferred until an accepted
+active worker requires terminal evidence; uncertain workers after restart still
+require the same fresh owner, task, source and turn match. Empty responsibility and
+delegation journals also avoid unused snapshots. Native freshness-only frames keep
+their metadata without relayout or redraw; connection changes, visible fields,
+details, command receipts and explicit capture/focus work still invalidate the UI.
+Actual isolated native tests check ten received metadata updates, unchanged draw
+counts, preserved Unicode draft/selection/focus and a genuine visible repaint at
+all six DPI/contrast configurations. These changes require fresh qualification;
+the earlier failed comparisons remain failures and thresholds are unchanged.
+
+Repeated queue projections also reuse the task-title hash for the same original
+source record. The weak cache compares the current normalized title on every
+projection, recomputes changed titles and treats replaced records separately. It
+does not cache freshness, status, cards or admission evidence, and does not retain
+removed source records. A regression verifies repeated projections avoid duplicate
+hashes while in-place changes, removal and replacement still reject stale task
+identities. A local synthetic snapshot prototype is descriptive; a fresh complete
+qualification and matching before/after observation are still required.
+
+## Owned event trace
+
+`scripts/owned-etw-audit.ps1` runs only on the isolated Windows CI runner. It starts a unique non-restarting ETW file session using the pinned Microsoft TraceEvent 3.2.8 package, keeps original root handles until analysis, and records process/thread/context-switch events around eight short-lived owned Node children and a fresh 100-source native pilot. Actual process start/stop kernel keys, parent lifetimes and timestamps establish each retained descendant. A changed original identity, overlapping lifetime, missing exit, reported event loss, missing scheduling data, oversized trace or uncertain owned shutdown fails the report. The trace observes events separately from the polling sampler; it does not fabricate counters for processes absent from that sampler.
+
+Only owned synthetic JSON and source/tool/candidate hashes are published. Raw ETL files, command lines, kernel pointers and unrelated system records are not published. The recorder stops only its own uniquely named session, refuses adoption, and never runs on the policy-blocked local machine. Process and context-switch observations apply only to this bounded CI workload. Context switches are not CPU hardware wakeups or energy; physical interaction, optimization comparisons, energy and longer app-specific trace qualification remain separate.
+
+The first successful lifecycle observation retained 35 starts and stops with zero event loss, including a collector exit code of 1. Its older polling cleanup had reported disappearance as normal. The report now additionally requires every owned exit code to be zero; the collector shutdown correction and its independent original-child receipt must be integrated before acceptance. That earlier observation remains diagnostic evidence and is not accepted as normal owned shutdown. The wrapper resolves an exact installed .NET 8 SDK in its private output directory and records its actual identity; a newer default runner SDK cannot silently substitute.
+
+References: [Microsoft TraceEvent guide](https://github.com/microsoft/perfview/blob/v3.2.8/documentation/TraceEvent/TraceEventProgrammersGuide.md) and [pinned provider package](https://www.nuget.org/packages/Microsoft.Diagnostics.Tracing.TraceEvent/3.2.8).
+
+Full qualification now requires at least sixty seconds per ordinary phase, with
+measured CPU elapsed time and sample coverage checked against that declaration
+in every baseline, comparison and ordinary soak phase. The five-baseline
+median/IQR/15-percent formula is unchanged. Short pilots and separate profiling
+or before/after diagnostics still use their declared thirty-second windows and
+do not qualify the application.
+
+The fifth complete attempt, run 37953165429 on aa150bd8, remains failed:
+500-source hidden-idle phase CPU was 0.713% against a 0.695% limit. All other
+17 comparisons, memory checks and bounded growth passed. Its original CPU
+totals for the backend and native shell match baseline four exactly; collector
+CPU differs by 0.015625 seconds, and measured elapsed time also differs. These
+recorded values do not establish a guaranteed Windows counter resolution or
+the exact cause of the failed comparison. Longer observations expose more
+periodic work and reduce the relative effect of phase boundaries. Every workload
+is extended equally, with all fresh baselines and original process identities.
+The raw fifth failure and every shorter observation remain retained; the longer
+window does not convert any prior report into a pass.

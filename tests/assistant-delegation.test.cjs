@@ -9,6 +9,21 @@ function profile(t) {
   t.after(() => f.close());
   return f;
 }
+test('an empty delegation journal needs no source read, while a real child still observes its destination', async (t) => {
+  const f = profile(t), snapshot = f.delegations.options.snapshot;
+  let reads = 0;
+  f.delegations.options.snapshot = () => { reads++; return snapshot(); };
+  f.delegations.observe();
+  await f.delegations.tick();
+  assert.equal(reads, 0);
+  const started = await f.start();
+  assert.equal(started.status, 'completed', started.answer);
+  reads = 0;
+  f.delegations.observe();
+  assert.equal(reads, 1);
+  assert.equal(f.delegations.entry(started.delegationId).scope.sourceId, f.sources[0].id);
+});
+
 test('parent, exact child destination, literal purpose/context, source revisions and finite limits survive restart', async (t) => {
   const f = profile(t),
     instruction =

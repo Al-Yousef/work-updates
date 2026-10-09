@@ -1,7 +1,7 @@
 import SwiftUI
 import WorkUpdatesCore
 
-@MainActor private final class PhoneAssistant:ObservableObject {
+@MainActor final class PhoneAssistant:ObservableObject {
     @Published var state:AssistantChannelState?
     @Published var message="Connect with a separate private assistant code."
     @Published var pending:AssistantDraft?
@@ -17,6 +17,9 @@ import WorkUpdatesCore
         self.loadCredential=loadCredential;self.saveCredential=saveCredential
     }
     func connect(_ code:String?=nil) async {
+        // A superseded SwiftUI task can enter after its replacement starts.
+        // Refuse it before stop() changes the replacement's generation/state.
+        guard !Task.isCancelled else {return}
         stop();let current=generation
         var owned:AssistantChannelClient?
         do {

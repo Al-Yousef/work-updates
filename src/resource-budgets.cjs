@@ -336,15 +336,18 @@ class ResourceBudgets {
     );
   }
   reconcile(snapshot) {
+    const workers = this.state.entries.filter(
+      (e) => e.kind === 'worker' && active(e) && e.turnId,
+    );
+    if (!workers.length) return;
+    if (typeof snapshot === 'function') snapshot = snapshot();
     if (
       !snapshot.health?.ok ||
       !Number.isFinite(snapshot.collectedAt) ||
       Math.abs(snapshot.collectedAt * 1000 - this.now()) > 30000
     )
       return;
-    for (const e of this.state.entries.filter(
-      (e) => e.kind === 'worker' && active(e) && e.turnId,
-    )) {
+    for (const e of workers) {
       const card = [...(snapshot.cards || []), ...(snapshot.done || [])].find(
         (c) => c.taskKey === e.taskKey && c.owner?.local && c.owner.online !== false,
       );

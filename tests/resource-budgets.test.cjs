@@ -273,6 +273,37 @@ test('exhausted budgets prevent thread/inference creation rather than failing af
   assert.ok(!client.calls.includes('turn/start'));
   assert.equal(client.closed, true);
 });
+test('idle budget reconciliation skips source reads until an accepted worker needs settlement', (t) => {
+  const f = setup(t);
+  const unused = () => assert.fail('No accepted worker requires a source snapshot');
+  f.b.reconcile(unused);
+  const model = f.b.reserve(request()),
+    read = f.b.reserve(request({ kind: 'read' })),
+    worker = f.b.reserve(request({ kind: 'worker', sourceId: 'owned-source', taskKey: 'owned-task' }));
+  f.b.reconcile(unused);
+  f.b.finish(model);
+  f.b.finish(read);
+  f.b.workerAccepted(worker, 'owned-turn');
+  let reads = 0;
+  const snapshot = () => {
+    reads++;
+    return { health: { ok: true }, collectedAt: f.config.now() / 1000,
+      cards: [{ taskKey: 'owned-task', owner: { local: true, online: true },
+        sources: [{ id: 'owned-source', turnId: 'owned-turn', turnOutcome: 'completed' }] }] };
+  };
+  // Restart makes the accepted worker uncertain; it still needs exact evidence.
+  f.b.close();
+  const restarted = new ResourceBudgets(f.config);
+  t.after(() => restarted.close());
+  assert.equal(restarted.state.entries.find(e => e.id === worker).status, 'unknown');
+  restarted.reconcile(() => ({ ...snapshot(), collectedAt: (f.config.now() - 31000) / 1000 }));
+  assert.equal(restarted.accounting('global').concurrency, 1);
+  restarted.reconcile(snapshot);
+  assert.equal(reads, 2);
+  assert.equal(restarted.accounting('global').concurrency, 0);
+  restarted.reconcile(unused);
+});
+
 test('real message dispatch wiring refuses an exhausted budget and retains accepted workers until exact terminal evidence', async (t) => {
   const f = setup(t),
     q = new Queue(f.directory);
@@ -302,6 +333,10 @@ test('real message dispatch wiring refuses an exhausted budget and retains accep
       })),
     };
   };
+  let snapshotReads = 0;
+  f.b.options.snapshot = () => { snapshotReads++; return snapshot(); };
+  await m.pump();
+  assert.equal(snapshotReads, 0);
   const c = q.cards()[0],
     input = {
       id: c.id,
@@ -321,11 +356,14 @@ test('real message dispatch wiring refuses an exhausted budget and retains accep
   source.lifecycle = 'completed';
   source.turnOutcome = 'completed';
   source.turnId = 'wrong';
-  f.b.reconcile(snapshot());
+  await m.pump();
   assert.equal(f.b.accounting('global').concurrency, 1);
   source.turnId = 'synthetic-worker';
-  f.b.reconcile(snapshot());
+  await m.pump();
   assert.equal(f.b.accounting('global').concurrency, 0);
+  assert.equal(snapshotReads, 2);
+  await m.pump();
+  assert.equal(snapshotReads, 2);
 });
 test('literal budget controls work through the assistant without inference or access expansion', async (t) => {
   const f = setup(t),

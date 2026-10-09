@@ -793,7 +793,7 @@ struct App {
     bool trackedTrigger=false, trackedPanel=false, suppressed=false, closing=false;
     bool leaveTimer=false, finishTimer=false;
     unsigned reveals=0;
-    unsigned weatherCommands=0,commandReplies=0;
+    unsigned weatherCommands=0,commandReplies=0,queueStateFrames=0;
     bool weatherAvailable=false, weatherInside=false, hoverTimer=false;
     bool taskbarAdapter=true, adapterReady=false,allowAdapterAttach=true;
     HANDLE adapterControl=nullptr;
@@ -1114,23 +1114,28 @@ struct App {
         else{model.detailPending=false;model.detailError="Messages could not load. Your draft is saved.";}
     }
     void queueEvents() {
+        bool changed=false;
         for(auto& event:queueClient.take()) {
             const auto type=event.value("event","");
             if(type=="state") {
+                ++queueStateFrames;
                 const bool reconnecting=!renderer.model.connected;
+                changed=changed||reconnecting||!sameRenderedState(renderer.model.state,event.at("state"));
                 renderer.model.connected=true;
                 if(reconnecting)renderer.model.message.clear();
                 if(renderer.model.state==event.at("state"))continue;
                 renderer.model.update(event.at("state"));
             }
-            else if(type=="details"){renderer.model.response(event);if(!renderer.model.detailPending)KillTimer(panel,TIMER_DETAILS);}
+            else if(type=="details"){changed=true;renderer.model.response(event);if(!renderer.model.detailPending)KillTimer(panel,TIMER_DETAILS);}
             else if(type=="command"){
+                changed=true;
                 std::ofstream out(tracePath,std::ios::app);out<<Json({{"event","native.command"},{"command",event.value("command","")},{"ok",event.value("ok",false)},{"code",event.value("code",Json())}}).dump()<<'\n';
                 ++commandReplies;renderer.model.response(event);saveDrafts();
                 if(event.value("command","")=="attachImages") {renderer.unavailableImages.clear();for(const auto& file:temporaryImages){std::error_code ec;std::filesystem::remove(file,ec);}temporaryImages.clear();}
             }
-            else {renderer.model.connected=false;renderer.model.message=event.value("error","Queue connection failed.");}
+            else {changed=true;renderer.model.connected=false;renderer.model.message=event.value("error","Queue connection failed.");}
         }
+        if(!changed&&capturePath.empty()&&!focusComposerRequested){log("queue-updated");return;}
         if(renderer.model.currentSource().value("contextLoaded",false))requestDetails();
         syncComposer();
         if(mode!=Mode::Hidden)renderer.paint();
@@ -1517,6 +1522,7 @@ LRESULT CALLBACK panelProc(HWND window, UINT message, WPARAM wp, LPARAM lp) {
             auto& m=app.renderer.model;report["selected"]=m.selectedId;report["detailPending"]=m.detailPending;report["pending"]=m.pending;report["source"]=m.sourceId;report["detailMatchesSelection"]=m.detail.value("id","")==m.selectedId&&m.detail.value("taskKey","")==m.selectedKey;
             report["lastPress"]=app.lastPressAudit;
             report["pid"]=GetCurrentProcessId();report["mode"]=app.name();report["panelVisible"]=IsWindowVisible(app.panel)!=FALSE;report["surfaceDraws"]=app.renderer.draws;
+            report["queueStateFrames"]=app.queueStateFrames;report["connectionHealth"]=m.state.value("connectionHealth",Json::object());
             report["accessibilityIds"]=app.accessible?app.accessible->retainedIds():0;
             report["textScale"]=chatlayout::textScale;report["textScaleApiRead"]=app.textScaleRead;report["textScaleWatching"]=app.textSettings.watching();report["textScaleFixture"]=app.auditTextScale>0;
             report["transcriptTop"]=chatlayout::transcriptTop;report["noticeLineHeight"]=app.renderer.noticeLineHeight;report["noticeVisibleLines"]=app.renderer.noticeVisibleLines;

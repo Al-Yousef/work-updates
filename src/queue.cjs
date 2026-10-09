@@ -74,6 +74,7 @@ class Queue extends EventEmitter {
     this.approvals = new Map();
     this.ownedThreads = new Set();
     this.summaries = new Map();
+    this.taskKeyHashes = new WeakMap();
     this.summaryStates = new Map();
     this.aiSummary = { enabled: false, cached: 0, pending: 0, message: '' };
     // A crash must offer a retry, never create a second chat automatically.
@@ -135,7 +136,13 @@ class Queue extends EventEmitter {
       const state = this.cardState(id);
       const taskTitle = display.taskTitle || 'Current task unavailable';
       const presentation = this.presentation(display);
-      const key = id + ':' + hash(taskTitle.toLowerCase());
+      const normalizedTitle = taskTitle.toLowerCase();
+      let identity = this.taskKeyHashes.get(display);
+      if (identity?.title !== normalizedTitle) {
+        identity = { title: normalizedTitle, hash: hash(normalizedTitle) };
+        this.taskKeyHashes.set(display, identity);
+      }
+      const key = id + ':' + identity.hash;
       const fp = [...sources]
         .sort((a, b) => a.id.localeCompare(b.id))
         .map((s) => s.id + ':' + s.fingerprint)

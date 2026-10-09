@@ -2,7 +2,7 @@
 const test = require('node:test'),
   assert = require('node:assert/strict');
 const { growth, qualification, phases, phaseVisibility } = require('../src/performance-qualification.cjs');
-const visibility = (phase, count = 30) => ({mode: phase === 'hidden_idle' ? 'hidden' : 'pinned',
+const visibility = (phase, count = 60) => ({mode: phase === 'hidden_idle' ? 'hidden' : 'pinned',
   panelVisible: phase !== 'hidden_idle', nativePid: 2, samples: count,
   entrySurfaceDraws: 5, lastSurfaceDraws: phase === 'hidden_idle' ? 5 : 10,
   observedSurfaceDraws: phase === 'hidden_idle' ? 0 : 5});
@@ -27,7 +27,7 @@ function runs() {
     metadata: {
       runId: 'independent-' + i,
       counts: i === 6 ? [1500] : [100, 500, 1500],
-      secondsPerPhase: 30,
+      secondsPerPhase: 60,
       sampleIntervalMs: 1000,
       soakSeconds: i === 6 ? 600 : 0,
     },
@@ -40,12 +40,14 @@ function runs() {
           ownedRoots: [1, 2, 3].map((pid) => `${pid}:creation-${count}-${i}`),
           summary: {
             partial: false,
-            durationSeconds: 30,
-            samples: 30,
+            durationSeconds: 60,
+            samples: 60,
+            logicalCores:4,
+            cpuPhase:{complete:true,cpuSeconds:120,elapsedSeconds:60,intervals:59},
             metrics: Object.fromEntries(
               ['privateBytes', 'workingSetBytes', 'cpuNormalizedPercent'].map((key) => [
                 key,
-                { p95: 50 },
+                { p95: 50, ...(key==='cpuNormalizedPercent'?{timeWeightedMean:50}:{}) },
               ]),
             ),
           },
@@ -90,6 +92,7 @@ test('short or missing process samples cannot establish growth bounds', () => {
 test('qualification needs five matching independent process runs and a real reconnect/navigation soak', () => {
   const r = runs();
   assert.equal(qualification(r.slice(0, 5), r[5], r[6]).passed, true);
+  assert.equal(qualification(r.slice(0, 5), r[5], r[6]).cpuBudgetStatistic,'timeWeightedMean');
   assert.throws(() => qualification(r.slice(0, 4), r[5], r[6]), /five independent/);
   r[1].metadata.runId = r[0].metadata.runId;
   assert.throws(() => qualification(r.slice(0, 5), r[5], r[6]), /Copied/);
@@ -107,7 +110,7 @@ test('partial, mismatched, short and regressed measurements remain failed', () =
     [(r) => (r[6].cases.at(-1).fixture.observedReconnections = 0), /reconnect/],
     [(r) => (r[6].cases.at(-1).fixture.ownershipLeasePreserved = false), /reconnect/],
     [(r) => (r[1].metadata.counts = []), /Declared workloads/],
-    [(r) => (r[1].metadata.secondsPerPhase = 60), /sampling policy/],
+    [(r) => (r[1].metadata.secondsPerPhase = 90), /sampling policy/],
     [(r) => (r[6].metadata.soakSeconds = 300), /ten minutes/],
     [(r) => (r[6].cases.at(-1).growth = growth(samples())), /ten minutes/],
     [(r) => delete r[0].cases[0].visibility, /production mode/],
@@ -125,8 +128,36 @@ test('partial, mismatched, short and regressed measurements remain failed', () =
   r[5].cases[0].summary.metrics.privateBytes.p95 = 500;
   assert.equal(qualification(r.slice(0, 5), r[5], r[6]).passed, false);
   r[5].cases[0].summary.metrics.privateBytes.p95 = 50;
+  r[5].cases[0].summary.metrics.cpuNormalizedPercent.timeWeightedMean=500;
+  r[5].cases[0].summary.cpuPhase.cpuSeconds=1200;
+  assert.equal(qualification(r.slice(0, 5), r[5], r[6]).passed, false);
+  r[5].cases[0].summary.metrics.cpuNormalizedPercent.timeWeightedMean=50;
+  r[5].cases[0].summary.cpuPhase.cpuSeconds=120;
   r[6].cases.at(-1).growth = growth(samples(true, 101), 600);
   assert.equal(qualification(r.slice(0, 5), r[5], r[6]).passed, false);
+});
+
+test('full qualification requires actual longer CPU time and sample coverage in every fixture', () => {
+  const old = runs();
+  for (const run of old) run.metadata.secondsPerPhase = 30;
+  assert.throws(() => qualification(old.slice(0, 5), old[5], old[6]), /sampling policy/);
+  for (const group of [0, 5, 6]) {
+    const short = runs();
+    short[group].cases[0].summary.cpuPhase.elapsedSeconds = 29;
+    assert.throws(() => qualification(short.slice(0, 5), short[5], short[6]), /declared qualification window/);
+  }
+  const sparse = runs();
+  sparse[5].cases[0].summary.samples = 30;
+  sparse[5].cases[0].visibility.samples = 30;
+  assert.throws(() => qualification(sparse.slice(0, 5), sparse[5], sparse[6]), /declared qualification window/);
+  const cadence = runs();
+  for (const run of cadence) run.metadata.sampleIntervalMs = 500;
+  assert.throws(() => qualification(cadence.slice(0, 5), cadence[5], cadence[6]), /declared qualification window/);
+  for (const invalid of [0, -1, NaN, 5001]) {
+    const invalidCadence = runs();
+    for (const run of invalidCadence) run.metadata.sampleIntervalMs = invalid;
+    assert.throws(() => qualification(invalidCadence.slice(0, 5), invalidCadence[5], invalidCadence[6]), /sampling policy/);
+  }
 });
 
 test('hidden idle requires the original production hidden mode and no rendering throughout its observation', () => {

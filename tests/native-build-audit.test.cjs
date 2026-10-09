@@ -109,11 +109,22 @@ test('native packages exclude private descriptors and bind every distributed bin
   fs.mkdirSync(stage);
   for (const file of [...releaseFiles, 'build-verification.json'])
     fs.copyFileSync(path.join(f.directory, file), path.join(stage, file));
+  fs.copyFileSync(path.join(root, 'LICENSE'), path.join(stage, 'LICENSE'));
+  fs.copyFileSync(path.join(root, 'native/windows/THIRD_PARTY_NOTICES.txt'), path.join(stage, 'THIRD_PARTY_NOTICES.txt'));
   fs.writeFileSync(
     path.join(stage, 'README.txt'),
     'Hyphen ' + f.record.version + ' requires HYPHEN_INSTALL_ROOT',
   );
   verifyPackage(stage, f.record);
+  for (const file of ['LICENSE', 'THIRD_PARTY_NOTICES.txt']) {
+    const original = fs.readFileSync(path.join(stage, file));
+    fs.unlinkSync(path.join(stage, file));
+    assert.throws(() => verifyPackage(stage, f.record), /Unexpected native package resource/);
+    fs.writeFileSync(path.join(stage, file), Buffer.concat([original, Buffer.from(' altered')]));
+    assert.throws(() => verifyPackage(stage, f.record), /Packaged license or notices changed/);
+    fs.writeFileSync(path.join(stage, file), original);
+    verifyPackage(stage, f.record);
+  }
   fs.writeFileSync(path.join(stage, 'native-control.info'), 'synthetic private descriptor');
   assert.throws(() => verifyPackage(stage, f.record), /Unexpected native package resource/);
   fs.unlinkSync(path.join(stage, 'native-control.info'));

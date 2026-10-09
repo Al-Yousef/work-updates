@@ -31,7 +31,8 @@ function summary(samples, cores) {
     cpuNormalizedPercent: [],
   };
   let prior = null,
-    gaps = 0, starts=0, exits=0, abnormalExits=0;
+    gaps = 0, starts=0, exits=0, abnormalExits=0,
+    measuredCpuSeconds=0, measuredElapsedSeconds=0, measuredCpuIntervals=0;
   const identities = new Set();
   for (const s of samples) {
     const at = Date.parse(s.at);
@@ -66,7 +67,7 @@ function summary(samples, cores) {
           }else{gaps++;complete=false;}
           continue;
         }
-        if (old.lifecycle==='exited'||!Number.isFinite(p.cpuSeconds) || p.cpuSeconds < old.cpuSeconds) {
+        if (old.lifecycle==='exited'||!Number.isFinite(old.cpuSeconds)||old.cpuSeconds<0||!Number.isFinite(p.cpuSeconds) || p.cpuSeconds < old.cpuSeconds) {
           gaps++;
           complete = false;
           continue;
@@ -78,7 +79,10 @@ function summary(samples, cores) {
           gaps++;
           complete = false;
         }
-      if (complete) values.cpuNormalizedPercent.push((100 * cpu) / elapsed / cores);
+      if (complete) {
+        values.cpuNormalizedPercent.push((100 * cpu) / elapsed / cores);
+        measuredCpuSeconds+=cpu;measuredElapsedSeconds+=elapsed;measuredCpuIntervals++;
+      }
     }
     prior = { at, map, completed };
   }
@@ -92,6 +96,9 @@ function summary(samples, cores) {
     confirmedProcessStarts:starts,
     confirmedProcessExits:exits,
     abnormalProcessExits:abnormalExits,
+    cpuPhase:{cpuSeconds:measuredCpuSeconds,elapsedSeconds:measuredElapsedSeconds,intervals:measuredCpuIntervals,
+      complete:measuredCpuIntervals===samples.length-1,
+      policy:'Sum original-handle CPU deltas divided by their total measured elapsed time and logical processors.'},
     metrics: Object.fromEntries(
       Object.entries(values).map(([key, v]) => [
         key,
@@ -102,6 +109,8 @@ function summary(samples, cores) {
           p99: percentile(v, 0.99),
           min: v.length ? Math.min(...v) : null,
           max: v.length ? Math.max(...v) : null,
+          ...(key==='cpuNormalizedPercent'?{timeWeightedMean:measuredCpuIntervals===samples.length-1&&measuredElapsedSeconds>0?
+            100*measuredCpuSeconds/measuredElapsedSeconds/cores:null}:{}),
         },
       ]),
     ),
@@ -117,10 +126,22 @@ function comparison(current, baselines) {
     return { state: 'incomparable_hardware_or_workload' };
   if (current.summary.partial || baselines.some((b) => b.summary.partial))
     return { state: 'partial_measurements' };
+  for(const row of [current,...baselines]){
+    const phase=row.summary.cpuPhase,mean=row.summary.metrics.cpuNormalizedPercent.timeWeightedMean;
+    if(!Number.isFinite(mean))return {state:'missing_metrics'};
+    if(phase?.complete!==true||!Number.isFinite(phase.cpuSeconds)||phase.cpuSeconds<0||
+      !Number.isFinite(phase.elapsedSeconds)||phase.elapsedSeconds<=0||
+      phase.intervals!==row.summary.samples-1||phase.intervals<1||
+      !Number.isInteger(row.summary.logicalCores)||row.summary.logicalCores<1||
+      Math.abs(phase.elapsedSeconds-row.summary.durationSeconds)>1e-8||
+      Math.abs(mean-100*phase.cpuSeconds/phase.elapsedSeconds/row.summary.logicalCores)>1e-8*Math.max(1,mean))
+      return {state:'missing_phase_cpu'};
+  }
   const checks = [];
   for (const key of ['privateBytes', 'workingSetBytes', 'cpuNormalizedPercent']) {
-    const observed = current.summary.metrics[key].p95,
-      values = baselines.map((b) => b.summary.metrics[key].p95);
+    const statistic=key==='cpuNormalizedPercent'?'timeWeightedMean':'p95';
+    const observed = current.summary.metrics[key][statistic],
+      values = baselines.map((b) => b.summary.metrics[key][statistic]);
     if (!Number.isFinite(observed) || values.some((v) => !Number.isFinite(v)))
       return { state: 'missing_metrics' };
     const center = percentile(values, 0.5),
@@ -128,6 +149,7 @@ function comparison(current, baselines) {
     const threshold = center + Math.max(3 * noise, 0.15 * center);
     checks.push({
       metric: key,
+      statistic,
       baselineMedian: center,
       baselineIqr: noise,
       threshold,
@@ -135,10 +157,18 @@ function comparison(current, baselines) {
       passed: observed <= threshold,
     });
   }
+  const burstValues=baselines.map(b=>b.summary.metrics.cpuNormalizedPercent.p95),burstObserved=current.summary.metrics.cpuNormalizedPercent.p95;
+  if(!Number.isFinite(burstObserved)||burstValues.some(v=>!Number.isFinite(v)))return {state:'missing_metrics'};
+  const burstMedian=percentile(burstValues,.5),burstIqr=percentile(burstValues,.75)-percentile(burstValues,.25),
+    burstThreshold=burstMedian+Math.max(3*burstIqr,.15*burstMedian);
   return {
     state: checks.every((c) => c.passed) ? 'within_baseline' : 'regression',
     baselineRuns: baselines.length,
     checks,
+    cpuBudgetStatistic:'timeWeightedMean',
+    cpuBurstDiagnostic:{statistic:'p95',gated:false,baselineMedian:burstMedian,baselineIqr:burstIqr,
+      threshold:burstThreshold,observed:burstObserved,state:burstObserved<=burstThreshold?'within_baseline':'regression',
+      limits:'One-second CPU bursts remain visible; the consumption budget uses complete phase CPU time. This does not establish burst stability or local response latency.'},
   };
 }
 function hash(file) {

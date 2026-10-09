@@ -104,11 +104,22 @@ function qualification(baselines, current, soak) {
       'Declared workloads must match the complete qualification policy',
     );
     assert.ok(
-      run.metadata.secondsPerPhase >= 30 &&
+      run.metadata.secondsPerPhase >= 60 &&
         run.metadata.secondsPerPhase === current.metadata.secondsPerPhase &&
+        Number.isSafeInteger(run.metadata.sampleIntervalMs) &&
+        run.metadata.sampleIntervalMs >= 500 && run.metadata.sampleIntervalMs <= 5000 &&
         run.metadata.sampleIntervalMs === current.metadata.sampleIntervalMs,
       'Different or short sampling policy',
     );
+    const minimumObservedSeconds = run.metadata.secondsPerPhase - 5;
+    const minimumSamples = Math.max(20,
+      Math.ceil(run.metadata.secondsPerPhase * 1000 / run.metadata.sampleIntervalMs) - 5);
+    for (const row of run.cases.filter(c => phases.includes(c.phase)))
+      assert.ok(row.summary.durationSeconds >= minimumObservedSeconds &&
+        row.summary.cpuPhase?.complete === true &&
+        row.summary.cpuPhase.elapsedSeconds >= minimumObservedSeconds &&
+        row.summary.samples >= minimumSamples,
+      'Raw baseline measurement is too short for the declared qualification window');
     for (const count of run.metadata.counts) {
       const row = run.cases.find((c) => c.count === count && c.phase === 'warm_idle');
       assert.ok(
@@ -179,9 +190,10 @@ function qualification(baselines, current, soak) {
     currentRun: current.metadata.runId,
     soakRun: soak.metadata.runId,
     checks,
+    cpuBudgetStatistic:'timeWeightedMean',
     soak: long[0],
     limits:
-      'Matching runner baseline and bounded synthetic navigation/reconnection only. No optimization savings, physical input, account delivery, indefinite leak freedom, ETW wakeups, or energy measurement is claimed.',
+      'Matching runner memory-p95 and time-weighted phase CPU budgets, with bounded synthetic navigation/reconnection only. One-second CPU burst percentiles and their former thresholds remain diagnostic, not gated. No burst stability, optimization savings, physical input, account delivery, indefinite leak freedom, ETW wakeups, or energy measurement is claimed.',
   };
 }
 module.exports = { growth, qualification, phases, phaseVisibility };
