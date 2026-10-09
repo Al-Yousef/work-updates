@@ -18,6 +18,8 @@ const { startObserver } = require('../src/observer.cjs');
 const demo = require('../src/demo.cjs');
 const { NativeControl } = require('../src/native-control.cjs');
 const { AssistantProvider } = require('../src/assistant-provider.cjs');
+const cpuDiagnostic=process.env.HYPHEN_PERFORMANCE_CPU_DIAGNOSTIC==='1'?
+  require('./performance-cpu-profile.cjs').diagnostic(directory):null;
 AssistantProvider.prototype.answer = async () => ({
   answer: 'Synthetic performance fixture',
   links: [],
@@ -70,9 +72,10 @@ demo.startDemoObserver = function (value) {
     clearInterval(stream);
     clearInterval(reconnect);
     watch?.close();
+    cpuDiagnostic?.close();
     return close();
   };
-  watch = fs.watch(directory, (_, file) => {
+  watch = fs.watch(directory, async (_, file) => {
     if (String(file) !== 'performance-command.json') return;
     let command;
     try {
@@ -84,6 +87,7 @@ demo.startDemoObserver = function (value) {
     }
     if (!command.id || command.id === lastId) return;
     lastId = command.id;
+    if(cpuDiagnostic){if(command.phase==='warm_idle')await cpuDiagnostic.start();else await cpuDiagnostic.stop();}
     clearInterval(stream);
     clearInterval(reconnect);
     stream = null;
