@@ -233,6 +233,15 @@ counts, preserved Unicode draft/selection/focus and a genuine visible repaint at
 all six DPI/contrast configurations. These changes require fresh qualification;
 the earlier failed comparisons remain failures and thresholds are unchanged.
 
+Repeated queue projections also reuse the task-title hash for the same original
+source record. The weak cache compares the current normalized title on every
+projection, recomputes changed titles and treats replaced records separately. It
+does not cache freshness, status, cards or admission evidence, and does not retain
+removed source records. A regression verifies repeated projections avoid duplicate
+hashes while in-place changes, removal and replacement still reject stale task
+identities. A local synthetic snapshot prototype is descriptive; a fresh complete
+qualification and matching before/after observation are still required.
+
 ## Owned event trace
 
 `scripts/owned-etw-audit.ps1` runs only on the isolated Windows CI runner. It starts a unique non-restarting ETW file session using the pinned Microsoft TraceEvent 3.2.8 package, keeps original root handles until analysis, and records process/thread/context-switch events around eight short-lived owned Node children and a fresh 100-source native pilot. Actual process start/stop kernel keys, parent lifetimes and timestamps establish each retained descendant. A changed original identity, overlapping lifetime, missing exit, reported event loss, missing scheduling data, oversized trace or uncertain owned shutdown fails the report. The trace observes events separately from the polling sampler; it does not fabricate counters for processes absent from that sampler.

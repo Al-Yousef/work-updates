@@ -262,6 +262,31 @@ test('a stale task identity cannot complete or open the new task in the same cha
   assert.throws(() => q.action(before.id, 'done', before.taskKey), /task changed/);
   assert.equal(q.snapshot().done.length, 0);
 });
+test('repeated projections reuse task hashes while changed and replaced source records invalidate them', (t) => {
+  const q = model(t), crypto = require('node:crypto'), original = crypto.createHash;
+  const before = q.get('sample-chat');
+  let hashes = 0;
+  crypto.createHash = (...args) => { hashes++; return original(...args); };
+  try {
+    const first = q.snapshot();
+    assert.deepEqual(q.snapshot(), first);
+    q.feed.threads[0].taskTitle = q.feed.threads[0].taskTitle.toUpperCase();
+    assert.equal(q.get(before.id).taskKey, before.taskKey);
+    assert.equal(hashes, 0);
+    q.feed.threads[0].taskTitle = 'A genuinely different request';
+    assert.throws(() => q.get(before.id, before.taskKey), /task changed/);
+    const changed = q.snapshot().cards[0];
+    assert.notEqual(changed.taskKey, before.taskKey);
+    assert.equal(hashes, 1);
+    const replacement = { ...q.feed.threads[0], taskTitle: 'Replacement source request' };
+    q.setFeed({ ...q.feed, threads: [] });
+    assert.equal(q.snapshot().cards.length, 0);
+    q.setFeed({ ...q.feed, threads: [replacement] });
+    assert.throws(() => q.get(changed.id, changed.taskKey), /task changed/);
+    assert.equal(hashes, 2);
+    assert.equal(q.snapshot().done.length, 0);
+  } finally { crypto.createHash = original; }
+});
 test('queue creation rejects blank and oversized prompts', (t) => {
   const q = model(t);
   assert.throws(() => q.create({ title: '', prompt: 'hello' }));
