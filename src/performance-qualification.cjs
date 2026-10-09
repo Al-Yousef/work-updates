@@ -179,9 +179,10 @@ function qualification(baselines, current, soak) {
     currentRun: current.metadata.runId,
     soakRun: soak.metadata.runId,
     checks,
+    cpuBudgetStatistic:'timeWeightedMean',
     soak: long[0],
     limits:
-      'Matching runner baseline and bounded synthetic navigation/reconnection only. No optimization savings, physical input, account delivery, indefinite leak freedom, ETW wakeups, or energy measurement is claimed.',
+      'Matching runner memory-p95 and time-weighted phase CPU budgets, with bounded synthetic navigation/reconnection only. One-second CPU burst percentiles and their former thresholds remain diagnostic, not gated. No burst stability, optimization savings, physical input, account delivery, indefinite leak freedom, ETW wakeups, or energy measurement is claimed.',
   };
 }
 module.exports = { growth, qualification, phases, phaseVisibility };

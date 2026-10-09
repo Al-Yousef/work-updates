@@ -42,10 +42,12 @@ function runs() {
             partial: false,
             durationSeconds: 30,
             samples: 30,
+            logicalCores:4,
+            cpuPhase:{complete:true,cpuSeconds:60,elapsedSeconds:30,intervals:29},
             metrics: Object.fromEntries(
               ['privateBytes', 'workingSetBytes', 'cpuNormalizedPercent'].map((key) => [
                 key,
-                { p95: 50 },
+                { p95: 50, ...(key==='cpuNormalizedPercent'?{timeWeightedMean:50}:{}) },
               ]),
             ),
           },
@@ -90,6 +92,7 @@ test('short or missing process samples cannot establish growth bounds', () => {
 test('qualification needs five matching independent process runs and a real reconnect/navigation soak', () => {
   const r = runs();
   assert.equal(qualification(r.slice(0, 5), r[5], r[6]).passed, true);
+  assert.equal(qualification(r.slice(0, 5), r[5], r[6]).cpuBudgetStatistic,'timeWeightedMean');
   assert.throws(() => qualification(r.slice(0, 4), r[5], r[6]), /five independent/);
   r[1].metadata.runId = r[0].metadata.runId;
   assert.throws(() => qualification(r.slice(0, 5), r[5], r[6]), /Copied/);
@@ -125,6 +128,11 @@ test('partial, mismatched, short and regressed measurements remain failed', () =
   r[5].cases[0].summary.metrics.privateBytes.p95 = 500;
   assert.equal(qualification(r.slice(0, 5), r[5], r[6]).passed, false);
   r[5].cases[0].summary.metrics.privateBytes.p95 = 50;
+  r[5].cases[0].summary.metrics.cpuNormalizedPercent.timeWeightedMean=500;
+  r[5].cases[0].summary.cpuPhase.cpuSeconds=600;
+  assert.equal(qualification(r.slice(0, 5), r[5], r[6]).passed, false);
+  r[5].cases[0].summary.metrics.cpuNormalizedPercent.timeWeightedMean=50;
+  r[5].cases[0].summary.cpuPhase.cpuSeconds=60;
   r[6].cases.at(-1).growth = growth(samples(true, 101), 600);
   assert.equal(qualification(r.slice(0, 5), r[5], r[6]).passed, false);
 });

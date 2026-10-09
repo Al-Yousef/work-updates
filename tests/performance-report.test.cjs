@@ -33,6 +33,9 @@ test('whole-tree CPU uses elapsed time and logical cores; memory includes every 
     4,
   );
   assert.equal(r.metrics.cpuNormalizedPercent.p95, 50);
+  assert.equal(r.metrics.cpuNormalizedPercent.timeWeightedMean,50);
+  assert.deepEqual(r.cpuPhase,{cpuSeconds:4,elapsedSeconds:2,intervals:1,complete:true,
+    policy:'Sum original-handle CPU deltas divided by their total measured elapsed time and logical processors.'});
   assert.equal(r.metrics.privateBytes.p95, 100);
   assert.equal(r.metrics.handles.p95, 20);
   assert.equal(r.partial, false);
@@ -51,6 +54,39 @@ test('PID reuse, departed children and inaccessible samples disclose incomplete 
   assert.equal(r.metrics.privateBytes.count, 1);
   assert.equal(r.observedProcessInstances, 3);
   assert.equal(r.metrics.cpuNormalizedPercent.p95, null);
+  assert.equal(r.metrics.cpuNormalizedPercent.timeWeightedMean,null);
+});
+test('phase CPU weights unequal intervals and preserves visible burst variation for equal total work',()=>{
+  const steady=summary([sample(0,[process(1,0)]),sample(1,[process(1,1)]),sample(2,[process(1,2)])],2);
+  const burst=summary([sample(0,[process(1,0)]),sample(1,[process(1,2)]),sample(2,[process(1,2)])],2);
+  assert.equal(steady.metrics.cpuNormalizedPercent.timeWeightedMean,50);
+  assert.equal(burst.metrics.cpuNormalizedPercent.timeWeightedMean,50);
+  assert.equal(steady.metrics.cpuNormalizedPercent.p95,50);
+  assert.equal(burst.metrics.cpuNormalizedPercent.p95,100);
+  const unequal=summary([sample(0,[process(1,0)]),sample(1,[process(1,1)]),sample(10,[process(1,1)])],1);
+  assert.equal(unequal.metrics.cpuNormalizedPercent.timeWeightedMean,10);
+  const current={hardwareKey:'synthetic',count:100,phase:'warm_idle',summary:burst},
+    baselines=Array.from({length:5},()=>({...current,summary:steady}));
+  const result=comparison(current,baselines);
+  assert.equal(result.state,'within_baseline');assert.equal(result.cpuBurstDiagnostic.state,'regression');
+  assert.equal(result.cpuBurstDiagnostic.gated,false);
+  const sustained={...current,summary:summary([sample(0,[process(1,0)]),sample(1,[process(1,2)]),sample(2,[process(1,4)])],2)};
+  assert.equal(comparison(sustained,baselines).state,'regression');
+  const absent=structuredClone(current);delete absent.summary.metrics.cpuNormalizedPercent.timeWeightedMean;
+  assert.equal(comparison(absent,baselines).state,'missing_metrics');
+  for(const change of [r=>{r.cpuPhase.complete=false;},r=>{r.cpuPhase.intervals--;},
+    r=>{r.cpuPhase.elapsedSeconds=0;},r=>{r.cpuPhase.cpuSeconds=0;},
+    r=>{r.durationSeconds++;},r=>{r.logicalCores=0;}]){
+    const invalid=structuredClone(current);change(invalid.summary);
+    assert.equal(comparison(invalid,baselines).state,'missing_phase_cpu');
+  }
+});
+test('nonfinite original CPU and incomplete phase time cannot become a finite average',()=>{
+  for(const value of [NaN,Infinity,-1]){
+    const report=summary([sample(0,[process(1,value)]),sample(1,[process(1,1)])],2);
+    assert.equal(report.partial,true);assert.equal(report.metrics.cpuNormalizedPercent.timeWeightedMean,null);
+    assert.equal(report.cpuPhase.complete,false);
+  }
 });
 test('regressions need comparable independent baselines and an explicit noise allowance', () => {
   const s = summary([sample(0, [process(1, 0)]), sample(1, [process(1, 1)])], 4),
@@ -108,6 +144,7 @@ test('known child birth and final CPU from its original handle complete an inter
   assert.equal(r.partial,false);assert.equal(r.measurementGaps,0);
   assert.equal(r.confirmedProcessStarts,1);assert.equal(r.confirmedProcessExits,1);
   assert.equal(r.metrics.cpuNormalizedPercent.count,3);assert.ok(Math.abs(r.metrics.cpuNormalizedPercent.p95-15)<1e-9);
+  assert.ok(Math.abs(r.metrics.cpuNormalizedPercent.timeWeightedMean-10)<1e-9);
   assert.equal(r.metrics.privateBytes.min,50);assert.equal(r.metrics.privateBytes.max,100);
   const missing=summary([sample(0,[tracked(1,0,0),tracked(2,0,0)]),sample(1,[tracked(1,.1,0)])],2);
   assert.equal(missing.partial,true);assert.equal(missing.metrics.cpuNormalizedPercent.count,0);

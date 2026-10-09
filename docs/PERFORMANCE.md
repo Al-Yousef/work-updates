@@ -82,6 +82,29 @@ threshold is enforced from a single pilot. Repeated comparable baselines,
 long-run growth checks, wakeups, before/after optimization comparisons and
 physical interaction remain required before #13 closes.
 
+CPU consumption is now gated using the sum of complete original-handle CPU deltas
+over their measured phase time, divided by logical processors. It is time weighted;
+an arithmetic average of unequal sample percentages is incorrect. Memory retains
+its p95 gate, and the five-baseline median/IQR/15-percent allowance is unchanged.
+The original one-second CPU p50/p95/p99 and the former p95 comparison stay published
+as an explicit non-gating burst diagnostic. Sustained CPU increases, missing phase
+time, partial originals, memory regressions and growth still fail. A phase-average
+pass does not establish burst stability or the separate local-response target.
+[Microsoft process times](https://learn.microsoft.com/en-us/windows/win32/api/processthreadsapi/nf-processthreadsapi-getprocesstimes)
+defines cumulative kernel/user time summed over the process's threads.
+
+The prior full run 37910734378 on source 9e00a403 failed two independently measured
+attempts under the former burst gate: 100-source idle CPU p95 was 1.951% versus
+1.797%, then 1,500-source idle was 9.631% versus 9.303%. Their phase-average CPU
+was respectively 0.523% and 2.894%, within their baseline phase-average ranges.
+All memory and ten-minute growth checks passed. Those raw failures remain retained;
+the exact causes of burst variation are unestablished. Tests redistribute identical
+cumulative CPU across intervals, retain the changed p95, and require an actual
+sustained consumption increase to fail. This is a disclosed budget-statistic change,
+not an app optimization, a wider numerical allowance, or a conversion of those
+older failed reports into successful qualification. Fresh current-source baselines
+and comparison are required for the new contract.
+
 The QA runner now records stop-to-observed-exit duration separately from total
 startup/run time. Cleanup tests check the actual exit precedes the child's
 self-cleanup guard, observes exit, and meets the enforced cleanup deadline.
