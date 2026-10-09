@@ -34,22 +34,26 @@ function summarizeProfile(profile,repo,tracked){
     topInclusiveSource:rows.filter(r=>tracked.has(r.file)).sort((a,b)=>b.inclusiveMs-a.inclusiveMs).slice(0,40),
     limits:'In-process V8 sampling attribution includes profiler overhead. Inclusive stacks overlap. This is diagnostic attribution, not an operating-system CPU budget, native-thread profile or performance qualification.'};
 }
+function profilePhase(value='warm_idle'){
+  assert.ok(['warm_idle','image_decode'].includes(value));return value;
+}
 function diagnostic(directory){
   assert.equal(process.env.CI,'true');assert.equal(process.env.RUNNER_OS,'Windows');
   assert.ok(process.versions.electron);assert.ok(fs.existsSync(path.join(directory,'source','state_5.sqlite')));
+  const phase=profilePhase(process.env.HYPHEN_PERFORMANCE_CPU_PHASE);
   const repo=path.resolve(__dirname,'..'),tracked=new Set(execFileSync('git',['ls-files','-z'],{cwd:repo,encoding:'utf8'}).split('\0').filter(Boolean));
   const revision=execFileSync('git',['rev-parse','HEAD'],{cwd:repo,encoding:'utf8'}).trim();
   const session=new (require('node:inspector').Session)();session.connect();let active=false,cpu,start;
   const post=(method,params={})=>new Promise((resolve,reject)=>session.post(method,params,(error,result)=>error?reject(error):resolve(result)));
-  return {async start(){assert.equal(active,false);await post('Profiler.enable');await post('Profiler.setSamplingInterval',{interval:1000});
+  return {phase,async start(){assert.equal(active,false);await post('Profiler.enable');await post('Profiler.setSamplingInterval',{interval:1000});
       cpu=process.cpuUsage();start=process.hrtime.bigint();await post('Profiler.start');active=true;},
     async stop(){if(!active)return;const {profile}=await post('Profiler.stop');active=false;
       const usage=process.cpuUsage(cpu),elapsedSeconds=Number(process.hrtime.bigint()-start)/1e9;
-      const report={schema:1,synthetic:true,sourceRevision:revision,backendPid:process.pid,accountsUsed:0,modelCalls:0,
+      const report={schema:1,synthetic:true,phase,sourceRevision:revision,backendPid:process.pid,accountsUsed:0,modelCalls:0,
         installedAppChanged:false,qualifiesPerformance:false,samplingIntervalMicroseconds:1000,
         backendCpuSeconds:(usage.user+usage.system)/1e6,elapsedSeconds,...summarizeProfile(profile,repo,tracked)};
       assert.ok(report.durationSeconds>=25&&report.durationSeconds<=45);
-      fs.writeFileSync(path.join(directory,'warm-idle-cpu-profile.json'),JSON.stringify(report,null,2));
+      fs.writeFileSync(path.join(directory,phase.replaceAll('_','-')+'-cpu-profile.json'),JSON.stringify(report,null,2));
     },close(){session.disconnect();}};
 }
-module.exports={summarizeProfile,diagnostic};
+module.exports={summarizeProfile,diagnostic,profilePhase};

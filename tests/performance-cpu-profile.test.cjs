@@ -1,7 +1,7 @@
 'use strict';
 const test=require('node:test'),assert=require('node:assert/strict'),path=require('node:path');
 const {pathToFileURL}=require('node:url');
-const {summarizeProfile}=require('../scripts/performance-cpu-profile.cjs');
+const {summarizeProfile,profilePhase}=require('../scripts/performance-cpu-profile.cjs');
 const repo=path.resolve(__dirname,'..'),tracked=new Set(['main.cjs']);
 function profile(){return {startTime:0,endTime:2000000,timeDeltas:[1000,2000,3000],samples:[3,3,4],nodes:[
   {id:1,callFrame:{functionName:'(root)',url:''},children:[2,4]},
@@ -17,4 +17,8 @@ test('CPU diagnostic attributes weighted source ancestors while removing externa
 test('missing, cyclic, duplicated and invalid weighted samples cannot produce a diagnostic',()=>{
   for(const mutate of [p=>p.samples.push(3),p=>p.timeDeltas[0]=-1,p=>p.nodes[2].children=[1],
     p=>p.nodes.push(p.nodes[0]),p=>p.samples[0]=99]){const p=profile();mutate(p);assert.throws(()=>summarizeProfile(p,repo,tracked));}
+});
+test('profiling is bounded to the named idle or image phase',()=>{
+  assert.equal(profilePhase(),'warm_idle');assert.equal(profilePhase('image_decode'),'image_decode');
+  for(const value of ['messaging','stop','../private','',null])assert.throws(()=>profilePhase(value));
 });

@@ -87,7 +87,7 @@ demo.startDemoObserver = function (value) {
     }
     if (!command.id || command.id === lastId) return;
     lastId = command.id;
-    if(cpuDiagnostic){if(command.phase==='warm_idle')await cpuDiagnostic.start();else await cpuDiagnostic.stop();}
+    if(cpuDiagnostic){if(command.phase===cpuDiagnostic.phase)await cpuDiagnostic.start();else await cpuDiagnostic.stop();}
     clearInterval(stream);
     clearInterval(reconnect);
     stream = null;

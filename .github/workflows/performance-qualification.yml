@@ -24,7 +24,7 @@ permissions:
   contents: read
 jobs:
   qualification:
-    name: ${{ inputs.idle_probe && 'Bounded idle CPU attribution (not qualification)' || inputs.composer_probe && 'Bounded composer diagnostics (not qualification)' || 'Five baselines and bounded native reconnect growth' }}
+    name: ${{ inputs.idle_probe && 'Bounded image CPU attribution (not qualification)' || inputs.composer_probe && 'Bounded composer diagnostics (not qualification)' || 'Five baselines and bounded native reconnect growth' }}
     runs-on: windows-2025
     timeout-minutes: 95
     steps:
@@ -87,19 +87,20 @@ jobs:
             ./scripts/native-performance-audit.ps1 -SecondsPerPhase 30 -ChatCounts @(500) -OutputDirectory "$pwd/artifacts/performance/qualification/composer-probe-$taskProbe"
             if($LASTEXITCODE -ne 0) { throw 'Composer diagnostic failed' }
           }
-      - name: Attribute warm-idle CPU in five fresh owned fixtures
+      - name: Attribute image-phase CPU in five fresh 1500-source fixtures
         if: ${{ inputs.idle_probe && !inputs.composer_probe }}
         shell: pwsh
         env:
           HYPHEN_PERFORMANCE_CPU_DIAGNOSTIC: '1'
+          HYPHEN_PERFORMANCE_CPU_PHASE: 'image_decode'
         run: |
           foreach($taskProbe in 1..5) {
-            $taskProbeOutput="$pwd/artifacts/performance/qualification/idle-probe-$taskProbe"
-            ./scripts/native-performance-audit.ps1 -SecondsPerPhase 30 -ChatCounts @(100) -OutputDirectory $taskProbeOutput
-            if($LASTEXITCODE -ne 0) { throw 'Idle attribution fixture failed' }
-            $taskProfile=Get-Content -LiteralPath "$taskProbeOutput/100/warm-idle-cpu-profile.json" -Raw | ConvertFrom-Json
-            $taskReady=Get-Content -LiteralPath "$taskProbeOutput/100/performance-ready.json" -Raw | ConvertFrom-Json
-            if($taskProfile.sourceRevision -ne (& git rev-parse HEAD) -or $taskProfile.backendPid -ne $taskReady.backendPid -or $taskProfile.durationSeconds -lt 25 -or $taskProfile.qualifiesPerformance) { throw 'Idle attribution is incomplete or belongs to another source/process' }
+            $taskProbeOutput="$pwd/artifacts/performance/qualification/image-probe-$taskProbe"
+            ./scripts/native-performance-audit.ps1 -SecondsPerPhase 30 -ChatCounts @(1500) -OutputDirectory $taskProbeOutput
+            if($LASTEXITCODE -ne 0) { throw 'Image attribution fixture failed' }
+            $taskProfile=Get-Content -LiteralPath "$taskProbeOutput/1500/image-decode-cpu-profile.json" -Raw | ConvertFrom-Json
+            $taskReady=Get-Content -LiteralPath "$taskProbeOutput/1500/performance-ready.json" -Raw | ConvertFrom-Json
+            if($taskProfile.sourceRevision -ne (& git rev-parse HEAD) -or $taskProfile.backendPid -ne $taskReady.backendPid -or $taskProfile.durationSeconds -lt 25 -or $taskProfile.phase -ne 'image_decode' -or $taskProfile.qualifiesPerformance) { throw 'Image attribution is incomplete or belongs to another source/process' }
           }
       - name: Enforce comparable baseline and bounded growth
         if: ${{ always() && !inputs.composer_probe && !inputs.idle_probe }}
@@ -121,6 +122,7 @@ jobs:
             artifacts/performance/qualification/**/selection-failure.json
             artifacts/performance/qualification/**/focus-failure.json
             artifacts/performance/qualification/**/warm-idle-cpu-profile.json
+            artifacts/performance/qualification/**/image-decode-cpu-profile.json
             artifacts/performance/qualification/qualification.json
           if-no-files-found: error
           retention-days: 14
