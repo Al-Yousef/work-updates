@@ -104,11 +104,22 @@ function qualification(baselines, current, soak) {
       'Declared workloads must match the complete qualification policy',
     );
     assert.ok(
-      run.metadata.secondsPerPhase >= 30 &&
+      run.metadata.secondsPerPhase >= 60 &&
         run.metadata.secondsPerPhase === current.metadata.secondsPerPhase &&
+        Number.isSafeInteger(run.metadata.sampleIntervalMs) &&
+        run.metadata.sampleIntervalMs >= 500 && run.metadata.sampleIntervalMs <= 5000 &&
         run.metadata.sampleIntervalMs === current.metadata.sampleIntervalMs,
       'Different or short sampling policy',
     );
+    const minimumObservedSeconds = run.metadata.secondsPerPhase - 5;
+    const minimumSamples = Math.max(20,
+      Math.ceil(run.metadata.secondsPerPhase * 1000 / run.metadata.sampleIntervalMs) - 5);
+    for (const row of run.cases.filter(c => phases.includes(c.phase)))
+      assert.ok(row.summary.durationSeconds >= minimumObservedSeconds &&
+        row.summary.cpuPhase?.complete === true &&
+        row.summary.cpuPhase.elapsedSeconds >= minimumObservedSeconds &&
+        row.summary.samples >= minimumSamples,
+      'Raw baseline measurement is too short for the declared qualification window');
     for (const count of run.metadata.counts) {
       const row = run.cases.find((c) => c.count === count && c.phase === 'warm_idle');
       assert.ok(

@@ -26,7 +26,7 @@ jobs:
   qualification:
     name: ${{ inputs.idle_probe && 'Bounded idle CPU attribution (not qualification)' || inputs.composer_probe && 'Bounded composer diagnostics (not qualification)' || 'Five baselines and bounded native reconnect growth' }}
     runs-on: windows-2025
-    timeout-minutes: 95
+    timeout-minutes: 155
     steps:
       - uses: actions/checkout@v4
       - uses: actions/setup-node@v4
@@ -54,31 +54,31 @@ jobs:
       - name: Ten-minute navigation and reconnect observation
         if: ${{ !inputs.composer_probe && !inputs.idle_probe }}
         shell: pwsh
-        run: ./scripts/native-performance-audit.ps1 -SecondsPerPhase 30 -ChatCounts @(1500) -SoakSeconds 600 -OutputDirectory "$pwd/artifacts/performance/qualification/soak"
+        run: ./scripts/native-performance-audit.ps1 -SecondsPerPhase 60 -ChatCounts @(1500) -SoakSeconds 600 -OutputDirectory "$pwd/artifacts/performance/qualification/soak"
       - name: Fresh baseline 1 of 5 on matching runner hardware
         if: ${{ !inputs.composer_probe && !inputs.idle_probe }}
         shell: pwsh
-        run: ./scripts/native-performance-audit.ps1 -SecondsPerPhase 30 -OutputDirectory "$pwd/artifacts/performance/qualification/baseline-1"
+        run: ./scripts/native-performance-audit.ps1 -SecondsPerPhase 60 -OutputDirectory "$pwd/artifacts/performance/qualification/baseline-1"
       - name: Fresh baseline 2 of 5 on matching runner hardware
         if: ${{ !inputs.composer_probe && !inputs.idle_probe }}
         shell: pwsh
-        run: ./scripts/native-performance-audit.ps1 -SecondsPerPhase 30 -OutputDirectory "$pwd/artifacts/performance/qualification/baseline-2"
+        run: ./scripts/native-performance-audit.ps1 -SecondsPerPhase 60 -OutputDirectory "$pwd/artifacts/performance/qualification/baseline-2"
       - name: Fresh baseline 3 of 5 on matching runner hardware
         if: ${{ !inputs.composer_probe && !inputs.idle_probe }}
         shell: pwsh
-        run: ./scripts/native-performance-audit.ps1 -SecondsPerPhase 30 -OutputDirectory "$pwd/artifacts/performance/qualification/baseline-3"
+        run: ./scripts/native-performance-audit.ps1 -SecondsPerPhase 60 -OutputDirectory "$pwd/artifacts/performance/qualification/baseline-3"
       - name: Fresh baseline 4 of 5 on matching runner hardware
         if: ${{ !inputs.composer_probe && !inputs.idle_probe }}
         shell: pwsh
-        run: ./scripts/native-performance-audit.ps1 -SecondsPerPhase 30 -OutputDirectory "$pwd/artifacts/performance/qualification/baseline-4"
+        run: ./scripts/native-performance-audit.ps1 -SecondsPerPhase 60 -OutputDirectory "$pwd/artifacts/performance/qualification/baseline-4"
       - name: Fresh baseline 5 of 5 on matching runner hardware
         if: ${{ !inputs.composer_probe && !inputs.idle_probe }}
         shell: pwsh
-        run: ./scripts/native-performance-audit.ps1 -SecondsPerPhase 30 -OutputDirectory "$pwd/artifacts/performance/qualification/baseline-5"
+        run: ./scripts/native-performance-audit.ps1 -SecondsPerPhase 60 -OutputDirectory "$pwd/artifacts/performance/qualification/baseline-5"
       - name: Sixth fresh process comparison
         if: ${{ !inputs.composer_probe && !inputs.idle_probe }}
         shell: pwsh
-        run: ./scripts/native-performance-audit.ps1 -SecondsPerPhase 30 -OutputDirectory "$pwd/artifacts/performance/qualification/current"
+        run: ./scripts/native-performance-audit.ps1 -SecondsPerPhase 60 -OutputDirectory "$pwd/artifacts/performance/qualification/current"
       - name: Bounded composer diagnostic on five fresh 500-source fixtures
         if: ${{ inputs.composer_probe }}
         shell: pwsh

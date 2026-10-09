@@ -120,7 +120,7 @@ cases. Live account/model/installed data checks are not part of this pilot.
 The separate `Repeated whole-process performance qualification` workflow now
 launches five independent complete baselines, a sixth comparison, and a ten-minute
 1,500-source navigation/reconnect observation. All run sequentially on the same
-Windows runner with thirty seconds per ordinary phase. Run UUIDs and original
+Windows runner with sixty seconds per ordinary phase. Run UUIDs and original
 backend/native/collector creation identities prevent copied runs from counting as
 independent. Missing process measurements, changed hardware/workloads, short raw
 measurements, missing accepted interactions, cache overflows, uncertain shutdown
@@ -251,3 +251,22 @@ Only owned synthetic JSON and source/tool/candidate hashes are published. Raw ET
 The first successful lifecycle observation retained 35 starts and stops with zero event loss, including a collector exit code of 1. Its older polling cleanup had reported disappearance as normal. The report now additionally requires every owned exit code to be zero; the collector shutdown correction and its independent original-child receipt must be integrated before acceptance. That earlier observation remains diagnostic evidence and is not accepted as normal owned shutdown. The wrapper resolves an exact installed .NET 8 SDK in its private output directory and records its actual identity; a newer default runner SDK cannot silently substitute.
 
 References: [Microsoft TraceEvent guide](https://github.com/microsoft/perfview/blob/v3.2.8/documentation/TraceEvent/TraceEventProgrammersGuide.md) and [pinned provider package](https://www.nuget.org/packages/Microsoft.Diagnostics.Tracing.TraceEvent/3.2.8).
+
+Full qualification now requires at least sixty seconds per ordinary phase, with
+measured CPU elapsed time and sample coverage checked against that declaration
+in every baseline, comparison and ordinary soak phase. The five-baseline
+median/IQR/15-percent formula is unchanged. Short pilots and separate profiling
+or before/after diagnostics still use their declared thirty-second windows and
+do not qualify the application.
+
+The fifth complete attempt, run 37953165429 on aa150bd8, remains failed:
+500-source hidden-idle phase CPU was 0.713% against a 0.695% limit. All other
+17 comparisons, memory checks and bounded growth passed. Its original CPU
+totals for the backend and native shell match baseline four exactly; collector
+CPU differs by 0.015625 seconds, and measured elapsed time also differs. These
+recorded values do not establish a guaranteed Windows counter resolution or
+the exact cause of the failed comparison. Longer observations expose more
+periodic work and reduce the relative effect of phase boundaries. Every workload
+is extended equally, with all fresh baselines and original process identities.
+The raw fifth failure and every shorter observation remain retained; the longer
+window does not convert any prior report into a pass.
