@@ -59,6 +59,9 @@ function allowedNative(file) {
 }
 const vendorHeader = 'native/windows/vendor/nlohmann/json.hpp';
 const vendorDigest = 'aaf127c04cb31c406e5b04a63f1ae89369fccde6d8fa7cdda1ed4f32dfc5de63';
+// Preserve public upstream copyright contacts only in this reviewed notice bundle.
+const runtimeNotices = 'native/windows/THIRD_PARTY_NOTICES.txt';
+const runtimeNoticesDigest = '7c51b62bbe3e4ba533ec9d7b0325f11d796c561a0428a5528e9b0d8f72f216fe';
 function walk(dir, prefix = '') {
   return fs.readdirSync(dir, { withFileTypes: true }).flatMap((e) => {
     const rel = prefix + e.name;
@@ -100,7 +103,9 @@ for (const file of tracked) {
     violations.push(file + ': private or generated file');
   const bytes = fs.readFileSync(absolute);
   const reviewedVendor = file === vendorHeader && crypto.createHash('sha256').update(bytes).digest('hex') === vendorDigest;
+  const reviewedRuntimeNotices = file === runtimeNotices && crypto.createHash('sha256').update(bytes).digest('hex') === runtimeNoticesDigest;
   if (file === vendorHeader && !reviewedVendor) violations.push(file + ': vendored header digest changed');
+  if (file === runtimeNotices && !reviewedRuntimeNotices) violations.push(file + ': reviewed runtime notice digest changed');
   if (file.endsWith('.png')) {
     if (
       (!file.startsWith('assets/') &&
@@ -120,7 +125,7 @@ for (const file of tracked) {
     [/\b[0-9a-f]{8}-[0-9a-f]{4}-7[0-9a-f]{3}-[89ab][0-9a-f]{3}-[0-9a-f]{12}\b/i, 'fixed private chat identity'],
   ];
   for (const [pattern, label] of patterns)
-    if (!((file === 'package-lock.json' || reviewedVendor) && label === 'email address') && pattern.test(value))
+    if (!((file === 'package-lock.json' || reviewedVendor || reviewedRuntimeNotices) && label === 'email address') && pattern.test(value))
       violations.push(file + ': ' + label);
   if (bytes.length > 700000 && !reviewedVendor) violations.push(file + ': unexpectedly large source file');
 }

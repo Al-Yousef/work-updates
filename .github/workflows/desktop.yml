@@ -75,6 +75,15 @@ jobs:
       - run: npx electron-builder --${{ matrix.target }} --${{ matrix.arch }} --publish never
       - run: node scripts/package-audit.cjs --ui
       - run: node scripts/audit-release.cjs --checksums
+      - name: Original packaged runtime notice evidence
+        uses: actions/upload-artifact@v4
+        with:
+          name: runtime-notices-${{ matrix.target }}-${{ matrix.arch }}
+          path: |
+            artifacts/runtime-notices/verification.json
+            build/helper/notices/*.txt
+          if-no-files-found: error
+          retention-days: 14
       - name: Synthetic desktop visual evidence
         uses: actions/upload-artifact@v4
         with:
