@@ -37,6 +37,8 @@ function sourceFiles() {
   return [
     'build.ps1',
     'app.rc',
+    'app-dll.rc',
+    'control.rc',
     'app.manifest',
     'toolchain.json',
     'bootstrap-toolchain.ps1',

@@ -1,16 +1,14 @@
-1 ICON "assets/icon.ico"
-1 24 "app.manifest"
 1 VERSIONINFO
  FILEVERSION 0,6,9,0
  PRODUCTVERSION 0,6,9,0
  FILEOS 0x40004
- FILETYPE 0x1
+ FILETYPE 0x2
  BEGIN
  BLOCK "StringFileInfo"
  BEGIN
  BLOCK "040904b0"
  BEGIN
- VALUE "FileDescription", "Hyphen\0"
+ VALUE "FileDescription", "Hyphen weather-tile adapter\0"
  VALUE "ProductName", "Hyphen\0"
  VALUE "FileVersion", "0.6.9\0"
  VALUE "ProductVersion", "0.6.9\0"
