@@ -58,7 +58,7 @@ class RuntimeNotices(unittest.TestCase):
             (output / 'notices').mkdir()
             (output / 'notices/foreign.txt').write_text('unexpected')
             with self.assertRaisesRegex(RuntimeError, 'Unexpected prior notice'):
-                notices.stage_runtime_notices(output, python_candidates=[license_file], distribution=dist)
+                notices.stage_runtime_notices(output, python_candidates=[license_file], distribution=dist, target_platform='win32')
 
 
 if __name__ == '__main__':
