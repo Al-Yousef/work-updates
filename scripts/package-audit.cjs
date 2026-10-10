@@ -78,6 +78,24 @@ assert.ok(
     .equals(fs.readFileSync(path.join(root, 'bridge', 'collector.py'))),
   'Stale packaged original-reader source',
 );
+const runtimeNotices = require('./helper-notices-audit.cjs').verifyHelperNotices(
+  path.join(resources, 'helper'),
+);
+fs.mkdirSync(path.join(root, 'artifacts/runtime-notices'), { recursive: true });
+fs.writeFileSync(
+  path.join(root, 'artifacts/runtime-notices/verification.json'),
+  JSON.stringify(
+    {
+      schema: 1,
+      passed: true,
+      packagedNoticesVerified: true,
+      runtimeNotices,
+      completeBinarySbom: false,
+    },
+    null,
+    2,
+  ) + '\n',
+);
 process.stdout.write('Packaged contents audit passed: source allowlist and bundled observer.\n');
 async function finish() {
   await require('./research-contract-audit.cjs').audit({
