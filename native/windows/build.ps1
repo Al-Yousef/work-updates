@@ -21,13 +21,17 @@ $taskRevision=(& git -C $taskRepo rev-parse HEAD)
 if($LASTEXITCODE -ne 0){throw 'A source checkout is required to record candidate identity'}
 $taskDirty=!!(& git -C $taskRepo status --porcelain)
 $taskSourceHashes=@{}
-$taskSources=@('build.ps1','app.rc','app.manifest','toolchain.json','bootstrap-toolchain.ps1','THIRD_PARTY_NOTICES.txt')
+$taskSources=@('build.ps1','app.rc','app-dll.rc','control.rc','app.manifest','toolchain.json','bootstrap-toolchain.ps1','THIRD_PARTY_NOTICES.txt')
 $taskSources+=@(Get-ChildItem (Join-Path $taskRoot 'src'),(Join-Path $taskRoot 'tests'),(Join-Path $taskRoot 'scripts'),(Join-Path $taskRoot 'taskbar-adapter'),(Join-Path $taskRoot 'vendor'),(Join-Path $taskRoot 'assets') -Recurse -File | ForEach-Object {[IO.Path]::GetRelativePath($taskRoot,$_.FullName).Replace('\','/')})
 foreach($taskSource in $taskSources){$taskSourceHashes[$taskSource]=(Get-FileHash -LiteralPath (Join-Path $taskRoot $taskSource)).Hash}
 Push-Location $taskRoot
 try {
     & (Join-Path $taskToolchain 'llvm-rc.exe') /no-preprocess /FO (Join-Path $taskBuild 'app.res') app.rc
     if($LASTEXITCODE -ne 0) {throw 'Resource build failed'}
+    & (Join-Path $taskToolchain 'llvm-rc.exe') /no-preprocess /FO (Join-Path $taskBuild 'app-dll.res') app-dll.rc
+    if($LASTEXITCODE -ne 0) {throw 'Adapter resource build failed'}
+    & (Join-Path $taskToolchain 'llvm-rc.exe') /no-preprocess /FO (Join-Path $taskBuild 'control.res') control.rc
+    if($LASTEXITCODE -ne 0) {throw 'Controller resource build failed'}
     & $taskCompiler @taskCompilerFlags src/main.cpp (Join-Path $taskBuild 'app.res') -std=c++20 -O2 -DNDEBUG -municode -mwindows -static -Wall -Wextra -o (Join-Path $taskBuild 'Native Hover.exe') -ldcomp -ld2d1 -ld3d11 -ldxgi -ldwrite -lshell32 -luser32 -lole32 -loleaut32 -loleacc -lcomctl32 -luuid -lgdi32 -lpsapi -ladvapi32 -lbcrypt -lwindowscodecs -lcomdlg32 -lruntimeobject
     if($LASTEXITCODE -ne 0) {throw 'Native build failed'}
     & $taskCompiler @taskCompilerFlags src/launch.cpp (Join-Path $taskBuild 'app.res') -std=c++20 -O2 -municode -mwindows -static -Wall -Wextra -o (Join-Path $taskBuild 'Start Native Preview.exe') -luser32 -lshell32
@@ -39,9 +43,9 @@ try {
         if($LASTEXITCODE -ne 0){throw 'MinHook source build failed'}
         $taskObjects+=$taskObject
     }
-    & $taskCompiler @taskCompilerFlags taskbar-adapter/adapter.cpp @taskObjects -std=c++20 -O2 -DNDEBUG -shared -static -Wall -Wextra -o (Join-Path $taskBuild 'WorkUpdatesTaskbar-v2.dll') -lbcrypt -lruntimeobject -lole32 -luser32
+    & $taskCompiler @taskCompilerFlags taskbar-adapter/adapter.cpp @taskObjects (Join-Path $taskBuild 'app-dll.res') -std=c++20 -O2 -DNDEBUG -shared -static -Wall -Wextra -o (Join-Path $taskBuild 'WorkUpdatesTaskbar-v2.dll') -lbcrypt -lruntimeobject -lole32 -luser32
     if($LASTEXITCODE -ne 0){throw 'Taskbar adapter build failed'}
-    & $taskCompiler @taskCompilerFlags taskbar-adapter/control.cpp -std=c++20 -O2 -municode -static -Wall -Wextra -o (Join-Path $taskBuild 'Taskbar Adapter Control.exe') -lbcrypt -luser32
+    & $taskCompiler @taskCompilerFlags taskbar-adapter/control.cpp (Join-Path $taskBuild 'control.res') -std=c++20 -O2 -municode -static -Wall -Wextra -o (Join-Path $taskBuild 'Taskbar Adapter Control.exe') -lbcrypt -luser32
     if($LASTEXITCODE -ne 0){throw 'Taskbar controller build failed'}
     & $taskCompiler @taskCompilerFlags tests/motion.cpp -std=c++20 -O2 -static -o (Join-Path $taskBuild 'motion-tests.exe')
     if($LASTEXITCODE -ne 0) {throw 'Motion test build failed'}

@@ -74,6 +74,7 @@ jobs:
             native/windows/build/candidate/artifacts/composer-focus-proof-*.json
             native/windows/build/candidate/artifacts/idle-repaint-proof-*.json
             native/windows/build/candidate/artifacts/package-verification.json
+            native/windows/build/candidate/artifacts/native-pe-resources.json
           if-no-files-found: error
           retention-days: 14
       - uses: actions/upload-artifact@v4

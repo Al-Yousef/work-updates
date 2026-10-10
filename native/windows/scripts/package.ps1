@@ -14,10 +14,13 @@ Remove-Item -LiteralPath $taskZip,$taskChecksum -Force -ErrorAction SilentlyCont
 if($LASTEXITCODE -ne 0){throw 'Source privacy audit failed'}
 & node (Join-Path $taskRepo 'scripts/native-build-audit.cjs') $taskCandidate
 if($LASTEXITCODE -ne 0){throw 'Native build identity audit failed'}
-foreach($taskBinary in @('Native Hover.exe','Start Native Preview.exe')) {
-    $taskResource=(Get-Item -LiteralPath (Join-Path $taskCandidate $taskBinary)).VersionInfo
-    if($taskResource.FileVersion -ne $taskVersion -or $taskResource.ProductName -ne 'Hyphen'){throw ('Native PE resources do not match the app: '+$taskBinary)}
-}
+. (Join-Path $PSScriptRoot 'pe-resources.ps1')
+$taskPeRaw=Join-Path $taskCandidate 'artifacts/native-pe-resources.raw.json'
+$taskPeProof=Join-Path $taskCandidate 'artifacts/native-pe-resources.json'
+Remove-Item -LiteralPath $taskPeRaw,$taskPeProof -Force -ErrorAction SilentlyContinue
+@(Get-HyphenPeResources -Candidate $taskCandidate) | ConvertTo-Json -Depth 4 | Set-Content -LiteralPath $taskPeRaw -Encoding utf8NoBOM
+& node (Join-Path $taskRepo 'scripts/native-pe-resources.cjs') $taskCandidate $taskPeRaw $taskPeProof
+if($LASTEXITCODE -ne 0){throw 'Native PE product/version or unsigned identity verification failed'}
 $taskPackage=Join-Path $taskNative ('build/package-'+[guid]::NewGuid().ToString('N'))
 New-Item -ItemType Directory -Path $taskPackage | Out-Null
 foreach($taskFile in @('Native Hover.exe','Start Native Preview.exe','WorkUpdatesTaskbar-v2.dll','Taskbar Adapter Control.exe','build-verification.json')){

@@ -47,7 +47,7 @@ const files = new Set([
   'candidate/dot-inbox/desktop/window.cjs',
   'candidate/dot-inbox/desktop/desktop.css',
 ]);
-const nativeTop = new Set(['.gitignore', 'README.md', 'MIGRATION.md', 'THIRD_PARTY_NOTICES.txt', 'app.manifest', 'app.rc', 'build.ps1', 'install-preview.ps1', 'toolchain.json', 'bootstrap-toolchain.ps1']);
+const nativeTop = new Set(['.gitignore', 'README.md', 'MIGRATION.md', 'THIRD_PARTY_NOTICES.txt', 'app.manifest', 'app.rc', 'app-dll.rc', 'control.rc', 'build.ps1', 'install-preview.ps1', 'toolchain.json', 'bootstrap-toolchain.ps1']);
 function allowedNative(file) {
   if (!file.startsWith('native/windows/')) return false;
   const rel = file.slice('native/windows/'.length);

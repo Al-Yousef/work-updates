@@ -26,6 +26,14 @@ node scripts/baseline-runtime-audit.cjs
 
 ## Windows executable policy and physical coverage
 
+The package gate inspects all four distributed PE files, including the weather
+adapter DLL and its controller. Each must retain the exact original binary hash,
+Hyphen product name, matching file/product version and an explicit unsigned
+development status. The separate `native-pe-resources.json` records these fields
+without paths or credentials. Missing resources, foreign versions, changed hashes
+and uncertain or unexpected signature results fail packaging. This evidence does
+not establish a signing service, trusted installation or physical input.
+
 An OS policy refusal is a failed gate. Retain the error/code and source/binary hashes; use an authorized signing or administrator-managed allow policy for those exact artifacts, then rerun the checks. Never disable Smart App Control, Defender, application-control policy or tamper protection. These workflows do not hold signing credentials or assert that unsigned downloads are trusted distribution builds. A release signing service/certificate and transactional installation are separate work.
 
 Physical weather gestures, Explorer restart, mixed-monitor/DPI behavior and real disposable Codex Send/Queue delivery still require their separate desktop evidence. Automated check success does not replace those gates.
