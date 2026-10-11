@@ -149,7 +149,7 @@ test('voice totals accepted response usage without dropping unknown responses, k
   assert.equal(restarted.accounting('global').tokens, 100);
   assert.equal(restarted.accounting('global').concurrency, 1);
   const inspected = restarted.inspect().scopes[0];
-  assert.equal(inspected.remaining.tokens, defaults.tokens - 100);
+  assert.equal(inspected.remaining.tokens, null);
   assert.equal(inspected.remaining.costMicros, null);
   assert.equal(inspected.usage.unknownCost, 1);
   restarted.close();

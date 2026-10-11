@@ -62,6 +62,31 @@ const request = (overrides = {}) => ({
   estimate: { tokens: 100, costMicros: null },
   ...overrides,
 });
+test('default accounting never imposes the former daily run or token quotas, including after restart', (t) => {
+  const f = setup(t);
+  const first = f.b.reserve(request({provider: 'codex-summary', estimate: {tokens: 400000, costMicros: null}}));
+  f.b.started(first, 'first');
+  assert.equal(f.b.tokenLimitReached(first), false);
+  f.b.finish(first);
+  // Seed retained, completed activity without hundreds of unrelated filesystem writes.
+  f.b.change(next => {
+    const sample = next.entries[0];
+    for (let i = 0; i < 256; i++) next.entries.push({...structuredClone(sample), id: crypto.randomUUID()});
+  });
+  const view = f.b.inspect().scopes[0];
+  assert.equal(view.usage.runs, 257);
+  assert.ok(view.usage.tokens > 300000);
+  assert.equal(view.limits.runs, null);
+  assert.equal(view.remaining.tokens, null);
+  assert.deepEqual(view.limitsReached, []);
+  f.b.close();
+  const restarted = new ResourceBudgets(f.config);
+  t.after(() => restarted.close());
+  const id = restarted.reserve(request({provider: 'codex-app-server'}));
+  assert.equal(restarted.tokenLimitReached(id), false);
+  assert.equal(restarted.inspect().scopes[0].usage.runs, 258);
+});
+
 test('global and parent/child budgets reserve atomically before dispatch; estimates and larger actuals remain separate', (t) => {
   const parent = crypto.randomUUID(),
     child = crypto.randomUUID(),

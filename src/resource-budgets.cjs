@@ -8,8 +8,8 @@ const uuid = (value) => /^[a-f0-9]{8}-(?:[a-f0-9]{4}-){3}[a-f0-9]{12}$/i.test(va
 const integer = (value) => Number.isSafeInteger(value) && value >= 0;
 const active = (entry) => ['reserved', 'running', 'unknown'].includes(entry.status);
 const defaults = Object.freeze({
-  runs: 256,
-  tokens: 300000,
+  runs: null,
+  tokens: null,
   costMicros: null,
   concurrency: 4,
   readsPerHour: 64,
@@ -18,14 +18,15 @@ function limits(value) {
   if (
     !value ||
     Object.keys(value).sort().join() !== Object.keys(defaults).sort().join() ||
-    ![value.runs, value.tokens, value.concurrency, value.readsPerHour].every(integer) ||
+    ![value.runs, value.tokens].every(v => v === null || integer(v)) ||
+    ![value.concurrency, value.readsPerHour].every(integer) ||
     value.runs > 10000 ||
     value.tokens > 100000000 ||
     value.concurrency > 32 ||
     value.readsPerHour > 10000 ||
     (value.costMicros !== null && (!integer(value.costMicros) || value.costMicros > 1000000000))
   )
-    throw new Error('Use exact finite run, token, costMicros, concurrency and readsPerHour limits');
+    throw new Error('Use exact run, token, costMicros, concurrency and readsPerHour limits; null disables a cumulative cap');
   return structuredClone(value);
 }
 function usage(value) {
@@ -245,8 +246,8 @@ class ResourceBudgets {
       if (!p) continue;
       const a = this.accounting(scope);
       if (
-        a.runs + 1 > p.runs ||
-        a.tokens + input.estimate.tokens > p.tokens ||
+        (p.runs !== null && a.runs + 1 > p.runs) ||
+        (p.tokens !== null && a.tokens + input.estimate.tokens > p.tokens) ||
         a.concurrency + 1 > p.concurrency ||
         (kind === 'read' && a.readsPerHour + 1 > p.readsPerHour) ||
         (p.costMicros !== null &&
@@ -332,7 +333,7 @@ class ResourceBudgets {
     const entry = this.state.entries.find((e) => e.id === id);
     if (!entry) throw new Error('Unknown budget reservation');
     return entry.scopes.some(
-      (scope) => this.policy(scope) && this.accounting(scope).tokens >= this.policy(scope).tokens,
+      (scope) => this.policy(scope)?.tokens != null && this.accounting(scope).tokens >= this.policy(scope).tokens,
     );
   }
   reconcile(snapshot) {
@@ -425,7 +426,7 @@ class ResourceBudgets {
           remaining = Object.fromEntries(
             ['runs', 'tokens', 'concurrency', 'readsPerHour'].map((key) => [
               key,
-              Math.max(0, policy[key] - accounting[key]),
+              policy[key] === null ? null : Math.max(0, policy[key] - accounting[key]),
             ]),
           );
         remaining.costMicros =
