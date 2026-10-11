@@ -195,8 +195,16 @@ try {
     auto reduced=reordered;reduced.erase(std::remove_if(reduced.begin(),reduced.end(),[&](const Json& c){return c.value("chatName","")==firstName;}),reduced.end());fault("patch",{{"cards",reduced}});
     wait([]{return state().value("focused",-1)==-1;},"Removing the focused card clears focus instead of retargeting it");SendMessageW(panel,WM_KEYDOWN,VK_RETURN,0);check(draft()==L"Keep this unsent draft","Removed-card Enter preserves the displayed draft");fault("reset");
     // No text was supplied by the user for an automatic update.
-    fault("patch",{{"assistant",{{"messages",Json::array({{{"id","automatic-update"},{"kind","update"},{"text",""},{"answer","An automatic update with no empty user balloon."},{"status","complete"}}})},{"responding",false},{"error",""}}}});
-    wait([]{return LOWORD(SendMessageW(panel,WM_APP+214,0,0))==1;},"Automatic update paints one meaningful balloon");saveCapture((L"ux-update-"+std::to_wstring(dpi)+L".png").c_str());
+    fault("patch",{{"assistant",{{"messages",Json::array({{{"id","automatic-update"},{"kind","update"},{"text",""},{"answer","**Ready for your review**\n\n- Check the launch notes\n- Run `npm test`\n\nYour draft stays saved while you review."},{"status","completed"}}})},{"responding",false},{"error",""}}}});
+    wait([]{return LOWORD(SendMessageW(panel,WM_APP+214,0,0))==1;},"Automatic update paints one meaningful balloon");
+    check(name(named(L"Ready for your review")).find(L"**")==std::wstring::npos,"Accessible answer contains readable formatted text");
+    select(named(L"Copy assistant reply"));check(name(named(L"Quote assistant reply")).size()>0,"Both visible message actions are accessible");
+    saveCapture((L"ux-update-"+std::to_wstring(dpi)+L".png").c_str());
+    const auto keptDraft=draft();const auto quoteReplies=state().value("commandReplies",0U);
+    accessible->accDoDefaultAction(child(named(L"Quote assistant reply")));
+    check(draft().find(keptDraft)==0&&draft().find(L"> Ready for your review")!=std::wstring::npos,"Quote appends the selected readable answer to the existing draft");
+    check(state().value("commandReplies",0U)==quoteReplies&&!state().value("pending",true),"Quote does not submit a command or send a message");
+    check(focus()==editor,"Quote focuses the native composer for a follow-up question");setDraft(keptDraft.c_str());
     // Long failure feedback occupies its own measured space above the transcript.
     const std::string failure="Conversation history is unavailable. Your saved message has been preserved. Reconnect before sending again. This intentionally long error verifies that the complete explanation wraps across several lines, reserves space above the composer, and remains available to Windows accessibility tools without overlapping the message bubbles or image previews.";
     fault("patch",{{"assistant",{{"messages",Json::array()},{"responding",false},{"error",failure}}}});

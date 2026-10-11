@@ -145,5 +145,15 @@ int main(int argc,char** argv){
     QueueModel lateReceipt;lateReceipt.update({{"cards",Json::array({first})}});lateReceipt.choose(first);lateReceipt.draft("Submitted reply");auto submittedReply=lateReceipt.replyInput();lateReceipt.draft("New draft");lateReceipt.detailFollow=false;lateReceipt.detailOffset=5;
     lateReceipt.response({{"command","send"},{"input",submittedReply},{"ok",true},{"value",{{"taskId","owned"}}}});
     assert(!lateReceipt.detailFollow&&lateReceipt.detailOffset==5&&lateReceipt.draft()=="New draft"&&lateReceipt.message.find("newer draft is kept")!=std::string::npos);
-    std::cout<<"Native queue and assistant model: identity, draft isolation, search, images, stale responses, offline drafts, filters and receipt checks passed\n";
+    QueueModel quoting;quoting.view=4;quoting.update({{"assistant",{{"messages",Json::array({{{"id","first"},{"status","completed"},{"answer","First reply\nSecond line"}},{{"id","second"},{"status","completed"},{"answer","Different reply"}},{{"id","pending"},{"status","thinking"},{"answer","Partial reply"}}})}}}});
+    quoting.draft("My unsent question");quoting.attachments["@hyphen"]=Json::array({image});quoting.intentIds["@hyphen"]="previous-intent";
+    assert(quoting.quoteAssistant("first"));assert(quoting.draft()=="My unsent question\n\nRegarding your reply:\n> First reply\n> Second line\n\n");
+    assert(quoting.images().size()==1&&!quoting.intentIds.contains("@hyphen")&&!quoting.pending&&quoting.pendingSend.empty());
+    const auto kept=quoting.draft();assert(!quoting.quoteAssistant("missing")&&!quoting.quoteAssistant("pending")&&quoting.draft()==kept);
+    quoting.state["assistant"]["messages"][0]["status"]="failed";assert(quoting.assistantAnswer("first").empty());
+    quoting.draft(std::string(47999,'x'));assert(!quoting.quoteAssistant("second")&&quoting.draft().size()==47999);
+    quoting.draft("");quoting.state["assistant"]["messages"][1]["answer"]=std::string(6000,'a');assert(quoting.quoteAssistant("second"));
+    assert(quoting.draft().size()<3500&&quoting.draft().find("(excerpt)")!=std::string::npos&&quoting.message.find("excerpt")!=std::string::npos);
+    quoting.view=0;assert(quoting.assistantAnswer("second").empty());
+    std::cout<<"Native queue and assistant model: identity, draft isolation, search, images, stale responses, offline drafts, filters, quoting and receipt checks passed\n";
 }
