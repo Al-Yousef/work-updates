@@ -378,6 +378,7 @@ class Codex extends EventEmitter {
     const turn = await this.call('turn/start', {
       threadId: id,
       input: [{ type: 'text', text: task.prompt }],
+      ...(task.hyphenOrigin?{outputSchema:require('./assistant-work.cjs').resultSchema}:{}),
     });
     return { threadId: id, turnId: turn.turn.id };
   }

@@ -254,7 +254,7 @@ class Queue extends EventEmitter {
         ...task,
         title: presentation?.title || observed?.taskTitle || task.title,
         chatName: observed?.title || (task.threadId ? task.title : 'New chat'),
-        summary: presentation?.summary || summary,
+        summary: task.workResult?.summary || presentation?.summary || summary,
         summaryOrigin: presentation ? 'ai' : 'recorded',
         summaryState: task.turnId === observed?.turnId ? this.summaryState(observed) :
           this.state.settings.aiSummaries === true ? 'recorded' : 'disabled',

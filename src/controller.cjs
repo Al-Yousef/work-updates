@@ -281,13 +281,15 @@ class Controller extends EventEmitter {
     else if (method === 'turn/completed') {
       if (task.completedAt && task.notificationVersion === turnId) return;
       const latest = task.messages.filter((m) => m.role === 'assistant').at(-1)?.text || '';
-      const status = p.turn.status === 'completed' ? statusFromText(latest) : 'blocked';
+      const structured=task.hyphenOrigin&&p.turn.status==='completed'?require('./assistant-work.cjs').result(latest):null;
+      const status = structured?(structured.status==='completed'?'ready':structured.status==='needs_input'?'needs':'blocked'):p.turn.status === 'completed' ? statusFromText(latest) : 'blocked';
       const done = task.status === 'done';
       q.patch(task.id, {
         status: done ? 'done' : status,
         ...inferAttention(latest, status),
         notificationVersion: p.turn.id,
         turnOutcome: ['completed','failed','interrupted'].includes(p.turn.status)?p.turn.status:'failed',
+        ...(structured?{workResult:structured}:{}),
         completedAt: now(),
         error:
           p.turn.error?.message ||

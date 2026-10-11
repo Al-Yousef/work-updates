@@ -53,6 +53,7 @@ function nativeView(state) {
     assistant: state.assistant && {...state.assistant,messages:state.assistant.messages.slice(-30).map(m=>{const display=m.kind==='update'?presentUpdate(m,state.cards):presentAnswer(m.answer);return {
       answer:display.text,answerSpans:display.spans,
       kind:m.kind==='update'?'update':'reply',
+      response:m.response||null,
       replyTo:replies.preview(m.replyTo),
       id:m.id,text:clipped(m.text,4000),status:m.status,error:clipped(m.error,300),at:m.at,images:m.images||[],
       links:(m.links||[]).slice(0,3).map(link=>({index:link.index,chatName:clipped(link.chatName,180),hasDraft:!!link.draft}))
