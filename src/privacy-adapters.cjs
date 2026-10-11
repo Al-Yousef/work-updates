@@ -72,15 +72,19 @@ function adapters({
       removed: (value) => Array.isArray(value) && value.length === 0,
     },
     conversation: {
+      summary: value => ({localExchanges:value.length,codexHistory:assistant().provider.persistent?'Deletes the entire owned Hyphen Codex chat first; the next question starts a fresh chat.':'This client has no continuing Codex chat.'}),
+      kept: 'Pinned notes, original source chats, attachments and action/replay receipts remain. The owned Hyphen Codex chat is removed when this desktop client has one; other provider data remains separate.',
       read: () =>
         structuredClone(assistant().state.messages.filter((m) => conversation(m) && !isControl(m))),
       dependencies: otherAnswer,
-      remove: (_, selected) =>
-        assistantChange((s) => {
+      remove: async (_, selected) => {
+        await assistant().provider.forget?.();
+        return assistantChange((s) => {
           const ids = new Set(selected.map((m) => m.id));
           s.messages = s.messages.filter((m) => !ids.has(m.id) && m.kind !== 'memory_inspection');
           s.historySelection = [];
-        }),
+        });
+      },
       removed: (value) => Array.isArray(value) && value.length === 0,
     },
     'source-cache': {

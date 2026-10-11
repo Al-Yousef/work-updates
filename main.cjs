@@ -198,6 +198,7 @@ const documents=new (require('./src/documents.cjs').Documents)({directory:dataDi
 responsibilities.options.outcomeRequired=entry=>outcomes.required(entry);
 responsibilities.options.outcomeAdmission=(entry,human)=>outcomes.admission(entry,human);
 const assistant = new Assistant({directory:dataDir,snapshot:()=>devices.snapshot(),attachments,
+  assistantSessionChanged:()=>observer?.ignore?.(assistantIgnoredSources()),
   budgets,
   profile:assistantProfile,capabilities:()=>profileCapabilities({assistant,executors,documents,voice:assistant.options.voice,browsers:assistant.options.browsers,peerContract:require('./src/peer-contract.cjs').capabilities(),helper:client.status?.(),privateChannels:assistantChannels}),
   voice,openVoice,openChannels,
@@ -242,7 +243,7 @@ function openChannels(){channelWindow??=new (require('./src/channel-window.cjs')
   }});channelWindow.open();}
 privacy=new (require('./src/privacy.cjs').Privacy)({directory:dataDir,actorId:authorization.actorId,
   localSource:sourceId=>queue.cards().some(c=>c.sources?.some(s=>s.id===sourceId)),
-  disconnect:async sourceId=>{observer?.ignore?.(privacy.state.disconnected);summaries?.refresh();publish();},
+  disconnect:async sourceId=>{observer?.ignore?.(assistantIgnoredSources());summaries?.refresh();publish();},
   adapters:require('./src/privacy-adapters.cjs').adapters({directory:dataDir,assistant:()=>assistant,
     sourceDependencies:sourceId=>[
       ...(research.snapshot().some(e=>e.scope.sourceId===sourceId&&research.pending.has(e.id))?['A selected source read is still running']:[]),
@@ -702,6 +703,7 @@ async function connectionAction(method, input) {
     return devices.add(input.code);
   }
 }
+function assistantIgnoredSources(){return [...new Set([...(privacy?.state.disconnected||[]),assistant.provider.session?.state.threadId].filter(Boolean))];}
 function startCollection() {
   if (argument('--legacy-root')) queue.importLegacy(path.resolve(argument('--legacy-root')));
   if (demo) observer = require('./src/demo.cjs').startDemoObserver(queue);
@@ -720,7 +722,7 @@ function startCollection() {
       : undefined;
     observer = startObserver(
       path.join(dataDir, 'observer'),
-      { helper, helperScript, log: diagnostics,ignoredThreadIds:privacy.state.disconnected },
+      { helper, helperScript, log: diagnostics,ignoredThreadIds:assistantIgnoredSources() },
       (feed, health) => {
         queue.setFeed(feed || queue.feed, health);
         if(health.ok)activity.collector(feed?.activityAccess);else if(health.status==='error')activity.collector(health.activityAccess);

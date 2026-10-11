@@ -9,7 +9,7 @@ const state={health:{ok:true},collectedAt:Math.floor(Date.now()/1000),cards:[{
     body:'Latest release checklist is prepared.',conversation:[{role:'user',text:'Use the violet layout. Keep this release private until I approve it.'},{role:'assistant',text:'The violet layout is ready. Release approval is still waiting on you; nothing was published.'}]}],
 }],done:[]};
 const deliveries=[],steps=[];
-const options={directory,snapshot:()=>({...state,collectedAt:Math.floor(Date.now()/1000)}),dispatch:async(mode,input)=>{deliveries.push({mode,input});return {delivery:mode==='queue'?'queued':'sent',route:'synthetic'};}};
+const options={directory,persistent:false,snapshot:()=>({...state,collectedAt:Math.floor(Date.now()/1000)}),dispatch:async(mode,input)=>{deliveries.push({mode,input});return {delivery:mode==='queue'?'queued':'sent',route:'synthetic'};}};
 let app=new Assistant(options);
 async function ask(text){const id=crypto.randomUUID(),started=Date.now();app.ask({messageId:id,text});await app.work;
   const message=app.state.messages.find(m=>m.id===id);assert.equal(message.status,'completed',message.error);

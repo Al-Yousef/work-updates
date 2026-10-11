@@ -10,7 +10,7 @@ const card = { id: 'release', taskKey: 'release-v1', kind: 'local', chatName: 'R
     conversation: [{ role: 'user', text: 'Keep the release private until I approve it.' }, { role: 'assistant', text: 'A draft checklist is prepared; nothing was published.' }] }] };
 const snapshot = () => ({ cards: [card], done: [], health: { ok: true }, collectedAt: Math.floor(Date.now() / 1000) });
 let dispatches = 0;
-const options = { directory, snapshot, dispatch: async () => { dispatches++; throw new Error('Synthetic audit must not dispatch'); } };
+const options = { directory, persistent: false, snapshot, dispatch: async () => { dispatches++; throw new Error('Synthetic audit must not dispatch'); } };
 let app = new Assistant(options);
 const exchange = (text, answer = 'Understood.') => ({ id: crypto.randomUUID(), text, answer, status: 'completed', at: Date.now(), links: [] });
 const steps = [];

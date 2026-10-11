@@ -101,6 +101,9 @@ function context(snapshot,question,options={}) {
 }
 function messageTarget(current,question,options={}) {
   const destination=question.match(/(?:tell|ask|message|send|queue)\s+(?:(?:a|the)\s+)?(.{1,180}?)\s+(?:chat|thread)\b/i);
+  const canonical=value=>String(value||'').trim().toLowerCase().replace(/\s+(?:chat|thread)$/,'');
+  const exact=destination?current.data.cards.filter(card=>canonical(card.chatName)===canonical(destination[1])):[];
+  if(exact.length)return exact.length===1?exact[0].ref:null;
   const named=destination?words(destination[1]):[];
   const explicit=current.data.cards.filter(card=>named.length?named.every(w=>card.chatName.toLowerCase().includes(w)):
     !/\b(?:this|that|same) (?:chat|thread)\b/i.test(question)&&card.chatName.length>=4&&question.toLowerCase().includes(card.chatName.toLowerCase()));

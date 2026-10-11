@@ -14,6 +14,8 @@ Source context records whether it is available, unavailable, cached or offline, 
 
 Conversation deletion retains pinned notes, automatic update alerts, copied image files and message replay protection. It is not full account/data erasure; that remains issue #31. Message receipt hashes are kept so deletion cannot authorize a duplicate submission. Corrupt storage and invalid inspection metadata are preserved and block writes. Assistant history/inspection selection remain in the existing private local file and are not added to peer state or content diagnostics.
 
+The desktop assistant also has one continuing Codex chat, separate from the local 500-exchange retention. Removing a selected exchange, all history or privacy conversation first deletes that exact owned Codex chat. The next question starts a fresh chat with the remaining local context. An invalid numbered selection does not delete it. Failed or uncertain provider deletion preserves the local selection and blocks completion; it never claims erasure. Pinned-note deletion alone does not remove copies already present in conversation. Private phone channels keep their separate ephemeral provider. See [persistent assistant](PERSISTENT_ASSISTANT.md).
+
 ## Budgets and verification
 
 Retention stays at 500 conversation entries, 40 alerts and 32 pinned notes of at most 1,000 characters. The recent exchange projection is limited to 12,000 characters, recalled exchanges to 8,000, selected human evidence to 4,000 and selected card/source projections to 18,000. Each source excerpt projection stays within 4,200 characters. Count/coverage metadata reports the selected characters; these are not token estimates or actual provider billing.

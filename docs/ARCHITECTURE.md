@@ -6,7 +6,7 @@
 | Read-only collection | `bridge/collector.py`, `src/observer.cjs`, `src/read-only-observer.cjs` | Discover and hydrate local source context, freshness and health. Observation does not acquire a chat writer. |
 | Queue and summaries | `src/queue.cjs`, `src/summaries.cjs`, `src/summary-*.cjs` | Task/update identity, reviewed/snoozed/done state, ordering and cached current-task summaries. |
 | Delivery | `src/messages.cjs`, `src/controller.cjs`, `src/codex.cjs`, `src/codex-desktop.cjs`, `src/attachments.cjs` | Durable intents and receipts, exact-source validation, app-owned or desktop-owner routing, local images and uncertain-delivery barriers. |
-| Assistant | `src/assistant*.cjs` | Durable local conversation, explicit notes, bounded retrieval, private inference and validated Send/Queue actions. Uses delivery services instead of claiming source writers. |
+| Assistant | `src/assistant*.cjs` | Durable local conversation and one owned continuing Codex chat, explicit notes, bounded retrieval, scoped source tools and validated Send/Queue actions. Uses delivery services instead of claiming source writers. |
 | Native Windows | `native/windows/src/`, `native/windows/taskbar-adapter/` | Win32 UI, input, rendering, worker IPC, tray/launcher and fingerprint-gated weather routing. `main.cpp` remains a shared integration file. |
 | Connected devices | `src/devices.cjs`, `src/peer.cjs`, `ios/` | Private pairing, ordered owner-routed snapshots and commands. Apple candidate validation is independent of Windows tests. |
 | Compatibility UI | `ui/`, `src/tray.cjs` | Earlier Electron interface and platform compatibility behavior. Native Windows parity is not inferred from these tests. |

@@ -185,6 +185,7 @@ class AssistantChannels {
     const base =
       this.options.provider?.(id, directory) ||
       new AssistantProvider({
+        persistent:false,
         directory: path.join(directory, 'session'),
         budgets: this.options.budgets,
         binary: this.options.binary,
