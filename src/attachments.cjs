@@ -22,7 +22,7 @@ function attachmentIds(input=[]){
   if(new Set(input).size!==input.length)throw new Error('This image is already attached.');
   return input;
 }
-function messageHash(text,ids=[]){return digest(ids.length?JSON.stringify([text,ids]):text);}
+function messageHash(text,ids=[],replyToId=''){return digest(replyToId?JSON.stringify([text,ids,replyToId]):ids.length?JSON.stringify([text,ids]):text);}
 class Attachments{
   constructor(directory){this.directory=path.join(directory,'attachments');this.liveReferences=new Set();fs.mkdirSync(this.directory,{recursive:true});}
   import(paths){

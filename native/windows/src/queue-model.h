@@ -121,6 +121,19 @@ struct QueueModel {
     std::string draft() const {auto found=drafts.find(composerKey());return found==drafts.end()?"":found->second;}
     std::string pendingDestination() const {if(pendingOwner=="@hyphen")return "Hyphen";for(const char* key:{"cards","done"})for(const auto& card:state.value(key,Json::array()))for(const auto& source:card.value("sources",Json::array()))if(source.value("id","")==pendingOwner)return card.value("chatName",std::string("another chat"));return "another chat";}
     void draft(std::string value) {auto key=composerKey();if(!key.empty()){if(value!=draft())intentIds.erase(key);drafts[key]=std::move(value);}}
+    Json replyTargets=Json::object();
+    Json replyTarget() const {return chatting()?replyTargets.value("@hyphen",Json::object()):Json::object();}
+    std::string replyTargetId(const std::string& key) const {return replyTargets.value(key,Json::object()).value("id","");}
+    bool replyAssistant(const std::string& id) {
+        const auto answer=assistantAnswer(id);
+        if(answer.empty()){message="This message is no longer available to reply to.";return false;}
+        // One short, valid UTF-8 preview; only the ID is sent to the backend.
+        auto end=std::min<size_t>(answer.size(),720);
+        while(end<answer.size()&&(static_cast<unsigned char>(answer[end])&0xc0)==0x80)--end;
+        replyTargets["@hyphen"]={{"id",id},{"text",answer.substr(0,end)}};
+        intentIds.erase("@hyphen");message.clear();return true;
+    }
+    void cancelReply() {replyTargets.erase("@hyphen");intentIds.erase("@hyphen");message.clear();}
     std::string assistantAnswer(const std::string& id) const {
         if(!chatting()||id.empty())return {};
         for(const auto& m:state.value("assistant",Json::object()).value("messages",Json::array())) {
@@ -152,9 +165,9 @@ struct QueueModel {
     Json imageIds(const std::string& key) const {Json ids=Json::array();auto it=attachments.find(key);if(it!=attachments.end())for(const auto& image:it->second)ids.push_back(image.value("id",""));return ids;}
     void removeImage(const std::string& id) {auto key=composerKey();auto& images=attachments[key];images.erase(std::remove_if(images.begin(),images.end(),[&](const Json& image){return image.value("id","")==id;}),images.end());intentIds.erase(key);}
     bool defaultQueue() const {auto lifecycle=currentSource().value("lifecycle","");return !chatting()&&sourceAvailable()&&(lifecycle=="working"||lifecycle=="starting");}
-    Json replyInput() const {auto value=chatting()?Json::object():input();value["text"]=draft();value["attachmentIds"]=imageIds(composerKey());auto id=intentIds.find(composerKey());if(id!=intentIds.end())value["messageId"]=id->second;return value;}
+    Json replyInput() const {auto value=chatting()?Json::object():input();value["text"]=draft();value["attachmentIds"]=imageIds(composerKey());auto id=intentIds.find(composerKey());if(id!=intentIds.end())value["messageId"]=id->second;const auto target=replyTargetId(composerKey());if(chatting()&&!target.empty())value["replyToId"]=target;return value;}
     bool hasDraft() const {auto value=draft();return !images().empty()||std::any_of(value.begin(),value.end(),[](unsigned char c){return !std::isspace(c);});}
-    void acceptedDraft(const std::string& key,const Json& input) {if(drafts[key]==input.value("text","")&&imageIds(key)==input.value("attachmentIds",Json::array())){drafts.erase(key);attachments.erase(key);intentIds.erase(key);}}
+    void acceptedDraft(const std::string& key,const Json& input) {auto intent=intentIds.find(key);if(drafts[key]==input.value("text","")&&imageIds(key)==input.value("attachmentIds",Json::array())&&replyTargetId(key)==input.value("replyToId","")&&(!input.contains("messageId")||(intent!=intentIds.end()&&intent->second==input.value("messageId","")))){drafts.erase(key);attachments.erase(key);intentIds.erase(key);replyTargets.erase(key);}}
     void response(const Json& result) {
         const auto command=result.value("command","");const auto input=result.value("input",Json::object());
         if(command=="details") {

@@ -15,7 +15,7 @@ function proposal(text,current){
 function request(messages,message,current,selection){
   const direct=proposal(message.text,current);
   if(direct)return {proposal:direct,ref:messageTarget(current,message.text,selection)};
-  const previous=messages.filter(m=>m.id!==message.id&&m.text&&m.status==='completed').at(-1);
+  const previous=messages.filter(m=>m.id!==message.id&&m.text&&m.status==='completed'&&(!message.replyTo||m.id===message.replyTo.id)).at(-1);
   if(!previous?.pendingDestination||!previous.proposal||previous.proposal.provenance!=='human_instruction')return null;
   const original=proposal(previous.text,current);if(!original||normalize(original.text)!==normalize(previous.proposal.text))return null;
   const selected=current.data.cards.filter(card=>[card.chatName,card.chatName+' chat',card.chatName+' on '+card.device].some(name=>normalize(name)===normalize(message.text.replace(/^the\s+/i,''))));
@@ -45,7 +45,7 @@ function receiptMatches(receipt,action){return receipt?.messageId===action.messa
 function cancellation(messages,message){
   const text=normalize(message.text);if(!/^(?:please )?cancel (?:that|the|my) queued message(?: for .+)?$/.test(text))return null;
   const named=text.match(/ queued message for (.+)$/)?.[1];
-  const prior=messages.filter(m=>m.id!==message.id&&m.text&&m.status==='completed');
+  const prior=messages.filter(m=>m.id!==message.id&&m.text&&m.status==='completed'&&(!message.replyTo||m.id===message.replyTo.id));
   const choices=named?prior.filter(m=>m.action?.status==='queued'&&normalize(m.action.chatName)===named):prior.slice(-1).filter(m=>m.action?.status==='queued');
   return {target:choices.length===1?choices[0]:null};
 }
