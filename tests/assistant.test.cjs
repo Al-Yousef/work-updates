@@ -124,10 +124,11 @@ class FakeClient extends EventEmitter {
 }
 test('provider uses a continuing read-only chat with scoped tools and general execution disabled',async t=>{
   const {directory}=fixture(t);const client=new FakeClient();const provider=new AssistantProvider({directory,clientFactory:()=>client});
-  assert.equal((await provider.answer({question:'Hello'})).answer,'Hello');assert.equal(client.closed,true);
+  assert.equal((await provider.answer({question:'Hello'})).answer,'Hello');assert.equal(client.closed,undefined);
   const start=client.calls.find(c=>c.method==='thread/start').params;assert.equal(start.ephemeral,false);assert.equal(start.sandbox,'read-only');
   assert.equal(start.config['features.shell_tool'],false);assert.equal(start.config['mcp_servers.danger.enabled'],false);assert.equal(start.config['plugins.danger.enabled'],false);
   assert.ok(!client.calls.some(c=>c.method==='thread/resume'));assert.equal(client.calls.find(c=>c.method==='turn/start').params.model,'gpt-6-luna');
+  provider.close();assert.equal(client.closed,true);
 });
 test('a tool request is rejected and the assistant transport is closed',async t=>{
   const {directory}=fixture(t);const client=new FakeClient('tool');const provider=new AssistantProvider({directory,clientFactory:()=>client});

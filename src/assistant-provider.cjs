@@ -32,18 +32,18 @@ const continuingInstructions=instructions.replace(/The app can deliver one[\s\S]
 class AssistantProvider {
   constructor(options={}) {this.options=options;this.client=null;this.model=null;this.persistent=options.persistent!==false;this.busy=false;
     if(this.persistent)try{this.session=new AssistantSession(options.directory);}catch(error){this.sessionError=error;}}
-  newClient(){return this.options.clientFactory?.()||new Codex({binary:this.options.binary,requestTimeoutMs:15000});}
+  newClient(){return this.options.clientFactory?.()||new Codex({binary:this.options.binary,requestTimeoutMs:60000});}
   async forget(){
     if(!this.persistent)return;if(this.busy)throw new Error('Wait for Hyphen’s answer before removing Codex history.');
-    if(this.sessionError)throw this.sessionError;this.session??=new AssistantSession(this.options.directory);const client=this.newClient();
-    try{await client.connect();await this.session.forget(client);this.options.onSession?.(null);}finally{client.close();}
+    if(this.sessionError)throw this.sessionError;this.session??=new AssistantSession(this.options.directory);const client=this.client||this.newClient();
+    try{await client.connect();await this.session.forget(client);this.options.onSession?.(null);}finally{client.close();if(this.client===client)this.client=null;}
   }
   async answer(input,tools=null) {
     if(this.busy)throw new Error('Hyphen’s Codex chat is already answering.');this.busy=true;
     let client;
     let reservation=null, dispatched=false, completed=false, acceptedTurn=null, reported=null;
     try {
-      client=this.client=this.newClient();
+      client=this.client=this.persistent&&this.client?this.client:this.newClient();
       if(this.sessionError)throw this.sessionError;
       await client.connect();
       const models=await client.call('model/list',{includeHidden:false});
@@ -134,9 +134,13 @@ class AssistantProvider {
       });
     } finally {
       if(reservation&&!completed)try{this.options.budgets.finish(reservation,{status:dispatched?'unknown':'not_started',reported,turnId:acceptedTurn});}catch{}
-      client?.close();if(this.client===client)this.client=null;this.busy=false;
+      // Keep the continuing chat's writer attached between successful answers.
+      // Releasing it on every turn lets another client claim the chat during
+      // the gap, leaving ordinary follow-ups unable to resume it.
+      if(!this.persistent||!completed){client?.close();if(this.client===client)this.client=null;}
+      this.busy=false;
     }
   }
-  close(){this.cancel?.();this.client?.close();}
+  close(){this.cancel?.();this.client?.close();this.client=null;}
 }
 module.exports={AssistantProvider,outputSchema};
