@@ -483,6 +483,8 @@ struct Renderer {
             brush->SetColor(chatstyle::blue());canvas->FillRectangle(D2D1::RectF(left+8,y+9,left+10,y+height-15),brush);
             label("Hyphen",12,D2D1::RectF(left+18,y+5,left+width-8,y+21*chatlayout::textScale),chatstyle::blue(),DWRITE_FONT_WEIGHT_SEMI_BOLD);
             label(target.value("text",""),12,D2D1::RectF(left+18,y+22*chatlayout::textScale,left+width-8,y+height-10),chatstyle::secondary());
+            const auto visible=D2D1::RectF(box.left,std::max(chatlayout::transcriptTop,box.top),box.right,std::min(transcriptBottom(),box.bottom));
+            if(visible.bottom>visible.top)messageTargets.push_back({visible,"message",{{"text",std::string("Replying to Hyphen: ")+target.value("text","")},{"user",true},{"tail",false}}});
         }return height;
     }
     void composerPaint(ID2D1SolidColorBrush* brush) {
@@ -1034,6 +1036,8 @@ struct App {
         for(size_t n=0;n<renderer.hits.size();++n){const auto& hit=renderer.hits[n];AccessibleItem i;i.key=Renderer::hitKey(hit);i.name=wide(hitName(hit));i.description=wide(hitDescription(hit));i.role=hit.action=="card"?ROLE_SYSTEM_LISTITEM:ROLE_SYSTEM_PUSHBUTTON;i.state=STATE_SYSTEM_FOCUSABLE|(hit.enabled?0:STATE_SYSTEM_UNAVAILABLE);if(!IsWindowVisible(panel))i.state|=STATE_SYSTEM_INVISIBLE;if(renderer.focused==static_cast<int>(n)&&GetFocus()==panel)i.state|=STATE_SYSTEM_FOCUSED;if(hit.action=="card"&&hit.card.value("id","")==renderer.model.selectedId&&hit.card.value("taskKey","")==renderer.model.selectedKey)i.state|=STATE_SYSTEM_SELECTED;i.box=screenBox(hit.box);items.push_back(i);}
         for(size_t n=0;n<renderer.messageTargets.size();++n){const auto& m=renderer.messageTargets[n];AccessibleItem i;i.key="message:"+renderer.model.composerKey()+":"+m.card.value("text","")+":"+std::to_string(n);i.name=wide(m.card.value("text",""));i.role=ROLE_SYSTEM_STATICTEXT;i.state=STATE_SYSTEM_READONLY;i.box=screenBox(m.box);items.push_back(i);}
         if(!renderer.notice.empty()){AccessibleItem i;i.key="status";i.name=wide(renderer.notice);i.role=ROLE_SYSTEM_STATICTEXT;i.state=STATE_SYSTEM_READONLY;i.box=screenBox(D2D1::RectF(CHAT_LEFT+38,renderer.noticeBottom()-renderer.noticeHeight,WIDTH-80,renderer.noticeBottom()));items.push_back(i);}
+        const auto replyTarget=renderer.model.replyTarget();
+        if(!replyTarget.empty()){AccessibleItem i;i.key="reply-preview:"+replyTarget.value("id","");i.name=wide(std::string("Replying to Hyphen: ")+replyTarget.value("text",""));i.role=ROLE_SYSTEM_STATICTEXT;i.state=STATE_SYSTEM_READONLY;const float y=renderer.composeY()-renderer.attachmentHeight()-renderer.replyHeight();i.box=screenBox(D2D1::RectF(CHAT_LEFT+38,y,WIDTH-38,y+renderer.replyHeight()-8));items.push_back(i);}
         if(!renderer.popover.empty()&&!renderer.menuSummary.empty()){AccessibleItem i;i.key="menu-task-summary";i.name=wide(renderer.menuSummary);i.role=ROLE_SYSTEM_STATICTEXT;i.state=STATE_SYSTEM_READONLY;i.box=screenBox(renderer.menuSummaryBox);items.push_back(i);}
         return items;
     }
