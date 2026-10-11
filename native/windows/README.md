@@ -39,6 +39,8 @@ Model tests cover state/motion/detours in isolation. GUI checks use simulated in
 
 The visual baseline is inspected Apple Messages, adapted with Segoe UI, opaque Windows surfaces and Hyphen task/device/status controls. This is not UIKit or a pixel-identical hardware capture. Traces stay bounded and local. Measure all backend/helpers before claiming resource savings.
 
+The native window uses dark surfaces for the chat, sidebar, menus, search and composer. Outgoing bubbles retain white text on blue; actions use a brighter blue for dark backgrounds. Windows high-contrast system colors take priority, including native text fields and placeholders. Appearance survives restart without changing Windows theme settings.
+
 [Third-party notices](THIRD_PARTY_NOTICES.txt). [Pinned official compiler release](https://github.com/mstorsjo/llvm-mingw/releases/tag/20260922).
 
 Accessibility identity retention is limited to 2,048 entries across all indexes.

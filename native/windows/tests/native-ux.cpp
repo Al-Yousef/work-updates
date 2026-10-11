@@ -56,6 +56,15 @@ try {
     auto initial=state();check(initial.value("dpi",0)==dpi,"Renderer uses the requested isolated scale");check(initial.value("reducedMotion",false),"Reduced-motion policy is exercised without changing Windows settings");
     check(initial.value("textScaleApiRead",false)&&initial.value("textScaleWatching",false),"Actual native child reads UISettings and subscribes to TextScaleFactorChanged");
     if(highContrast){check(initial.value("highContrast",false),"Actual native child uses the isolated high-contrast palette");check(initial.value("editorForeground",0UL)==RGB(255,255,255)&&initial.value("editorBackground",0UL)==RGB(0,0,0),"Real EDIT foreground and background use the matched contrast pair");}
+    else if(!initial.value("highContrast",false)){
+        check(initial.value("appearance","")=="dark","The actual native child starts in dark mode");
+        const auto luminance=[](COLORREF c){const auto linear=[](unsigned char channel){const auto value=channel/255.0;return value<=.04045?value/12.92:std::pow((value+.055)/1.055,2.4);};return .2126*linear(GetRValue(c))+.7152*linear(GetGValue(c))+.0722*linear(GetBValue(c));};
+        const auto ratio=[&](COLORREF a,COLORREF b){const auto x=luminance(a),y=luminance(b);return (std::max(x,y)+.05)/(std::min(x,y)+.05);};
+        const auto background=initial.at("editorBackground").get<COLORREF>();
+        check(luminance(background)<.05&&background==initial.at("searchBackground").get<COLORREF>(),"Composer and search use matching dark native surfaces");
+        check(ratio(initial.at("editorForeground").get<COLORREF>(),background)>=4.5&&ratio(initial.at("placeholderForeground").get<COLORREF>(),background)>=4.5,"Native input and placeholder text remain readable on dark fields");
+        check(ratio(initial.at("actionForeground").get<COLORREF>(),background)>=4.5&&ratio(initial.at("outgoingForeground").get<COLORREF>(),initial.at("outgoingBackground").get<COLORREF>())>=4.5,"Small actions and outgoing message text have readable contrast");
+    }
     RECT client{};GetClientRect(panel,&client);check(client.right==dpi*880/96&&client.bottom==dpi*660/96,"Native window uses both scaled dimensions");
     check(SUCCEEDED(AccessibleObjectFromWindow(panel,OBJID_CLIENT,IID_IAccessible,reinterpret_cast<void**>(&accessible))),"Windows exposes the custom native controls through MSAA");
     long accessibleCount=0;check(accessible->get_accChildCount(&accessibleCount)==S_OK&&accessibleCount>0,"Current native controls remain accessible through the bounded registry");
