@@ -32,7 +32,7 @@ const continuingInstructions=instructions.replace(/The app can deliver one[\s\S]
 class AssistantProvider {
   constructor(options={}) {this.options=options;this.client=null;this.model=null;this.persistent=options.persistent!==false;this.busy=false;
     if(this.persistent)try{this.session=new AssistantSession(options.directory);}catch(error){this.sessionError=error;}}
-  newClient(){return this.options.clientFactory?.()||new Codex({binary:this.options.binary,requestTimeoutMs:15000});}
+  newClient(){return this.options.clientFactory?.()||new Codex({binary:this.options.binary,requestTimeoutMs:60000});}
   async forget(){
     if(!this.persistent)return;if(this.busy)throw new Error('Wait for Hyphen’s answer before removing Codex history.');
     if(this.sessionError)throw this.sessionError;this.session??=new AssistantSession(this.options.directory);const client=this.client||this.newClient();
