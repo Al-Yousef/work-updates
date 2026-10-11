@@ -24,6 +24,20 @@ class AssistantSession {
   async prepare(client,params){
     if(this.state.deleting){await client.call('thread/delete',{threadId:this.state.threadId});this.save(s=>{s.threadId=null;s.pending=null;delete s.deleting;});}
     let result;
+    const resumeSaved=async()=>{
+      const {dynamicTools,...resume}=params;
+      try{return await client.call('thread/resume',{...resume,threadId:this.state.threadId});}
+      catch(error){
+        // A new human question may reopen this exact owned chat. Missing or
+        // deleted history still fails closed; never create a replacement.
+        if(error.delivery==='not-sent'&&error.message.startsWith('session '+this.state.threadId+' is archived.')){
+          await client.call('thread/unarchive',{threadId:this.state.threadId});
+          return client.call('thread/resume',{...resume,threadId:this.state.threadId});
+        }
+        if(/already has an active writer/.test(error.message))throw new Error('Hyphen’s Codex chat is open in another writer. Close that chat in Codex, then try again. Your message was not sent.');
+        throw error;
+      }
+    };
     if(this.state.threadId){
       let read=await client.call('thread/read',{threadId:this.state.threadId,includeTurns:!!this.state.pending}),resumed=false;
       if(read.thread?.id!==this.state.threadId||read.thread.ephemeral!==false)throw held();
@@ -35,7 +49,7 @@ class AssistantSession {
         // Loading an unloaded chat reconciles an interrupted persisted pass;
         // it does not start inference or repeat its message.
         if(turn?.status==='inProgress'&&read.thread.status?.type==='notLoaded'){
-          const {dynamicTools,...resume}=params;result=await client.call('thread/resume',{...resume,threadId:this.state.threadId});resumed=true;
+          result=await resumeSaved();resumed=true;
           if(result.thread?.id!==this.state.threadId||result.thread.ephemeral!==false||result.thread.status?.type==='active')throw held();
           read=await client.call('thread/read',{threadId:this.state.threadId,includeTurns:true});
           if(read.thread?.id!==this.state.threadId||read.thread.ephemeral!==false||read.thread.status?.type==='active')throw held();turn=match(read.thread);
@@ -43,7 +57,7 @@ class AssistantSession {
         if(!turn||!['completed','failed','interrupted'].includes(turn.status))throw held();
         this.save(s=>s.pending=null);
       }
-      if(!resumed){const {dynamicTools,...resume}=params;result=await client.call('thread/resume',{...resume,threadId:this.state.threadId});}
+      if(!resumed)result=await resumeSaved();
       if(result.thread?.id!==this.state.threadId)throw held();
     }else{
       result=await client.call('thread/start',{...params,ephemeral:false});

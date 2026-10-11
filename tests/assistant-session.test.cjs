@@ -34,12 +34,35 @@ test('one named thread survives provider replacement; user input stays readable 
   const directory=fixture(t),state={turns:[],starts:0},clients=[];
   const create=()=>{const c=new Client(state);clients.push(c);return c;};
   const first=new AssistantProvider({directory,clientFactory:create});await first.answer({messageId:crypto.randomUUID(),question:'First question',savedNotes:['Synthetic note']});
+  first.close();
   const second=new AssistantProvider({directory,clientFactory:create});await second.answer({messageId:crypto.randomUUID(),question:'Follow up'});
   assert.equal(state.starts,1);assert.equal(second.session.state.threadId,first.session.state.threadId);assert.equal(second.session.state.pending,null);
   const turn=clients[0].calls.find(c=>c.method==='turn/start').params;assert.equal(turn.input[0].text,'First question');assert.equal(turn.outputSchema,undefined);
   assert.equal(JSON.parse(turn.additionalContext.hyphen_state.value).savedNotes[0],'Synthetic note');
   assert.ok(clients[0].calls.some(c=>c.method==='thread/name/set'&&c.params.name==='Hyphen'));
-  assert.ok(clients[1].calls.some(c=>c.method==='thread/resume'));assert.ok(clients.every(c=>c.closed));
+  assert.ok(clients[1].calls.some(c=>c.method==='thread/resume'));assert.equal(clients[1].closed,undefined);second.close();assert.ok(clients.every(c=>c.closed));
+});
+test('successful follow-ups retain the writer; forgetting and closing release it',async t=>{
+  const directory=fixture(t),state={turns:[],starts:0},clients=[];
+  const provider=new AssistantProvider({directory,clientFactory:()=>{const c=new Client(state);clients.push(c);return c;}});t.after(()=>provider.close());
+  await provider.answer({question:'First'});assert.equal(clients[0].closed,undefined);
+  await provider.answer({question:'Follow up'});assert.equal(clients.length,1);assert.equal(state.starts,1);assert.equal(state.turns.length,2);
+  await provider.forget();assert.equal(clients[0].closed,true);assert.equal(provider.client,null);assert.equal(provider.session.state.threadId,null);
+  assert.ok(clients[0].calls.some(c=>c.method==='thread/delete'&&c.params.threadId==='hyphen-thread'));
+});
+test('a new question restores only its exact archived owned chat without replacing it',async t=>{
+  const session=new AssistantSession(fixture(t));session.save(s=>s.threadId='hyphen-thread');let archived=true;const calls=[];
+  const client={async call(method,params){calls.push({method,params});if(method==='thread/resume'&&archived)throw Object.assign(new Error('session hyphen-thread is archived. Run codex unarchive.'),{delivery:'not-sent'});
+    if(method==='thread/unarchive')archived=false;return {thread:{id:'hyphen-thread',ephemeral:false,status:{type:'idle'}}};}};
+  await session.prepare(client,{});assert.equal(session.state.threadId,'hyphen-thread');assert.equal(session.state.pending,null);
+  assert.deepEqual(calls.map(c=>c.method),['thread/read','thread/resume','thread/unarchive','thread/resume']);assert.ok(calls.every(c=>c.params.threadId==='hyphen-thread'));
+});
+test('foreign writer, unrelated archive error and uncertain resume never reopen or replace history',async t=>{
+  for(const error of [Object.assign(new Error('thread hyphen-thread already has an active writer'),{delivery:'not-sent'}),Object.assign(new Error('session other-thread is archived.'),{delivery:'not-sent'}),Object.assign(new Error('session hyphen-thread is archived.'),{delivery:'uncertain'})]){
+    const session=new AssistantSession(fixture(t));session.save(s=>s.threadId='hyphen-thread');const calls=[];
+    const client={async call(method,params){calls.push({method,params});if(method==='thread/resume')throw error;return {thread:{id:'hyphen-thread',ephemeral:false,status:{type:'idle'}}};}};
+    await assert.rejects(session.prepare(client,{}),/not sent|archived/);assert.deepEqual(calls.map(c=>c.method),['thread/read','thread/resume']);assert.equal(session.state.threadId,'hyphen-thread');
+  }
 });
 test('duplicate dynamic RPC calls share one tool execution and separate matching replies',async t=>{
   const client=new Client(undefined,true),provider=new AssistantProvider({directory:fixture(t),clientFactory:()=>client});let calls=0;
