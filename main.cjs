@@ -37,6 +37,7 @@ const { exportDiagnosticReport:saveDiagnosticReport }=require('./src/diagnostic-
 const { Devices } = require('./src/devices.cjs');
 const { Summaries } = require('./src/summaries.cjs');
 const { NativeControl } = require('./src/native-control.cjs');
+const {LegacyWeatherRecovery,installedDirectory}=require('./src/legacy-weather-recovery.cjs');
 const { CodexDesktop } = require('./src/codex-desktop.cjs');
 const { Messages } = require('./src/messages.cjs');
 const { Assistant } = require('./src/assistant.cjs');
@@ -58,7 +59,7 @@ let assistantProfile;
 const {VoiceSession}=require('./src/voice-session.cjs');
 const {VoiceProvider}=require('./src/voice-provider.cjs');
 const {VoiceWindow}=require('./src/voice-window.cjs');
-let nativeControl,delegations,workControls;
+let nativeControl,delegations,workControls,weatherRecovery;
 let privacy;
 const args = process.argv;
 function argument(name) {
@@ -771,6 +772,7 @@ app.whenReady().then(async () => {
       log:diagnostics,
       changed: claimed => {
         diagnostics.write('native.corner.owner', {owner:claimed?'native':'none'});
+        weatherRecovery?.refresh();
         publish();
       },
       state: () => nativeView(snapshot()),
@@ -784,6 +786,8 @@ app.whenReady().then(async () => {
       quit: () => {quitting=true; app.quit();},
     });
     await nativeControl.start();
+    const weatherDirectory=installedDirectory({packaged:app.isPackaged,platform:process.platform,demo,executable:process.execPath,dataDirectory:dataDir});
+    if(weatherDirectory){weatherRecovery=new LegacyWeatherRecovery({directory:weatherDirectory,claimed:()=>nativeControl.claimed&&!quitting,log:diagnostics});weatherRecovery.start();}
     restoreDevices();
     const runtime = () => {
       if (quitting) return;
@@ -798,6 +802,7 @@ app.whenReady().then(async () => {
       messages:{queued:messages.state.entries.filter(e=>e.status==='queued').length,uncertain:messages.state.entries.filter(e=>e.status==='uncertain').length,active:messages.active.size},
       assistant:{active:assistant.active,model:assistant.provider.model,messages:assistant.state.messages.length,memoryCount:assistant.state.notes.length,error:assistant.error},
       cornerOwner:nativeControl.claimed?'native':'none',
+      weatherRecovery:weatherRecovery?.status()||null,
       updatedAt:now(), diagnostics:{file:diagnostics.file, error:diagnostics.error},
       });
     };
@@ -1059,7 +1064,14 @@ app.on('activate', () => window && show());
 app.on('window-all-closed', () => {});
 let voiceShutdownCompleted=false,voiceShutdownStarted=false;
 let observerShutdownCompleted=false,observerShutdownStarted=false;
+let weatherShutdownCompleted=false,weatherShutdownStarted=false;
 app.on('before-quit', (event) => {
+  if(weatherRecovery&&!weatherShutdownCompleted){
+    event.preventDefault();quitting=true;if(weatherShutdownStarted)return;weatherShutdownStarted=true;
+    weatherRecovery.closeAndWait().then(()=>{weatherShutdownCompleted=true;app.quit();}).catch(error=>{
+      diagnostics.write('native.weather.recovery.shutdown-failed',{message:error.message});weatherShutdownStarted=false;quitting=false;
+    });return;
+  }
   if(!voiceShutdownCompleted&&voice.active){
     event.preventDefault();quitting=true;
     if(voiceShutdownStarted)return;
