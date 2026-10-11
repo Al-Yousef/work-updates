@@ -15,10 +15,12 @@ human controls can configure the global scope or an existing responsibility:
 ```
 
 Choose a future expiry within thirty days. Zero limits stop new admissions.
-Default global admission limits are 256 operations and 300,000 reserved tokens
-per UTC day, four unresolved concurrent operations and 64 local connector reads
-per rolling hour. These are configurable application defaults, not measured
-performance thresholds, provider quotas or subscription entitlements. A finite
+The default global policy has no daily operation, token or cost cap. Background
+summaries therefore cannot exhaust an application allowance and block ordinary
+chat. Explicit human-configured cumulative caps remain enforced; use `null` for
+an unset run, token or cost cap. Four unresolved concurrent operations and 64
+local connector reads per rolling hour still bound parallel work and polling.
+These application controls are separate from provider quotas and subscription entitlements. A finite
 cost limit refuses unpriced inference. No credits or infrastructure are bought.
 Budget configuration never grants source access or dispatch authorization.
 
