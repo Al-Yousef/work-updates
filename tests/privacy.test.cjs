@@ -132,6 +132,7 @@ test('literal assistant controls preview and confirm notes without inference or 
 });
 test('conversation removal keeps notes and replay guards and removes prior memory inspections', async (t) => {
   const f = fixture(t);
+  let forgotten=0;f.assistant.provider.persistent=true;f.assistant.provider.forget=async()=>{assert.ok(f.assistant.state.messages.some(m=>m.id==='retained-message'));forgotten++;};
   f.assistant.state.notes = ['Keep pinned'];
   f.assistant.state.messages.push(
     {
@@ -155,7 +156,9 @@ test('conversation removal keeps notes and replay guards and removes prior memor
   f.assistant.state.receipts['retained-message'] = 'durable-replay-guard';
   f.assistant.save();
   const preview = JSON.parse((await f.ask('/privacy preview conversation')).answer);
+  assert.match(preview.affected.codexHistory,/entire owned Hyphen Codex chat/);
   const response = await f.ask('/privacy delete ' + preview.previewId);
+  assert.equal(forgotten,1);
   assert.equal(response.status, 'completed');
   assert.ok(
     !f.assistant.state.messages.some((m) => ['retained-message', 'inspection'].includes(m.id)),
@@ -163,6 +166,14 @@ test('conversation removal keeps notes and replay guards and removes prior memor
   assert.equal(f.assistant.state.receipts['retained-message'], 'durable-replay-guard');
   assert.deepEqual(f.assistant.state.notes, ['Keep pinned']);
   assert.equal(f.calls, 0);
+});
+
+test('unconfirmed Codex-history removal preserves selected local conversation',async t=>{
+  const f=fixture(t);f.assistant.provider.persistent=true;f.assistant.provider.forget=async()=>{throw new Error('Synthetic lost deletion acknowledgement');};
+  f.assistant.state.messages.push({id:'keep-message',text:'Retained local statement',answer:'Retained answer',status:'completed',at:1,links:[]});f.assistant.save();
+  const preview=JSON.parse((await f.ask('/privacy preview conversation')).answer),response=await f.ask('/privacy delete '+preview.previewId);
+  assert.equal(response.status,'failed');assert.match(response.error,/unconfirmed/);assert.ok(f.assistant.state.messages.some(m=>m.id==='keep-message'));
+  assert.equal(f.calls,0);
 });
 test('disconnect persists denial while keeping cached text and other owners separate', async (t) => {
   const f = fixture(t);

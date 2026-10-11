@@ -72,6 +72,8 @@ function adapters({
       removed: (value) => Array.isArray(value) && value.length === 0,
     },
     conversation: {
+      summary: value => ({localExchanges:value.length,codexHistory:assistant().provider.persistent?'Deletes the entire owned Hyphen Codex chat first; the next question starts a fresh chat.':'This client has no continuing Codex chat.'}),
+      kept: 'Pinned notes, original source chats, attachments and action/replay receipts remain. The owned Hyphen Codex chat is removed when this desktop client has one; other provider data remains separate.',
       read: () =>
         structuredClone(assistant().state.messages.filter((m) => conversation(m) && !isControl(m))),
       dependencies: otherAnswer,
