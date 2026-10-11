@@ -194,11 +194,16 @@ try {
     VARIANT focused{};accessible->get_accFocus(&focused);check(focused.vt==VT_I4&&focused.lVal==cardId,"Keyboard focus follows the same card across repaint");
     auto reduced=reordered;reduced.erase(std::remove_if(reduced.begin(),reduced.end(),[&](const Json& c){return c.value("chatName","")==firstName;}),reduced.end());fault("patch",{{"cards",reduced}});
     wait([]{return state().value("focused",-1)==-1;},"Removing the focused card clears focus instead of retargeting it");SendMessageW(panel,WM_KEYDOWN,VK_RETURN,0);check(draft()==L"Keep this unsent draft","Removed-card Enter preserves the displayed draft");fault("reset");
-    // No text was supplied by the user for an automatic update.
-    fault("patch",{{"assistant",{{"messages",Json::array({{{"id","automatic-update"},{"kind","update"},{"text",""},{"answer","**Ready for your review**\n\n- Check the launch notes\n- Run `npm test`\n\nYour draft stays saved while you review."},{"status","completed"}}})},{"responding",false},{"error",""}}}});
+    // Completed conversational replies keep their actions closely grouped.
+    fault("patch",{{"assistant",{{"messages",Json::array({{{"id","formatted-reply"},{"text",""},{"answer","**Ready for your review**\n\n- Check the launch notes\n- Run `npm test`\n\nYour draft stays saved while you review."},{"status","completed"}}})},{"responding",false},{"error",""}}}});
     wait([]{return LOWORD(SendMessageW(panel,WM_APP+214,0,0))==1;},"Automatic update paints one meaningful balloon");
     check(name(named(L"Ready for your review")).find(L"**")==std::wstring::npos,"Accessible answer contains readable formatted text");
     select(named(L"Copy assistant reply"));check(name(named(L"Quote assistant reply")).size()>0,"Both visible message actions are accessible");
+    Json copyBox,quoteBox;const auto actionState=state();for(const auto& hit:actionState.at("hits")){
+        if(hit.value("action","")=="copyAssistant")copyBox=hit.at("box");
+        if(hit.value("action","")=="quoteAssistant")quoteBox=hit.at("box");
+    }
+    check(!copyBox.is_null()&&!quoteBox.is_null()&&quoteBox[0].get<float>()-copyBox[2].get<float>()<=4.1f,"Copy and Quote form one compact action group");
     saveCapture((L"ux-update-"+std::to_wstring(dpi)+L".png").c_str());
     const auto keptDraft=draft();const auto quoteReplies=state().value("commandReplies",0U);
     accessible->accDoDefaultAction(child(named(L"Quote assistant reply")));
@@ -206,6 +211,17 @@ try {
     check(draft().find(keptDraft)==0&&draft().find(L"> Ready for your review")!=std::wstring::npos,"Quote appends the selected readable answer to the existing draft");
     check(state().value("commandReplies",0U)==quoteReplies&&!state().value("pending",true),"Quote does not submit a command or send a message");
     check(focus()==editor,"Quote focuses the native composer for a follow-up question");setDraft(keptDraft.c_str());
+    // Source updates expose Open chat and preserve the draft rather than
+    // replaying the source prompt as a conversational reply from Hyphen.
+    fault("patch",{{"assistant",{{"messages",Json::array({{{"id","automatic-update"},{"kind","update"},{"text",""},{"answer","Launch planning\nPlease fix the launch\nThe launch notes are ready for your review.\nReady to review"},{"update",{{"title","Launch planning"},{"summary","The launch notes are ready for **your review**.\n\n- Check the launch notes\n- Run `npm test`"},{"label","Ready to review"}}},{"links",Json::array({{{"index",0},{"chatName","Launch planning"},{"draft",""}}})},{"status","completed"}}})},{"responding",false},{"error",""}}}});
+    wait([]{return LOWORD(SendMessageW(panel,WM_APP+214,0,0))==1;},"Automatic source update paints one compact preview");
+    bool updateAction=false;const auto updateState=state();for(const auto& hit:updateState.at("hits")){
+        check(hit.value("action","")!="copyAssistant"&&hit.value("action","")!="quoteAssistant","Source previews do not expose conversational reply actions");
+        if(hit.value("action","")=="assistantUse")updateAction=true;
+    }
+    check(updateAction,"Automatic source preview retains its destination action");
+    check(name(named(L"The launch notes are ready for your review")).find(L"Please fix the launch")==std::wstring::npos,"Automatic preview does not repeat the source user request");
+    saveCapture((L"ux-source-update-"+std::to_wstring(dpi)+L".png").c_str());
     // Long failure feedback occupies its own measured space above the transcript.
     const std::string failure="Conversation history is unavailable. Your saved message has been preserved. Reconnect before sending again. This intentionally long error verifies that the complete explanation wraps across several lines, reserves space above the composer, and remains available to Windows accessibility tools without overlapping the message bubbles or image previews.";
     fault("patch",{{"assistant",{{"messages",Json::array()},{"responding",false},{"error",failure}}}});

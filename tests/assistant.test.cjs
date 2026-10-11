@@ -85,6 +85,9 @@ test('new actionable updates arrive as messages with no inference, while startup
   const {app,state,fake}=fixture(t);app.observe(state);assert.equal(app.state.messages.length,0);
   state.cards[0].summary='A new draft is ready.';state.cards[0].fingerprint='new-pass';app.observe(state);
   assert.equal(app.state.messages.length,1);assert.equal(app.state.messages[0].kind,'update');assert.match(app.state.messages[0].answer,/new draft/);
+  assert.deepEqual(app.state.messages[0].update,{title:'Delivery chat',summary:'A new draft is ready.',label:''});
+  const projected=nativeView({cards:state.cards,assistant:app.snapshot()}).assistant.messages[0];
+  assert.equal(projected.kind,'update');assert.doesNotMatch(projected.answer,/Check delivery/);
   assert.equal(app.use({messageId:app.state.messages[0].id,index:0}).sourceId,'source-a');app.observe(state);assert.equal(app.state.messages.length,1);
   assert.equal(fake.calls.length,0);
 });
