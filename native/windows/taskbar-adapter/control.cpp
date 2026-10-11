@@ -12,6 +12,7 @@
 #include <string>
 #include <stdexcept>
 #include "profile.h"
+#include "protocol.h"
 
 namespace {
 struct Handle {
@@ -57,6 +58,27 @@ std::uintptr_t exportAddress(const Module& remote,const char* name) {
     return remote.base+rva;
 }
 DWORD status(HANDLE process,const Module& adapter) {return call(process,exportAddress(adapter,"AdapterStatus"));}
+void disablePanel(const std::filesystem::path& dll) {
+    taskbar::Endpoint endpoint;
+    if(!taskbar::readEndpoint(taskbar::endpointPath(dll),endpoint))return;
+    Handle panel(OpenProcess(SYNCHRONIZE|PROCESS_QUERY_LIMITED_INFORMATION,FALSE,endpoint.pid));
+    if(!panel.value) {
+        if(GetLastError()==ERROR_INVALID_PARAMETER)return;
+        throw std::runtime_error("Cannot verify panel liveness before detaching");
+    }
+    const auto liveness=WaitForSingleObject(panel.value,0);
+    if(liveness==WAIT_OBJECT_0)return;
+    if(liveness!=WAIT_TIMEOUT)throw std::runtime_error("Cannot verify panel liveness before detaching");
+    wchar_t path[32768]{};DWORD size=32768;
+    const auto expected=dll.parent_path()/L"Native Hover.exe";std::error_code error;
+    const auto window=reinterpret_cast<HWND>(static_cast<std::uintptr_t>(endpoint.window));DWORD pid=0;GetWindowThreadProcessId(window,&pid);
+    if(pid!=endpoint.pid||!QueryFullProcessImageNameW(panel.value,0,path,&size)||
+        !std::filesystem::equivalent(path,expected,error)||error)throw std::runtime_error("Cannot verify the panel before detaching");
+    DWORD_PTR acknowledgement=0;
+    if(!SendMessageTimeoutW(window,taskbar::message,endpoint.cookie,static_cast<LPARAM>(taskbar::Command::Disable),
+        SMTO_ABORTIFHUNG|SMTO_BLOCK,1000,&acknowledgement)||acknowledgement!=1)
+        throw std::runtime_error("Cannot disable panel recovery before detaching");
+}
 }
 int wmain(int argc,wchar_t** argv) {
     try {
@@ -98,6 +120,7 @@ int wmain(int argc,wchar_t** argv) {
                 <<",\"redirectedClicks\":"<<((counters>>8)&255)<<",\"leaveCalls\":"<<(counters&255)<<"}\n"; return 0;
         }
         if(action==L"--detach") {
+            disablePanel(ownDll);
             if(adapter.base) {
                 call(process.value,exportAddress(adapter,"AdapterStop"));
                 for(int i=0;i<60 && status(process.value,adapter)!=0;++i)Sleep(50);

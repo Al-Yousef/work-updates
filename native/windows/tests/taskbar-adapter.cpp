@@ -4,6 +4,7 @@
 #include <thread>
 #include "../taskbar-adapter/adapter.cpp"
 #include "../src/text-scale.h"
+#include "../src/adapter-recovery.h"
 
 namespace test {
 unsigned hoverCalls=0,taskbarClicks=0,launchClicks=0,leaveCalls=0,checks=0;
@@ -51,6 +52,22 @@ DWORD WINAPI healthThread(void*) {
 int main() {
     using namespace test;
     try {
+        taskbar::Recovery recovery;
+        check(recovery.schedule(false,false,false)==0,"Isolated and disabled attachment never schedules recovery");
+        check(recovery.schedule(true,true,false)==0,"A ready adapter does not schedule another controller");
+        check(recovery.schedule(true,false,true)==0,"An in-flight controller prevents overlapping recovery");
+        for(const auto delay:taskbar::Recovery::delays) {
+            check(recovery.schedule(true,false,false)==delay,"Repeated attach failures back off");
+            check(recovery.schedule(true,false,false)==0,"Duplicate failure notifications retain one pending retry");
+            recovery.started();recovery.ready();
+        }
+        check(recovery.schedule(true,false,false)==0,"Brief readiness followed by failure cannot create an endless retry loop");
+        recovery.stable();
+        check(recovery.schedule(true,false,false)==1000,"A stable recovered adapter receives a fresh future failure budget");
+        recovery.ready();
+        check(!recovery.pending,"Readiness cancels a pending recovery");
+        recovery.restarted();
+        check(recovery.schedule(true,false,false)==1000,"Explorer restart renews the finite retry budget");
         Sender weather(L"Taskbar.AugmentedEntryPointButton"),start(L"Taskbar.ExperienceToggleButton"),search(L"Taskbar.SearchBoxButton"),failure(L"Taskbar.AugmentedEntryPointButton");
         failure.fail=true;
         check(taskbar::weatherSender(&weather),"Weather class must route");

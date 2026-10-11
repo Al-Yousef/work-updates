@@ -47,6 +47,7 @@
 #include "accessibility.h"
 #include "../taskbar-adapter/protocol.h"
 #include "deployment-paths.h"
+#include "adapter-recovery.h"
 
 template<class T> struct Com {
     T* value = nullptr;
@@ -74,7 +75,7 @@ double clockSeconds() {
 }
 
 constexpr UINT WM_TRAY = WM_APP + 1;
-constexpr UINT TIMER_LEAVE = 1, TIMER_FINISH = 2, TIMER_AUDIT_EXIT = 3, TIMER_HOVER = 4, TIMER_CLOCK = 5, TIMER_DRAFT=6,TIMER_DETAILS=7;
+constexpr UINT TIMER_LEAVE = 1, TIMER_FINISH = 2, TIMER_AUDIT_EXIT = 3, TIMER_HOVER = 4, TIMER_CLOCK = 5, TIMER_DRAFT=6,TIMER_DETAILS=7,TIMER_ADAPTER_RETRY=8,TIMER_ADAPTER_STABLE=9;
 constexpr UINT MENU_OPEN = 101, MENU_HIDE = 102, MENU_EXIT = 103, MENU_TARGET = 104, MENU_LOGS=105;
 constexpr UINT REPLY_EDIT = 201;
 constexpr UINT SEARCH_EDIT = 202;
@@ -797,6 +798,8 @@ struct App {
     bool weatherAvailable=false, weatherInside=false, hoverTimer=false;
     bool taskbarAdapter=true, adapterReady=false,allowAdapterAttach=true;
     HANDLE adapterControl=nullptr;
+    DWORD adapterShellPid=0;
+    taskbar::Recovery adapterRecovery;
     taskbar::Endpoint adapterEndpoint{};
     HWINEVENTHOOK foregroundHook=nullptr, reorderHook=nullptr;
     UINT taskbarCreated=0;
@@ -859,6 +862,8 @@ struct App {
             << ",\"cornerCoordinated\":" << (bridge.connected?"true":"false")
             << ",\"weatherGuard\":" << (input.hook?"true":"false") << ",\"weatherCommands\":" << weatherCommands
             << ",\"taskbarAdapter\":" << (taskbarAdapter?"true":"false") << ",\"adapterReady\":" << (adapterReady?"true":"false")
+            << ",\"adapterRetryAttempts\":" << adapterRecovery.attempts << ",\"adapterRetryPending\":" << (adapterRecovery.pending?"true":"false")
+            << ",\"adapterShellPid\":" << adapterShellPid
             << ",\"weatherAvailable\":" << (weatherAvailable?"true":"false")
             << ",\"adapterAutoAttach\":" << (allowAdapterAttach?"true":"false")
             << ",\"panelVisible\":" << (IsWindowVisible(panel)?"true":"false")
@@ -874,6 +879,16 @@ struct App {
         std::ofstream out(tracePath,std::ios::app);
         out<<"{\"event\":\"exception\",\"detail\":"<<std::quoted(error.what())<<"}\n";
     }
+    void retryAdapter() {
+        if(closing)return;
+        const auto delay=adapterRecovery.schedule(taskbarAdapter&&allowAdapterAttach,adapterReady,adapterControl!=nullptr);
+        if(!delay)return;
+        KillTimer(trigger,TIMER_ADAPTER_STABLE);
+        if(!SetTimer(trigger,TIMER_ADAPTER_RETRY,delay,nullptr)) {
+            adapterRecovery.started();log("adapter-retry-timer-failed");return;
+        }
+        log("adapter-retry-scheduled");
+    }
     void attachAdapter() {
         if(!taskbarAdapter || !allowAdapterAttach || adapterControl)return;
         wchar_t own[32768]{}; GetModuleFileNameW(nullptr,own,32768);
@@ -881,8 +896,9 @@ struct App {
         std::wstring command=L"\""+control+L"\" --attach";
         STARTUPINFOW startup{}; startup.cb=sizeof(startup); startup.dwFlags=STARTF_USESHOWWINDOW; startup.wShowWindow=SW_HIDE;
         PROCESS_INFORMATION process{};
-        if(!CreateProcessW(control.c_str(),command.data(),nullptr,nullptr,FALSE,CREATE_NO_WINDOW,nullptr,nullptr,&startup,&process))
-            throw std::runtime_error("Could not start the taskbar adapter controller");
+        if(!CreateProcessW(control.c_str(),command.data(),nullptr,nullptr,FALSE,CREATE_NO_WINDOW,nullptr,nullptr,&startup,&process)) {
+            log("adapter-controller-start-failed");retryAdapter();return;
+        }
         CloseHandle(process.hThread); adapterControl=process.hProcess;
     }
     void initComposer() {
@@ -1689,7 +1705,19 @@ LRESULT CALLBACK triggerProc(HWND window, UINT message, WPARAM wp, LPARAM lp) {
             if(!app.taskbarAdapter || !taskbar::accepted(app.adapterEndpoint,wp))return 0;
             switch(static_cast<taskbar::Command>(lp)) {
             case taskbar::Command::Hello: return 1;
-            case taskbar::Command::Ready: app.adapterReady=true; app.log("adapter-ready"); return 1;
+            case taskbar::Command::Disable:
+                app.allowAdapterAttach=false;app.adapterReady=false;app.adapterRecovery.ready();
+                KillTimer(window,TIMER_ADAPTER_RETRY);KillTimer(window,TIMER_ADAPTER_STABLE);
+                app.log("adapter-disabled");return 1;
+            case taskbar::Command::Ready:
+                app.adapterReady=true;app.adapterRecovery.ready();KillTimer(window,TIMER_ADAPTER_RETRY);
+                GetWindowThreadProcessId(GetShellWindow(),&app.adapterShellPid);
+                if(app.allowAdapterAttach)SetTimer(window,TIMER_ADAPTER_STABLE,taskbar::Recovery::stableMs,nullptr);
+                if(app.renderer.model.message=="Weather shortcut unavailable. Use the tray icon."||
+                    app.renderer.model.message=="Weather shortcut unavailable. Open the queue from its tray icon.") {
+                    app.renderer.model.message.clear();if(app.mode!=Mode::Hidden)app.renderer.paint();
+                }
+                app.log("adapter-ready"); return 1;
             case taskbar::Command::Hover:
                 app.weatherInside=true; app.stopLeave();
                 if(!app.suppressed && app.mode==Mode::Hidden)app.transition(Mode::Peek);
@@ -1699,6 +1727,7 @@ LRESULT CALLBACK triggerProc(HWND window, UINT message, WPARAM wp, LPARAM lp) {
             case taskbar::Command::Click: app.weatherInside=true; app.weatherClick(); return 1;
             case taskbar::Command::Stopped: case taskbar::Command::Failed:
                 app.adapterReady=false; app.log(lp==static_cast<LPARAM>(taskbar::Command::Failed)?"adapter-failed":"adapter-stopped");
+                KillTimer(window,TIMER_ADAPTER_STABLE);app.retryAdapter();
                 app.renderer.model.message="Weather shortcut unavailable. Open the queue from its tray icon.";
                 if(app.mode!=Mode::Hidden)app.renderer.paint();
                 return 1;
@@ -1707,7 +1736,14 @@ LRESULT CALLBACK triggerProc(HWND window, UINT message, WPARAM wp, LPARAM lp) {
         }
         if(message==app.taskbarCreated && app.taskbarCreated) {
             app.addTray(); app.moveHome();
-            if(app.taskbarAdapter&&app.allowAdapterAttach) {app.adapterReady=false; app.attachAdapter(); app.log("explorer-restarted");}
+            if(app.taskbarAdapter&&app.allowAdapterAttach) {
+                DWORD shellPid=0;GetWindowThreadProcessId(GetShellWindow(),&shellPid);
+                // Explorer can broadcast again without replacing its process.
+                // An already active adapter will not send a second Ready.
+                if(app.adapterReady&&shellPid&&shellPid==app.adapterShellPid)return 0;
+                app.adapterReady=false;KillTimer(window,TIMER_ADAPTER_STABLE);KillTimer(window,TIMER_ADAPTER_RETRY);
+                app.adapterRecovery.restarted();app.retryAdapter();app.log("explorer-restarted");
+            }
             return 0;
         }
         switch(message) {
@@ -1732,6 +1768,14 @@ LRESULT CALLBACK triggerProc(HWND window, UINT message, WPARAM wp, LPARAM lp) {
         case WM_WEATHER_MENU: app.menu(); return 0;
         case WM_LBUTTONDOWN: case WM_LBUTTONUP: case WM_RBUTTONDOWN: case WM_RBUTTONUP: return 0;
         case WM_TIMER:
+            if(wp==TIMER_ADAPTER_RETRY) {
+                KillTimer(window,TIMER_ADAPTER_RETRY);app.adapterRecovery.started();
+                if(!app.adapterReady)app.attachAdapter();return 0;
+            }
+            if(wp==TIMER_ADAPTER_STABLE) {
+                KillTimer(window,TIMER_ADAPTER_STABLE);
+                if(app.adapterReady)app.adapterRecovery.stable();return 0;
+            }
             if(wp==TIMER_HOVER) {
                 KillTimer(window,TIMER_HOVER); app.hoverTimer=false;
                 if(app.weatherInside && !app.suppressed && app.mode==Mode::Hidden) app.transition(Mode::Peek);
@@ -1869,9 +1913,9 @@ int WINAPI wWinMain(HINSTANCE instance,HINSTANCE,PWSTR,int) {
             if(controlIndex!=MAXDWORD && result==WAIT_OBJECT_0+controlIndex) {
                 DWORD code=1; GetExitCodeProcess(app.adapterControl,&code); CloseHandle(app.adapterControl); app.adapterControl=nullptr;
                 if(code) {app.log("adapter-attach-failed");
-                    if(!app.bridge.connected){exitCode=1;break;}
                     app.renderer.model.message="Weather shortcut unavailable. Use the tray icon.";
                 }
+                if(!app.adapterReady)app.retryAdapter();
                 app.log("adapter-controller-finished");
             }
             if(result==WAIT_FAILED) {app.log("message-wait-failed"); exitCode=1; break;}
