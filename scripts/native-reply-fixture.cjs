@@ -41,10 +41,10 @@ const controller=new Controller(queue,client);let control;
 const messages=new Messages(queue,controller,{auto:false,attachments});
 const assistant=new Assistant({directory,snapshot:()=>queue.snapshot(),attachments,provider:{
   async answer(input){await new Promise(resolve=>setTimeout(resolve,600));const target=input.queue.cards.find(c=>c.chatName==='Launch planning');
-    return {answer:'The launch notes need your review. Here is a draft for that chat.',links:target?[{ref:target.ref,draft:'Please share the remaining launch review steps.'}]:[],model:'fixture'};},close(){}}});
+    return {answer:'The launch notes need **your review**. Here is a draft for that chat.',links:target?[{ref:target.ref,draft:'Please share the remaining launch review steps.'}]:[],model:'fixture'};},close(){}}});
 const state=()=>({...messages.decorate(queue.snapshot()),assistant:assistant.snapshot()});
 let uxWatch,uxOverride={},uxPaused=false,detailFailures=0;
-const fixtureView=()=>({...nativeView(state()),...uxOverride});
+const fixtureView=()=>({...nativeView(state()),...uxOverride,...(uxOverride.assistant?{assistant:nativeView({assistant:uxOverride.assistant}).assistant}:{})});
 function close(){uxWatch?.close();demoObserver.close();assistant.close();messages.close();control?.close();client.close();process.exitCode=0;}
 (async()=>{
   control=await new NativeControl({directory,changed:()=>{},status:()=>({activeWriters:Math.max(client.active.size,queue.busy.size)}),quit:close,

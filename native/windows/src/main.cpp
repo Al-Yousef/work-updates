@@ -357,15 +357,25 @@ struct Renderer {
         brush->SetColor(statusColor(card));canvas->FillEllipse(D2D1::Ellipse(D2D1::Point2F(x+36,y+34),4.3f,4.3f),brush);
     }
     std::string rendererChatTitle() const {return model.chatting()?"Updates":"Chat";}
-    float chatBubble(ID2D1SolidColorBrush* brush,const std::string& content,float y,bool user,bool draw,bool terminal=true) {
+    float chatBubble(ID2D1SolidColorBrush* brush,const std::string& content,float y,bool user,bool draw,bool terminal=true,const Json& spans=Json::array()) {
         if(content.empty())return 0;
         const float left=CHAT_LEFT+8,right=WIDTH-36,maxWidth=(right-left)*.78f;
-        auto value=wide(content);IDWriteTextLayout* layout=nullptr;
-        if(auto found=bubbleLayouts.find(value);found!=bubbleLayouts.end())layout=found->second->get();
+        auto value=wide(content),key=value;key.push_back(L'\0');key+=wide(spans.dump());IDWriteTextLayout* layout=nullptr;
+        if(auto found=bubbleLayouts.find(key);found!=bubbleLayouts.end())layout=found->second->get();
         else {Com<IDWriteTextFormat> format;require(text->CreateTextFormat(chatstyle::font,nullptr,DWRITE_FONT_WEIGHT_NORMAL,
             DWRITE_FONT_STYLE_NORMAL,DWRITE_FONT_STRETCH_NORMAL,chatlayout::messageSize*chatlayout::textScale,L"en-US",format.put()),"Chat format");
         if(bubbleLayouts.size()>=512)bubbleLayouts.clear();auto cached=std::make_unique<Com<IDWriteTextLayout>>();
-        require(text->CreateTextLayout(value.c_str(),static_cast<UINT32>(value.size()),format.get(),maxWidth-24,64000,cached->put()),"Chat layout");layout=cached->get();bubbleLayouts[value]=std::move(cached);}
+        require(text->CreateTextLayout(value.c_str(),static_cast<UINT32>(value.size()),format.get(),maxWidth-24,64000,cached->put()),"Chat layout");layout=cached->get();
+        if(spans.is_array())for(size_t i=0;i<std::min<size_t>(128,spans.size());++i){const auto& span=spans[i];
+            if(!span.is_object()||!span.contains("start")||!span.contains("length")||!span["start"].is_number_integer()||!span["length"].is_number_integer())continue;
+            const auto start=span["start"].get<int64_t>(),length=span["length"].get<int64_t>();
+            if(start<0||length<=0||static_cast<uint64_t>(start)>value.size()||static_cast<uint64_t>(length)>value.size()-start)continue;
+            const DWRITE_TEXT_RANGE range{static_cast<UINT32>(start),static_cast<UINT32>(length)};
+            const auto kind=span.value("kind","");
+            if(kind=="bold")layout->SetFontWeight(DWRITE_FONT_WEIGHT_SEMI_BOLD,range);
+            else if(kind=="code")layout->SetFontFamilyName(L"Consolas",range);
+        }
+        bubbleLayouts[key]=std::move(cached);}
         DWRITE_TEXT_METRICS metrics{};layout->GetMetrics(&metrics);const float height=std::max(34.0f,metrics.height+12);
         const float bubbleWidth=std::clamp(metrics.width+24,42.0f,maxWidth);
         const float bubbleLeft=user?right-bubbleWidth:left;
@@ -381,7 +391,7 @@ struct Renderer {
             sink->EndFigure(D2D1_FIGURE_END_CLOSED);require(sink->Close(),"Close balloon path");canvas->FillGeometry(tail.get(),brush);}
             brush->SetColor(user?chatstyle::inverse():chatstyle::ink());canvas->DrawTextLayout(D2D1::Point2F(bubbleLeft+12,y+6),layout,brush,D2D1_DRAW_TEXT_OPTIONS_ENABLE_COLOR_FONT);
             const auto target=D2D1::RectF(bubbleLeft,std::max(chatlayout::transcriptTop,y),bubbleLeft+bubbleWidth,std::min(transcriptBottom(),y+height));
-            if(target.bottom>target.top)messageTargets.push_back({target,"message",{{"text",content},{"tail",terminal}}});
+            if(target.bottom>target.top)messageTargets.push_back({target,"message",{{"text",content},{"tail",terminal},{"user",user}}});
         }
         return height+(terminal?10:3);
     }
@@ -481,13 +491,14 @@ struct Renderer {
         const auto muted=chatstyle::secondary();const auto ai=model.state.value("assistant",Json::object());
         contactHeader(brush,Json::object(),true);
         auto messages=ai.value("messages",Json::array());const float top=chatlayout::transcriptTop,bottom=transcriptBottom();float total=0;
-        const auto scale=chatlayout::textScale,linkHeight=std::max(40.0f,24*scale+8),welcomeButton=std::max(44.0f,26*scale);
+        const auto scale=chatlayout::textScale,linkHeight=std::max(40.0f,24*scale+8),welcomeButton=std::max(44.0f,26*scale),actionHeight=std::max(32.0f,22*scale+8);
         if(messages.empty()&&scale>1)total=96*scale+24+2*welcomeButton+8;
         for(const auto& m:messages) {
             total+=chatBubble(brush,m.value("text",""),0,true,false,m.value("images",Json::array()).empty());
             total+=messageImages(brush,m.value("images",Json::array()),0,true,false,top,bottom);
             auto answer=m.value("status","")=="thinking"?"Thinking…":m.value("status","")=="failed"?m.value("error","Could not answer."):m.value("answer","");
-            total+=chatBubble(brush,answer,0,false,false)+m.value("links",Json::array()).size()*(linkHeight+8);
+            total+=chatBubble(brush,answer,0,false,false,true,m.value("answerSpans",Json::array()))+m.value("links",Json::array()).size()*(linkHeight+8);
+            if(!model.assistantAnswer(m.value("id","")).empty())total+=actionHeight+8;
         }
         model.assistantOffset=std::clamp(model.assistantOffset,0,std::max(0,static_cast<int>(total-bottom+top)));
         canvas->PushAxisAlignedClip(D2D1::RectF(CHAT_LEFT,top,WIDTH-28,bottom),D2D1_ANTIALIAS_MODE_PER_PRIMITIVE);
@@ -511,7 +522,16 @@ struct Renderer {
             y+=chatBubble(brush,m.value("text",""),y,true,true,m.value("images",Json::array()).empty());
             y+=messageImages(brush,m.value("images",Json::array()),y,true,true,top,bottom);
             auto answer=m.value("status","")=="thinking"?"Thinking…":m.value("status","")=="failed"?m.value("error","Could not answer."):m.value("answer","");
-            y+=chatBubble(brush,answer,y,false,true);
+            y+=chatBubble(brush,answer,y,false,true,true,m.value("answerSpans",Json::array()));
+            if(!model.assistantAnswer(m.value("id","")).empty()) {
+                const float actionWidth=std::min(110.0f*scale,(WIDTH-CHAT_LEFT-48)/2);
+                if(y>=top&&y+actionHeight<=bottom)for(int i=0;i<2;++i){
+                    const float x=CHAT_LEFT+8+i*(actionWidth+8);
+                    button(brush,i?"Quote":"Copy",D2D1::RectF(x,y,x+actionWidth,y+actionHeight),i?"quoteAssistant":"copyAssistant");
+                    hits.back().card={{"messageId",m.value("id","")}};
+                }
+                y+=actionHeight+8;
+            }
             for(const auto& link:m.value("links",Json::array())) {
                 auto box=D2D1::RectF(CHAT_LEFT,y,WIDTH-28,y+linkHeight);
                 if(y>=top&&y+linkHeight<=bottom){button(brush,std::string(link.value("hasDraft",false)?"Use draft · ":"Open update · ")+link.value("chatName",""),box,"assistantUse",!model.pending);
@@ -948,6 +968,8 @@ struct App {
         if(a=="openImage")return "Open image · "+hit.card.value("name",std::string("attachment"));
         if(a=="retryDetails")return "Retry loading messages";
         if(a=="assistantUse")return "Open related update or draft";
+        if(a=="copyAssistant")return "Copy assistant reply";
+        if(a=="quoteAssistant")return "Quote assistant reply in your draft";
         if(a=="done")return "Mark task done";
         if(a=="reopen")return "Reopen task";
         if(a=="menuPrevious")return "Previous menu actions";
@@ -956,7 +978,9 @@ struct App {
         auto found=names.find(a);return found==names.end()?a:found->second;
     }
     std::string hitDescription(const Hit& hit) const {
-        if(hit.enabled)return hit.action=="send"?"Enter in Message sends or queues; Shift+Enter starts a new line.":"";
+        if(hit.enabled){if(hit.action=="quoteAssistant")return "Adds this reply to your saved draft without sending it.";
+            if(hit.action=="copyAssistant")return "Copies this reply as readable text.";
+            return hit.action=="send"?"Enter in Message sends or queues; Shift+Enter starts a new line.":"";}
         if(!renderer.model.connected)return "Reconnecting. Your draft is saved.";
         if(renderer.model.pending)return "A submission is still finishing. You can switch chats and keep writing.";
         if(hit.action=="send")return renderer.model.hasDraft()?"Wait for this reply to finish or check the conversation error.":"Write a message or add an image first.";
@@ -1246,6 +1270,15 @@ struct App {
             if(action=="close"){hide();return;}
             if(action=="clearSearch"){SetWindowTextW(searchEditor,L"");SetFocus(searchEditor);return;}
             if(action=="copyMessage"){if(!copyMessage()){model.message="Clipboard unavailable. Try Copy again.";renderer.paint();}renderer.copyText.clear();log("ui-copy");return;}
+            if(action=="copyAssistant"){
+                renderer.copyText=model.assistantAnswer(card.value("messageId",""));
+                model.message=renderer.copyText.empty()?"This reply is no longer available.":copyMessage()?"Reply copied.":"Clipboard unavailable. Try Copy again.";
+                renderer.copyText.clear();renderer.paint();log("ui-copy");return;
+            }
+            if(action=="quoteAssistant"){
+                if(model.quoteAssistant(card.value("messageId",""))&&!saveDrafts())model.message="Quote added, but draft storage is unavailable. Keep this window open.";
+                syncComposer();renderer.paint();if(IsWindowVisible(editor)){SetFocus(editor);SendMessageW(editor,EM_SETSEL,-1,-1);}log("ui-quote");return;
+            }
             if(action=="attach"){chooseImages();return;}
             if(action=="removeImage"){model.removeImage(card.value("id",""));saveDrafts();renderer.paint();return;}
             if(action=="openImage"){send("openAttachment",{{"attachmentId",card.value("id","")}});return;}
@@ -1584,6 +1617,8 @@ LRESULT CALLBACK panelProc(HWND window, UINT message, WPARAM wp, LPARAM lp) {
             if(!app.auditCapturePath.empty()&&wp<std::size(auditActionNames))for(const auto& hit:app.renderer.hits)if(hit.enabled&&hit.action==auditActionNames[wp])return MAKELRESULT(static_cast<WORD>((hit.box.left+hit.box.right)/2),static_cast<WORD>((hit.box.top+hit.box.bottom)/2));
             return 0;
         case WM_APP+212:
+            if(!app.auditCapturePath.empty()&&lp==1){size_t index=0;for(const auto& target:app.renderer.messageTargets)if(target.action=="message"&&!target.card.value("user",true)){
+                if(index++==wp){auto box=target.box;return MAKELRESULT(static_cast<WORD>((box.left+box.right)/2),static_cast<WORD>((box.top+box.bottom)/2));}}return 0;}
             if(!app.auditCapturePath.empty()&&wp<app.renderer.messageTargets.size()){auto box=app.renderer.messageTargets[wp].box;return MAKELRESULT(static_cast<WORD>((box.left+box.right)/2),static_cast<WORD>((box.top+box.bottom)/2));}return 0;
         case WM_APP+213: return app.auditCapturePath.empty()?0:app.renderer.draws;
         case WM_APP+214: {

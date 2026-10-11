@@ -344,7 +344,7 @@ int wmain(int argc,wchar_t** argv){
             check(last(trace).value("sidebarOffset",-1)==sidebarAfter,"Conversation scroll keeps sidebar position");
             check(!last(trace).value("assistantFollow",true),"Reading older messages pauses assistant transcript following");
             clickAction(AuditAction::Latest);check(last(trace).value("assistantFollow",false),"Latest explicitly resumes transcript following");
-            DWORD_PTR bubble=0;check(SendMessageTimeoutW(panel,WM_APP+212,0,0,SMTO_ABORTIFHUNG,2000,&bubble)!=0&&bubble,"The native audit finds a visible text balloon");
+            DWORD_PTR bubble=0;check(SendMessageTimeoutW(panel,WM_APP+212,0,1,SMTO_ABORTIFHUNG,2000,&bubble)!=0&&bubble,"The native audit finds a visible assistant text balloon");
             RECT panelBounds{};GetClientRect(panel,&panelBounds);const double bubbleScale=panelBounds.right/chatlayout::width;
             POINT bubblePoint{static_cast<LONG>(LOWORD(bubble)*bubbleScale),static_cast<LONG>(HIWORD(bubble)*bubbleScale)};ClientToScreen(panel,&bubblePoint);
             SendMessageW(panel,WM_CONTEXTMENU,reinterpret_cast<WPARAM>(panel),MAKELPARAM(bubblePoint.x,bubblePoint.y));
@@ -354,6 +354,12 @@ int wmain(int argc,wchar_t** argv){
                 clickAction(AuditAction::CopyMessage);std::wstring copied;if(OpenClipboard(panel)){auto memory=GetClipboardData(CF_UNICODETEXT);auto text=memory?static_cast<const wchar_t*>(GlobalLock(memory)):nullptr;if(text){copied=text;GlobalUnlock(memory);}CloseClipboard();}
                 check(clipboard.restore(),"Restore every captured clipboard format after the synthetic Copy test");
                 check(copied==L"The launch notes need your review. Here is a draft for that chat.","Copy transfers exactly the chosen visible balloon text");
+                ClipboardBackup visibleCopy;if(visibleCopy.capture()){
+                    clickAction(AuditAction::CopyAssistant);copied.clear();if(OpenClipboard(panel)){auto memory=GetClipboardData(CF_UNICODETEXT);auto text=memory?static_cast<const wchar_t*>(GlobalLock(memory)):nullptr;if(text){copied=text;GlobalUnlock(memory);}CloseClipboard();}
+                    check(visibleCopy.restore(),"Restore clipboard after the visible assistant Copy action");
+                    check(copied==L"The launch notes need your review. Here is a draft for that chat.","Visible Copy copies readable reply text without markdown markers");
+                    SendMessageW(panel,WM_APP+215,0,0);check(read(directory/L"artifacts/ux-state.json").value("notice","")=="Reply copied.","Successful Copy confirms its result");
+                }
             }else {std::cout<<"Clipboard contains unsupported handle formats; Copy menu checked without replacing clipboard.\n";SendMessageW(panel,WM_KEYDOWN,VK_ESCAPE,0);}
             if(initialCount>chatlayout::visibleRows){clickAction(AuditAction::Previous);check(last(trace).value("sidebarOffset",-1)==0,"Sidebar previous page restores its first chats");}
         }

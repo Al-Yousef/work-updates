@@ -121,6 +121,30 @@ struct QueueModel {
     std::string draft() const {auto found=drafts.find(composerKey());return found==drafts.end()?"":found->second;}
     std::string pendingDestination() const {if(pendingOwner=="@hyphen")return "Hyphen";for(const char* key:{"cards","done"})for(const auto& card:state.value(key,Json::array()))for(const auto& source:card.value("sources",Json::array()))if(source.value("id","")==pendingOwner)return card.value("chatName",std::string("another chat"));return "another chat";}
     void draft(std::string value) {auto key=composerKey();if(!key.empty()){if(value!=draft())intentIds.erase(key);drafts[key]=std::move(value);}}
+    std::string assistantAnswer(const std::string& id) const {
+        if(!chatting()||id.empty())return {};
+        for(const auto& m:state.value("assistant",Json::object()).value("messages",Json::array())) {
+            const auto status=m.value("status","");
+            if(m.value("id","")==id&&(status=="completed"||status=="complete"))return m.value("answer","");
+        }
+        return {};
+    }
+    bool quoteAssistant(const std::string& id) {
+        const auto answer=assistantAnswer(id);if(answer.empty()){message="This reply is no longer available.";return false;}
+        // Leave room for a question within the assistant's 4,000 UTF-16-unit limit.
+        auto units=[](const std::string& text){int count=0;for(unsigned char c:text)if((c&0xc0)!=0x80)count+=c>=0xf0?2:1;return count;};
+        auto next=draft();const int budget=std::min(1800,3500-units(next)-80);
+        if(budget<64){message="Your draft is too long to add this quote. Copy the reply instead.";return false;}
+        std::string quoted;size_t at=0;int used=0;
+        while(at<answer.size()){
+            const auto c=static_cast<unsigned char>(answer[at]);const size_t bytes=c<0x80?1:c<0xe0?2:c<0xf0?3:4;
+            const int cost=(bytes==4?2:1)+(c=='\n'?2:0);if(used+cost>budget||at+bytes>answer.size())break;
+            quoted+=answer.substr(at,bytes);if(c=='\n')quoted+="> ";used+=cost;at+=bytes;
+        }
+        const bool excerpt=at<answer.size();if(excerpt)quoted+="\n> […]";
+        if(!next.empty())next+="\n\n";next+=std::string(excerpt?"Regarding your reply (excerpt):\n> ":"Regarding your reply:\n> ")+quoted+"\n\n";
+        draft(std::move(next));message=excerpt?"Reply excerpt added to your draft. Add your question, then send.":"Quote added to your draft. Add your question, then send.";return true;
+    }
     bool sourceAvailable() const {const auto card=selected();const auto availability=card.value("availability",Json::object()).value("state","");return card.value("owner",Json::object()).value("online",true)&&availability!="offline"&&availability!="stale";}
     bool canReply() const {if(chatting()){auto ai=state.value("assistant",Json::object());return connected&&!pending&&!ai.value("responding",false)&&ai.value("error","").empty();}auto card=selected();return connected&&!pending&&!sourceId.empty()&&!card.empty()&&!card.value("done",false)&&sourceAvailable();}
     bool canDraft() const {return chatting()||(!sourceId.empty()&&!selected().empty()&&!selected().value("done",false));}

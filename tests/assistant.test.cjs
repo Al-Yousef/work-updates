@@ -128,6 +128,13 @@ test('a tool request is rejected and the assistant transport is closed',async t=
   const {directory}=fixture(t);const client=new FakeClient('tool');const provider=new AssistantProvider({directory,clientFactory:()=>client});
   await assert.rejects(provider.answer({question:'Hello'}),/unsupported tool/);assert.equal(client.rejected,3);assert.equal(client.closed,true);
 });
+test('private channel clients retain readable plain-text answers',async t=>{
+  const {directory}=fixture(t);const client=new FakeClient();const provider=new AssistantProvider({directory,clientFactory:()=>client});
+  await provider.answer({question:'Hello',channel:{id:'synthetic-private-client'}});
+  const start=client.calls.find(c=>c.method==='thread/start').params;
+  assert.ok(start.developerInstructions.endsWith('Return answer as plain text without markdown syntax; keep short paragraphs and readable lists.'));
+  assert.equal(start.ephemeral,true);assert.equal(start.sandbox,'read-only');
+});
 test('provider refuses persistence before invoking a model',async t=>{
   const {directory}=fixture(t);const client=new FakeClient('persistent');const provider=new AssistantProvider({directory,clientFactory:()=>client});
   await assert.rejects(provider.answer({question:'Hello'}),/private assistant/);assert.ok(!client.calls.some(c=>c.method==='turn/start'));assert.equal(client.closed,true);
