@@ -281,6 +281,7 @@ struct Renderer {
         label(value,size,box,color,weight,DWRITE_TEXT_ALIGNMENT_CENTER);
     }
     float composeY() const {return HEIGHT-22-composerHeight;}
+    float replyHeight() const {return model.replyTarget().empty()?0:56*chatlayout::textScale+8;}
     float attachmentSize()const{return std::clamp((WIDTH-CHAT_LEFT-70)/4-20,44.0f,70.0f);}
     int attachmentColumns()const{return std::max(1,static_cast<int>((WIDTH-CHAT_LEFT-70)/(attachmentSize()+20)));}
     float attachmentHeight()const{const auto count=model.images().size();return count?static_cast<float>((count+attachmentColumns()-1)/attachmentColumns())*(attachmentSize()+30)+8:0;}
@@ -455,7 +456,7 @@ struct Renderer {
         if(model.defaultQueue())return "Chat is working · Your reply will queue";
         return "";
     }
-    float noticeBottom() const {return composeY()-(model.images().empty()?8:attachmentHeight());}
+    float noticeBottom() const {return composeY()-(model.images().empty()?8:attachmentHeight())-replyHeight();}
     void measureNotice() {
         notice=statusNotice();noticeHeight=0;noticeLineHeight=0;noticeVisibleLines=0;if(notice.empty())return;
         const auto value=wide(notice);Com<IDWriteTextFormat> format;require(text->CreateTextFormat(chatstyle::font,nullptr,DWRITE_FONT_WEIGHT_NORMAL,DWRITE_FONT_STYLE_NORMAL,DWRITE_FONT_STRETCH_NORMAL,12*chatlayout::textScale,L"en-US",format.put()),"Status format");
@@ -471,9 +472,32 @@ struct Renderer {
         label(notice,12,D2D1::RectF(box.left+10,box.top+9,box.right-10,box.bottom-8),chatstyle::secondary());
         if(!model.detailError.empty()){const auto retry=D2D1::RectF(WIDTH-76,bottom-44,WIDTH-28,bottom);centerLabel("Retry",12,retry,chatstyle::blue());hits.push_back({retry,"retryDetails",model.input(),model.connected});}
     }
-    float transcriptBottom() const {return notice.empty()?(model.images().empty()?composeY()-44:composeY()-attachmentHeight()-2):noticeBottom()-noticeHeight-10;}
+    float transcriptBottom() const {return notice.empty()?(model.images().empty()?composeY()-44-replyHeight():composeY()-attachmentHeight()-2-replyHeight()):noticeBottom()-noticeHeight-10;}
+    float replyPreview(ID2D1SolidColorBrush* brush,const Json& target,float y,bool outgoing,bool draw) {
+        if(target.empty())return 0;
+        const float height=50*chatlayout::textScale+8,width=(WIDTH-CHAT_LEFT-44)*.78f;
+        const float left=outgoing?WIDTH-36-width:CHAT_LEFT+38;
+        if(draw){
+            const auto box=D2D1::RectF(left,y,left+width,y+height-6);
+            brush->SetColor(chatstyle::highContrast?chatstyle::surface():D2D1::ColorF(.94f,.95f,.97f));canvas->FillRoundedRectangle(D2D1::RoundedRect(box,10,10),brush);
+            brush->SetColor(chatstyle::blue());canvas->FillRectangle(D2D1::RectF(left+8,y+9,left+10,y+height-15),brush);
+            label("Hyphen",12,D2D1::RectF(left+18,y+5,left+width-8,y+21*chatlayout::textScale),chatstyle::blue(),DWRITE_FONT_WEIGHT_SEMI_BOLD);
+            label(target.value("text",""),12,D2D1::RectF(left+18,y+22*chatlayout::textScale,left+width-8,y+height-10),chatstyle::secondary());
+        }return height;
+    }
     void composerPaint(ID2D1SolidColorBrush* brush) {
         const float top=composeY();const auto attached=model.images();
+        const auto target=model.replyTarget();
+        if(!target.empty()){
+            const float y=top-attachmentHeight()-replyHeight();
+            const auto box=D2D1::RectF(CHAT_LEFT+38,y,WIDTH-38,y+replyHeight()-8);
+            brush->SetColor(chatstyle::highContrast?chatstyle::surface():D2D1::ColorF(.94f,.95f,.97f));canvas->FillRoundedRectangle(D2D1::RoundedRect(box,10,10),brush);
+            brush->SetColor(chatstyle::blue());canvas->FillRectangle(D2D1::RectF(box.left+10,y+10,box.left+12,box.bottom-10),brush);
+            label("Replying to Hyphen",12,D2D1::RectF(box.left+20,y+6,box.right-44,y+22*chatlayout::textScale),chatstyle::blue(),DWRITE_FONT_WEIGHT_SEMI_BOLD);
+            label(target.value("text",""),12,D2D1::RectF(box.left+20,y+23*chatlayout::textScale,box.right-44,box.bottom-6),chatstyle::secondary());
+            button(brush,"×",D2D1::RectF(box.right-44,y,box.right,box.bottom),"cancelReply");
+            hits.back().card={{"messageId",target.value("id","")}};
+        }
         size_t attachmentIndex=0;const auto columns=attachmentColumns(),rows=static_cast<int>((attached.size()+columns-1)/columns);const auto previewSize=attachmentSize();for(const auto& image:attached) {
             const float x=CHAT_LEFT+38+(attachmentIndex%columns)*(previewSize+20),y=top-(rows-attachmentIndex/columns)*(previewSize+30)+8;
             const auto box=D2D1::RectF(x,y,x+previewSize,y+previewSize);thumbnail(brush,image,box);
@@ -499,12 +523,13 @@ struct Renderer {
         const auto scale=chatlayout::textScale,linkHeight=std::max(32.0f,24*scale+8),welcomeButton=std::max(44.0f,26*scale),actionHeight=std::max(32.0f,22*scale+8);
         if(messages.empty()&&scale>1)total=96*scale+24+2*welcomeButton+8;
         for(const auto& m:messages) {
+            total+=replyPreview(brush,m.value("replyTo",Json::object()),0,true,false);
             total+=chatBubble(brush,m.value("text",""),0,true,false,m.value("images",Json::array()).empty());
             total+=messageImages(brush,m.value("images",Json::array()),0,true,false,top,bottom);
             auto answer=m.value("status","")=="thinking"?"Thinking…":m.value("status","")=="failed"?m.value("error","Could not answer."):m.value("answer","");
             const bool update=m.value("kind","")=="update";
             total+=chatBubble(brush,answer,0,false,false,!update,m.value("answerSpans",Json::array()))+m.value("links",Json::array()).size()*(linkHeight+4)+12;
-            if(!update&&!model.assistantAnswer(m.value("id","")).empty())total+=actionHeight-2;
+            if(!model.assistantAnswer(m.value("id","")).empty())total+=actionHeight-2;
         }
         model.assistantOffset=std::clamp(model.assistantOffset,0,std::max(0,static_cast<int>(total-bottom+top)));
         canvas->PushAxisAlignedClip(D2D1::RectF(CHAT_LEFT,top,WIDTH-28,bottom),D2D1_ANTIALIAS_MODE_PER_PRIMITIVE);
@@ -525,20 +550,21 @@ struct Renderer {
           }
         }
         for(const auto& m:messages) {
+            y+=replyPreview(brush,m.value("replyTo",Json::object()),y,true,true);
             y+=chatBubble(brush,m.value("text",""),y,true,true,m.value("images",Json::array()).empty());
             y+=messageImages(brush,m.value("images",Json::array()),y,true,true,top,bottom);
             auto answer=m.value("status","")=="thinking"?"Thinking…":m.value("status","")=="failed"?m.value("error","Could not answer."):m.value("answer","");
             const bool update=m.value("kind","")=="update";
             y+=chatBubble(brush,answer,y,false,true,!update,m.value("answerSpans",Json::array()));
-            if(!update&&!model.assistantAnswer(m.value("id","")).empty()) {
-                y-=6;
-                const float actionWidth=std::min(68.0f*scale,(WIDTH-CHAT_LEFT-48)/2);
-                if(y>=top&&y+actionHeight<=bottom)for(int i=0;i<2;++i){
+            if(!model.assistantAnswer(m.value("id","")).empty()) {
+                if(!update)y-=6;
+                const float actionWidth=std::min(68.0f*scale,(WIDTH-CHAT_LEFT-56)/3);
+                if(y>=top&&y+actionHeight<=bottom)for(int i=0;i<(update?1:3);++i){
                     const float x=CHAT_LEFT+8+i*(actionWidth+4);
-                    button(brush,i?"Quote":"Copy",D2D1::RectF(x,y,x+actionWidth,y+actionHeight),i?"quoteAssistant":"copyAssistant");
+                    button(brush,i==0?"Reply":i==1?"Copy":"Quote",D2D1::RectF(x,y,x+actionWidth,y+actionHeight),i==0?"replyAssistant":i==1?"copyAssistant":"quoteAssistant");
                     hits.back().card={{"messageId",m.value("id","")}};
                 }
-                y+=actionHeight+4;
+                y+=actionHeight+(update?-2:4);
             }
             for(const auto& link:m.value("links",Json::array())) {
                 auto box=D2D1::RectF(CHAT_LEFT+8,y,WIDTH-28,y+linkHeight);
@@ -845,7 +871,7 @@ struct App {
         try {
             Json values=Json::object();for(const auto& [source,value]:renderer.model.drafts)if(!value.empty())values[source]=value;
             Json ids=renderer.model.intentIds;
-            auto bytes=draft_store::validate(Json({{"version",3},{"drafts",values},{"intentIds",ids},{"attachments",renderer.model.attachments}})).dump();
+            auto bytes=draft_store::validate(Json({{"version",3},{"drafts",values},{"intentIds",ids},{"attachments",renderer.model.attachments},{"replyTargets",renderer.model.replyTargets}})).dump();
             GUID guid;wchar_t id[40]{};if(FAILED(CoCreateGuid(&guid))||!StringFromGUID2(guid,id,40))throw std::runtime_error("Draft storage identity failed");
             auto temp=draftPath;temp+=L"."+std::wstring(id)+L".tmp";
             HANDLE file=CreateFileW(temp.c_str(),GENERIC_WRITE,0,nullptr,CREATE_NEW,FILE_ATTRIBUTE_NORMAL,nullptr);if(file==INVALID_HANDLE_VALUE)throw std::runtime_error("Draft storage failed");
@@ -980,6 +1006,8 @@ struct App {
         if(a=="assistantUse")return "Open related update or draft";
         if(a=="copyAssistant")return "Copy assistant reply";
         if(a=="quoteAssistant")return "Quote assistant reply in your draft";
+        if(a=="replyAssistant")return "Reply to this Hyphen message";
+        if(a=="cancelReply")return "Cancel reply to Hyphen";
         if(a=="done")return "Mark task done";
         if(a=="reopen")return "Reopen task";
         if(a=="menuPrevious")return "Previous menu actions";
@@ -988,7 +1016,9 @@ struct App {
         auto found=names.find(a);return found==names.end()?a:found->second;
     }
     std::string hitDescription(const Hit& hit) const {
-        if(hit.enabled){if(hit.action=="quoteAssistant")return "Adds this reply to your saved draft without sending it.";
+        if(hit.enabled){if(hit.action=="replyAssistant")return "Attaches this exact message to your draft without sending it.";
+            if(hit.action=="cancelReply")return "Removes the reply target and keeps your message and images.";
+            if(hit.action=="quoteAssistant")return "Adds this reply to your saved draft without sending it.";
             if(hit.action=="copyAssistant")return "Copies this reply as readable text.";
             return hit.action=="send"?"Enter in Message sends or queues; Shift+Enter starts a new line.":"";}
         if(!renderer.model.connected)return "Reconnecting. Your draft is saved.";
@@ -1289,6 +1319,12 @@ struct App {
                 if(model.quoteAssistant(card.value("messageId",""))&&!saveDrafts())model.message="Quote added, but draft storage is unavailable. Keep this window open.";
                 syncComposer();renderer.paint();if(IsWindowVisible(editor)){SetFocus(editor);SendMessageW(editor,EM_SETSEL,-1,-1);}log("ui-quote");return;
             }
+            if(action=="replyAssistant"||action=="cancelReply"){
+                if(action=="cancelReply"){if(card.value("messageId","")!=model.replyTargetId("@hyphen"))return;model.cancelReply();}
+                else if(!model.replyAssistant(card.value("messageId",""))){renderer.paint();return;}
+                if(!saveDrafts())model.message="Reply changed, but draft storage is unavailable. Keep this window open.";
+                syncComposer();renderer.paint();if(IsWindowVisible(editor)){SetFocus(editor);SendMessageW(editor,EM_SETSEL,-1,-1);}log("ui-reply");return;
+            }
             if(action=="attach"){chooseImages();return;}
             if(action=="removeImage"){model.removeImage(card.value("id",""));saveDrafts();renderer.paint();return;}
             if(action=="openImage"){send("openAttachment",{{"attachmentId",card.value("id","")}});return;}
@@ -1579,6 +1615,7 @@ LRESULT CALLBACK panelProc(HWND window, UINT message, WPARAM wp, LPARAM lp) {
             if(app.auditCapturePath.empty())return 0;
             Json report={{"dpi",app.renderer.dpi},{"width",WIDTH},{"height",HEIGHT},{"focused",app.renderer.focused},{"connected",app.renderer.model.connected},{"canDraft",app.renderer.model.canDraft()},{"canReply",app.renderer.model.canReply()},{"notice",app.renderer.notice},{"noticeHeight",app.renderer.noticeHeight},{"transcriptBottom",app.renderer.transcriptBottom()},{"reducedMotion",app.reducedMotion()},{"hits",Json::array()}};
             auto& m=app.renderer.model;report["selected"]=m.selectedId;report["detailPending"]=m.detailPending;report["pending"]=m.pending;report["source"]=m.sourceId;report["detailMatchesSelection"]=m.detail.value("id","")==m.selectedId&&m.detail.value("taskKey","")==m.selectedKey;
+            report["replyTarget"]=m.replyTarget();
             report["lastPress"]=app.lastPressAudit;
             report["pid"]=GetCurrentProcessId();report["mode"]=app.name();report["panelVisible"]=IsWindowVisible(app.panel)!=FALSE;report["surfaceDraws"]=app.renderer.draws;
             report["queueStateFrames"]=app.queueStateFrames;report["connectionHealth"]=m.state.value("connectionHealth",Json::object());
@@ -1891,7 +1928,7 @@ int WINAPI wWinMain(HINSTANCE instance,HINSTANCE,PWSTR,int) {
         try{if(std::filesystem::exists(app.draftPath)){
             if(!std::filesystem::is_regular_file(app.draftPath)||std::filesystem::is_symlink(app.draftPath)||std::filesystem::file_size(app.draftPath)>32*1024*1024)throw std::runtime_error("Invalid draft file");
             std::ifstream saved(app.draftPath,std::ios::binary);if(!saved)throw std::runtime_error("Unreadable draft file");Json data;saved>>data;data=draft_store::validate(data);
-            app.renderer.model.drafts=data["drafts"].get<std::map<std::string,std::string>>();app.renderer.model.attachments=data["attachments"].get<std::map<std::string,Json>>();app.renderer.model.intentIds=data["intentIds"].get<std::map<std::string,std::string>>();}}
+            app.renderer.model.drafts=data["drafts"].get<std::map<std::string,std::string>>();app.renderer.model.attachments=data["attachments"].get<std::map<std::string,Json>>();app.renderer.model.intentIds=data["intentIds"].get<std::map<std::string,std::string>>();app.renderer.model.replyTargets=data["replyTargets"];}}
         catch(...){app.log("draft-storage-read-failed");app.draftPath.clear();app.renderer.model.message="Saved drafts need recovery. The original file is preserved.";}
     }
     int exitCode=0;

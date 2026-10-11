@@ -9,6 +9,7 @@ const {context,history,conversation,revision,messageTarget}=require('./assistant
 const hash=value=>crypto.createHash('sha256').update(value).digest('hex');
 const clip=(value,n)=>String(value??'').toWellFormed().slice(0,n);
 const coordination=require('./assistant-coordination.cjs');
+const replies=require('./assistant-replies.cjs');
 const {command:responsibilityCommand}=require('./responsibility-command.cjs');
 const {currentScope}=require('./responsibility-target.cjs');
 const {command:authorizationCommand}=require('./authorization-command.cjs');
@@ -32,7 +33,7 @@ class Assistant extends EventEmitter {
         value.notes.some(n=>typeof n!=='string'||n.length>1000)||!value.receipts||typeof value.receipts!=='object'||Array.isArray(value.receipts)||
         value.messages.some(m=>typeof m.id!=='string'||typeof m.text!=='string'||m.text.length>4000||!['thinking','completed','failed'].includes(m.status)||
           (m.images!==undefined&&(!Array.isArray(m.images)||m.images.length>4||m.images.some(i=>typeof i.id!=='string'||typeof i.path!=='string'||i.path.length>32768)))||
-          (m.answer!==undefined&&(typeof m.answer!=='string'||m.answer.length>6000))||!Array.isArray(m.links)||m.links.length>3||
+          (m.answer!==undefined&&(typeof m.answer!=='string'||m.answer.length>6000))||(m.replyTo!==undefined&&!replies.valid(m.replyTo))||!Array.isArray(m.links)||m.links.length>3||
           m.links.some(l=>typeof l.chatName!=='string'||typeof l.draft!=='string'||l.draft.length>12000)))throw new Error();
       if(value.seen!==undefined&&value.seen!==null&&(typeof value.seen!=='object'||Array.isArray(value.seen)||Object.keys(value.seen).length>2048))throw new Error();
       if(value.focus!==undefined&&value.focus!==null&&(!value.focus.sourceId||!value.focus.id||!value.focus.ownerId))throw new Error();
@@ -88,14 +89,18 @@ class Assistant extends EventEmitter {
     const ids=attachmentIds(input.attachmentIds||[]);
     if((!text&&!ids.length)||text.length>4000)throw new Error('Write a message of up to 4,000 characters or attach an image.');
     if(!/^[a-f0-9-]{36}$/i.test(input.messageId||''))throw new Error('A message identity is required.');
+    const replyToId=input.replyToId??'';
+    if(typeof replyToId!=='string'||replyToId.length>100)throw new Error('Invalid reply target. Your draft is saved.');
     const existing=this.state.receipts[input.messageId];
-    if(existing){if(existing!==messageHash(text,ids))throw new Error('That message identity belongs to a different message.');return {accepted:true,messageId:input.messageId};}
+    if(existing){if(existing!==messageHash(text,ids,replyToId))throw new Error('That message identity belongs to a different message.');return {accepted:true,messageId:input.messageId};}
     const workControl=workCommand(text),priorityControl=(workControl&&['pause-main','stop-child','disable-schedule','revoke-executor','stop-all','list','inspect'].includes(workControl.kind))||/^\/executor revoke [a-f0-9-]{36}$/i.test(text);
     if(this.active&&!priorityControl)throw new Error('Hyphen is answering. You can send another message when it finishes. Stop and pause controls remain available.');
     if(Object.keys(this.state.receipts).length>=5000)throw new Error('Assistant history reached its message limit.');
     const prior=structuredClone(this.state);
-    const message={id:input.messageId,text,images:this.attachments.resolve(ids),focus:this.state.focus?{...this.state.focus}:null,status:'thinking',at:Date.now(),links:[]};
-    this.state.messages.push(message);this.trim();this.state.receipts[message.id]=messageHash(text,ids);
+    const selected=replyToId?replies.resolve(this.state.messages,replyToId,this.options.snapshot()):null;
+    const message={id:input.messageId,text,images:this.attachments.resolve(ids),focus:selected?selected.focus:this.state.focus?{...this.state.focus}:null,
+      ...(selected?{replyTo:selected.replyTo}:{}),status:'thinking',at:Date.now(),links:[]};
+    this.state.messages.push(message);this.trim();this.state.receipts[message.id]=messageHash(text,ids,replyToId);
     const local=ids.length?null:this.local(text);
     if(local!==null){message.answer=local;message.status='completed';if(/^\/memory(?:\s|$)/i.test(text))message.kind='memory_inspection';}
     try {this.save();}catch{this.state=prior;throw new Error('Your message could not be saved. It was not submitted.');}
@@ -121,6 +126,7 @@ class Assistant extends EventEmitter {
       const entry=this.state.messages.find(m=>m.id===id&&m.status==='completed'&&conversation(m));
       if(!entry)return 'That retained exchange is unavailable. Use /memory history to inspect the current list.';
       this.state.messages=this.state.messages.filter(m=>m!==entry&&m.kind!=='memory_inspection');
+      for(const message of this.state.messages)if(message.replyTo?.id===id)delete message.replyTo;
       return 'Removed that retained exchange and saved memory inspections. Pinned notes, source chats, local images and message replay protection remain.';
     }
     if(/^\/memory sources$/i.test(text)){
@@ -227,15 +233,15 @@ class Assistant extends EventEmitter {
         target.action.status='cancelled';message.action.status='cancelled';message.status='completed';message.answer='Cancelled the locally queued message for '+action.chatName+'. Other messages and the active pass are unchanged.';message.links=[{...coordination.link(match.card,action.sourceId),coordinationId:target.id}];this.save();return;
       }
       const recalled=history(this.state.messages,message),recent=recalled.recent;
-      const selection={focus:message.focus,history:recalled.messages};
+      const selection={focus:message.focus,history:message.replyTo?recalled.messages.filter(m=>m.id===message.replyTo.id):recalled.messages,focusOrigin:message.replyTo?'reply':null};
       let current=context(this.options.snapshot(),message.text,selection);
       if(this.options.loadContext&&current.data.fresh&&this.options.commitments?.preferenceSnapshot().research?.value!=='off') {const refreshed=await this.options.loadContext(current.targets);if(this.closed)return;current=context(refreshed||this.options.snapshot(),message.text,selection);}
       const requested=coordination.request(this.state.messages,message,current,selection),requestedRef=requested?.ref||null;
       if(requested&&!requestedRef){message.proposal=requested.proposal;message.pendingDestination=true;message.status='completed';message.answer='Which chat should receive this message? I’ve kept the text:\n'+message.proposal.text;
         message.links=current.data.cards.filter(c=>c.hasChat&&!c.done).slice(0,3).map(c=>({...current.refs.get(c.ref),draft:message.proposal.text}));this.save();return;}
       let images=message.images||[];
-      if(!images.length&&/\b(image|photo|picture|screenshot|attachment|shown|left|right|colou?r|previous|earlier|that|this)\b/i.test(message.text)){const prior=recent.findLast(m=>m.imageIds.length);if(prior){try{images=this.attachments.resolve(prior.imageIds);}catch{prior.imagesUnavailable=true;}}}
-      const value=await this.provider.answer({question:message.text||'Describe the attached image and help me understand it.',images,imagesFromHistory:!(message.images||[]).length&&!!images.length,history:recent,recalledHistory:recalled.recalled,userEvidence:recalled.userEvidence,historyCoverage:recalled.coverage,savedNotes:this.state.notes,
+      if(!images.length&&/\b(image|photo|picture|screenshot|attachment|shown|left|right|colou?r|previous|earlier|that|this)\b/i.test(message.text)){const prior=message.replyTo?message.replyTo:recent.findLast(m=>m.imageIds.length);if(prior?.imageIds?.length){try{images=this.attachments.resolve(prior.imageIds);}catch{prior.imagesUnavailable=true;}}}
+      const value=await this.provider.answer({question:message.text||'Describe the attached image and help me understand it.',replyTo:message.replyTo?{...message.replyTo,provenance:'selected_assistant_message'}:undefined,images,imagesFromHistory:!(message.images||[]).length&&!!images.length,history:recent,recalledHistory:recalled.recalled,userEvidence:recalled.userEvidence,historyCoverage:recalled.coverage,savedNotes:this.state.notes,
         savedNotesProvenance:'explicit_pinned_notes',memoryCoverage:{retentionExchanges:500,retentionAlerts:40,pinnedNoteLimit:32,pinnedNoteCharacters:this.state.notes.join('').length},queue:current.data,
         assistantPresentation:this.options.profile?.snapshot(),
         responsibilities:this.options.responsibilities?.snapshot().slice(-8).map(r=>({id:r.id,origin:{text:clip(r.origin.text,600),provenance:'accepted_human_instruction'},instruction:clip(r.instruction,800),revision:r.revision,state:r.state,chatName:r.scope.chatName,ownerId:r.ownerId,stepStatus:r.currentStep.status,wakeReason:r.wakeReason.kind,completionCriteria:r.completionCriteria})),

@@ -40,7 +40,7 @@ client.send=async(threadId,text,images=[])=>{
 const controller=new Controller(queue,client);let control;
 const messages=new Messages(queue,controller,{auto:false,attachments});
 const assistant=new Assistant({directory,snapshot:()=>queue.snapshot(),attachments,provider:{
-  async answer(input){await new Promise(resolve=>setTimeout(resolve,600));const target=input.queue.cards.find(c=>c.chatName==='Launch planning');
+  async answer(input){if(process.argv.includes('--ux-audit'))fs.writeFileSync(path.join(directory,'provider-input.json'),JSON.stringify(input));await new Promise(resolve=>setTimeout(resolve,600));const target=input.queue.cards.find(c=>c.chatName==='Launch planning');
     return {answer:'The launch notes need **your review**. Here is a draft for that chat.',links:target?[{ref:target.ref,draft:'Please share the remaining launch review steps.'}]:[],model:'fixture'};},close(){}}});
 const state=()=>({...messages.decorate(queue.snapshot()),assistant:assistant.snapshot()});
 let uxWatch,uxOverride={},uxPaused=false,detailFailures=0;
@@ -82,6 +82,10 @@ function close(){uxWatch?.close();demoObserver.close();assistant.close();message
       if(request.op==='disconnect'){uxPaused=true;for(const socket of control.subscribers)socket.destroy();}
       else if(request.op==='resume')uxPaused=false;
       else if(request.op==='patch')uxOverride=request.value||{};
+      else if(request.op==='assistantSeed'){
+        const value=require('../src/private-store.cjs').validate('assistant.json',{...assistant.state,messages:request.value}).value;
+        assistant.state=value;assistant.save();uxOverride={};
+      }
       else if(request.op==='reset')uxOverride={};
       else if(request.op==='fail-details')detailFailures=1;
       publish();fs.writeFileSync(path.join(directory,'ux-result.json'),JSON.stringify({id:lastId,ok:true}));

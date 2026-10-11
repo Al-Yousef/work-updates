@@ -83,6 +83,7 @@ function validate(name,value){
     result.receipts??={};
     if(Object.entries(result.receipts).some(([id,r])=>!object(r)||r.id!==id||typeof r.sourceId!=='string'||!['sent','cancelled'].includes(r.status)))throw new Error('invalid receipts');
   }else if(name==='assistant.json'){
+    if(result.messages?.some(m=>m.replyTo!==undefined&&!require('./assistant-replies.cjs').valid(m.replyTo)))throw new Error('invalid assistant reply target');
     if(!Array.isArray(result.messages)||result.messages.length>(result.version===1?100:540)||!Array.isArray(result.notes)||result.notes.length>32||result.notes.some(n=>typeof n!=='string'||n.length>1000)||!object(result.receipts)||
       result.messages.some(m=>!object(m)||typeof m.id!=='string'||typeof m.text!=='string'||m.text.length>4000||!['thinking','completed','failed'].includes(m.status)||!Array.isArray(m.links)||m.links.length>3||m.links.some(l=>!object(l)||typeof l.chatName!=='string'||typeof l.draft!=='string'||l.draft.length>12000)||
         (m.answer!==undefined&&(typeof m.answer!=='string'||m.answer.length>6000))||(m.images!==undefined&&(!Array.isArray(m.images)||m.images.length>4||m.images.some(i=>!object(i)||typeof i.id!=='string'||typeof i.path!=='string'||i.path.length>32768)))))throw new Error('invalid assistant history');
@@ -94,8 +95,9 @@ function validate(name,value){
   }else if(name==='drafts.json'){
     if(!strings(result.drafts,48000))throw new Error('invalid drafts');
     result.attachments??={};result.intentIds??={};
+    if(result.replyTargets!==undefined&&(!object(result.replyTargets)||Object.keys(result.replyTargets).length>1||Object.entries(result.replyTargets).some(([k,v])=>k!=='@hyphen'||!object(v)||typeof v.id!=='string'||!v.id||v.id.length>100||typeof v.text!=='string'||Buffer.byteLength(v.text)>720)))throw new Error('invalid draft reply target');
     if(!object(result.attachments)||!object(result.intentIds)||Object.entries(result.attachments).some(([k,a])=>!k||k.length>=512||!Array.isArray(a)||a.length>4||a.some(i=>!object(i)||typeof i.id!=='string'||!i.id||typeof i.path!=='string'||i.path.length>=32768))||
-      Object.entries(result.intentIds).some(([k,id])=>!Object.hasOwn(result.drafts,k)&&!Object.hasOwn(result.attachments,k)||typeof id!=='string'||!/^[a-f0-9-]{36}$/i.test(id)))throw new Error('invalid draft identities');
+      Object.entries(result.intentIds).some(([k,id])=>!Object.hasOwn(result.drafts,k)&&!Object.hasOwn(result.attachments,k)&&!Object.hasOwn(result.replyTargets||{},k)||typeof id!=='string'||!/^[a-f0-9-]{36}$/i.test(id)))throw new Error('invalid draft identities');
     if(result.version!==3){result.version=3;migrated=true;}
   }
   return {value:result,migrated,version:value.version??0};

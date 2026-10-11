@@ -154,6 +154,19 @@ int main(int argc,char** argv){
     quoting.draft(std::string(47999,'x'));assert(!quoting.quoteAssistant("second")&&quoting.draft().size()==47999);
     quoting.draft("");quoting.state["assistant"]["messages"][1]["answer"]=std::string(6000,'a');assert(quoting.quoteAssistant("second"));
     assert(quoting.draft().size()<3500&&quoting.draft().find("(excerpt)")!=std::string::npos&&quoting.message.find("excerpt")!=std::string::npos);
-    quoting.view=0;assert(quoting.assistantAnswer("second").empty());
+    quoting.draft("My natural reply");assert(quoting.replyAssistant("second"));
+    assert(quoting.draft()=="My natural reply"&&quoting.images().size()==1&&!quoting.pending);
+    assert(quoting.replyInput()["replyToId"]=="second"&&quoting.replyTarget()["text"].get<std::string>().size()<=720);
+    quoting.intentIds["@hyphen"]="old-reply-intent";auto oldReply=quoting.replyInput();
+    assert(quoting.replyAssistant("second")); // Reselecting creates a new draft intent.
+    quoting.acceptedDraft("@hyphen",oldReply);assert(quoting.draft()=="My natural reply"&&!quoting.replyTarget().empty());
+    quoting.cancelReply();assert(quoting.replyTarget().empty()&&quoting.draft()=="My natural reply"&&quoting.images().size()==1);
+    assert(!quoting.replyAssistant("missing")&&!quoting.replyAssistant("pending"));
+    assert(quoting.replyAssistant("second"));auto savedReply=draft_store::validate({{"version",3},{"drafts",{{"@hyphen",quoting.draft()}}},{"replyTargets",quoting.replyTargets}});
+    QueueModel restored;restored.view=4;restored.replyTargets=savedReply["replyTargets"];assert(restored.replyTargetId("@hyphen")=="second");
+    quoting.view=0;assert(quoting.assistantAnswer("second").empty()&&quoting.replyTarget().empty());
+    quoting.view=4;assert(quoting.replyTargetId("@hyphen")=="second");
+    quoting.intentIds["@hyphen"]="new-reply-intent";auto sentReply=quoting.replyInput();quoting.acceptedDraft("@hyphen",sentReply);
+    assert(quoting.draft().empty()&&quoting.images().empty()&&quoting.replyTarget().empty());
     std::cout<<"Native queue and assistant model: identity, draft isolation, search, images, stale responses, offline drafts, filters, quoting and receipt checks passed\n";
 }

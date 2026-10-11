@@ -11,6 +11,7 @@ const matches=(card,ref)=>!!ref&&card.id===ref.id&&owner(card)===(ref.ownerId||'
 function history(messages,current) {
   const all=messages.filter(m=>m.id!==current.id&&m.status==='completed'&&m.kind!=='memory_inspection'&&conversation(m));
   const entry=(m,userLimit,assistantLimit)=>({id:m.id,at:m.at,user:clip(m.text,userLimit),assistant:clip(m.answer,assistantLimit),imageIds:(m.images||[]).map(i=>i.id),
+    ...(m.replyTo?{replyTo:{id:m.replyTo.id,answer:clip(m.replyTo.answer,800),provenance:'selected_assistant_message'}}:{}),
     provenance:{user:'human_statement',assistant:'generated_answer'},truncated:{user:m.text.length>userLimit,assistant:(m.answer||'').length>assistantLimit}});
   const recent=[];let budget=budgets.recent;
   for(const m of all.slice(-10).reverse()) {
@@ -94,7 +95,7 @@ function context(snapshot,question,options={}) {
   const focusedEntry=[...refs].find(([,ref])=>matches(all.find(c=>c.id===ref.id&&owner(c)===ref.ownerId)||{},options.focus));
   return {refs,targets,data:{capturedAt:new Date().toISOString(),health:snapshot.health||{ok:false},collectedAt,
     fresh,
-    focusedChat:focusedEntry?{ref:focusedEntry[0],chatName:focusedEntry[1].chatName,meaning:'Last source chat opened by the user in Hyphen; a named destination or explicit conversation reference takes precedence.'}:null,
+    focusedChat:focusedEntry?{ref:focusedEntry[0],chatName:focusedEntry[1].chatName,meaning:options.focusOrigin==='reply'?'Unchanged source related to the message selected for this reply; a named destination takes precedence.':'Last source chat opened by the user in Hyphen; a named destination or explicit conversation reference takes precedence.'}:null,
     coverage:{totalCards:all.length,includedCards:cards.length,monitoredChats:snapshot.monitoredCount||0,
       sourceConversationsIncluded:cards.filter(c=>c.conversation?.length).length,selectedCharacters:budgets.cards-budget,characterBudget:budgets.cards},cards}};
 }

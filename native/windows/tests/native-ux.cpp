@@ -211,6 +211,17 @@ try {
     check(draft().find(keptDraft)==0&&draft().find(L"> Ready for your review")!=std::wstring::npos,"Quote appends the selected readable answer to the existing draft");
     check(state().value("commandReplies",0U)==quoteReplies&&!state().value("pending",true),"Quote does not submit a command or send a message");
     check(focus()==editor,"Quote focuses the native composer for a follow-up question");setDraft(keptDraft.c_str());
+    accessible->accDoDefaultAction(child(named(L"Reply to this Hyphen message")));
+    wait([]{return !state().value("replyTarget",Json::object()).empty();},"Reply attaches the exact selected message");
+    check(draft()==keptDraft&&!state().value("pending",true),"Reply preserves the draft and never submits it");
+    check(focus()==editor,"Reply focuses the actual native composer");
+    const auto replyState=state();check(replyState.at("replyTarget").value("id","")=="formatted-reply","Reply uses message identity, not the newest answer");
+    check(replyState.value("transcriptBottom",999)<actionState.value("transcriptBottom",0),"Reply preview reserves transcript space above the composer");
+    check(name(named(L"Replying to Hyphen")).size()>0,"The reply preview has readable accessible text");
+    saveCapture((L"ux-reply-"+std::to_wstring(dpi)+L".png").c_str());
+    accessible->accDoDefaultAction(child(named(L"Cancel reply to Hyphen")));
+    wait([]{return state().value("replyTarget",Json::object()).empty();},"Cancel removes the reply target");
+    check(draft()==keptDraft&&focus()==editor,"Cancel keeps the draft and returns focus to Message");
     // Source updates expose Open chat and preserve the draft rather than
     // replaying the source prompt as a conversational reply from Hyphen.
     fault("patch",{{"assistant",{{"messages",Json::array({{{"id","automatic-update"},{"kind","update"},{"text",""},{"answer","Launch planning\nPlease fix the launch\nThe launch notes are ready for your review.\nReady to review"},{"update",{{"title","Launch planning"},{"summary","The launch notes are ready for **your review**.\n\n- Check the launch notes\n- Run `npm test`"},{"label","Ready to review"}}},{"links",Json::array({{{"index",0},{"chatName","Launch planning"},{"draft",""}}})},{"status","completed"}}})},{"responding",false},{"error",""}}}});
@@ -220,6 +231,7 @@ try {
         if(hit.value("action","")=="assistantUse")updateAction=true;
     }
     check(updateAction,"Automatic source preview retains its destination action");
+    check(name(named(L"Reply to this Hyphen message")).size()>0,"Automatic updates expose Reply");
     check(name(named(L"The launch notes are ready for your review")).find(L"Please fix the launch")==std::wstring::npos,"Automatic preview does not repeat the source user request");
     saveCapture((L"ux-source-update-"+std::to_wstring(dpi)+L".png").c_str());
     // Long failure feedback occupies its own measured space above the transcript.
