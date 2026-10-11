@@ -61,6 +61,7 @@ int main() {
         check(command(endpoint,taskbar::Command::Hello)==1,"Fresh hello succeeds");
         auto forged=endpoint; forged.cookie^=1;
         check(command(forged,taskbar::Command::Hover)==0 && !IsWindowVisible(panel),"Invalid session cannot reveal panel");
+        check(command(forged,taskbar::Command::Disable)==0,"Invalid session cannot disable weather recovery");
         check(command(endpoint,taskbar::Command::Ready)==1,"Adapter ready acknowledged");
         DWORD_PTR restartResult=0;
         check(SendMessageTimeoutW(control,RegisterWindowMessageW(L"TaskbarCreated"),0,0,SMTO_ABORTIFHUNG,2000,&restartResult)!=0,"Isolated taskbar restart message completes");
@@ -81,6 +82,8 @@ int main() {
         check(!IsWindowVisible(panel),"Escape dismisses");
         check(command(endpoint,taskbar::Command::Stopped)==1&&WaitForSingleObject(process.hProcess,0)==WAIT_TIMEOUT,"Stopped adapter leaves the queue and tray available");
         check(command(endpoint,taskbar::Command::Failed)==1&&command(endpoint,taskbar::Command::Hello)==1,"Failed adapter leaves the native control responsive");
+        Sleep(1500);
+        check(command(endpoint,taskbar::Command::Disable)==1,"Explicit detach disables recovery without closing the queue");
         PostMessageW(control,WM_CLOSE,0,0);
         check(WaitForSingleObject(process.hProcess,3000)==WAIT_OBJECT_0,"Own native app exits gracefully");
         DWORD exit=1; check(GetExitCodeProcess(process.hProcess,&exit)!=0,"Read native child exit status");
@@ -95,7 +98,7 @@ int main() {
         }
         check(!trace.empty(),"Read trace from this isolated app only");
         check(trace.find("\"weatherGuard\":true")==std::string::npos && trace.find("\"triggerVisible\":true")==std::string::npos,"Runtime never enabled global hook or visible trigger");
-        check(trace.find("\"adapterAutoAttach\":true")==std::string::npos&&trace.find("\"event\":\"explorer-restarted\"")==std::string::npos,"Isolated app cannot attach to Explorer after the taskbar restart message");
+        check(trace.find("\"adapterAutoAttach\":true")==std::string::npos&&trace.find("\"event\":\"explorer-restarted\"")==std::string::npos&&trace.find("\"event\":\"adapter-retry-scheduled\"")==std::string::npos,"Isolated app cannot attach or schedule recovery after taskbar restart or adapter failure");
         CloseHandle(process.hProcess);process={};panel=nullptr;
         launch+=L" --no-auto-attach";
         check(CreateProcessW(executable.c_str(),launch.data(),nullptr,nullptr,FALSE,0,nullptr,nullptr,&startup,&process)!=0,"Start only a fresh owned replacement panel with attachment disabled");

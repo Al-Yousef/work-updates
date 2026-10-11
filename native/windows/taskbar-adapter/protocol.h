@@ -8,7 +8,7 @@
 
 namespace taskbar {
 constexpr UINT message = WM_APP + 0x360;
-enum class Command : LPARAM { Ready=1, Hover=2, Leave=3, Click=4, Stopped=5, Failed=6, Hello=7 };
+enum class Command : LPARAM { Ready=1, Hover=2, Leave=3, Click=4, Stopped=5, Failed=6, Hello=7, Disable=8 };
 constexpr std::uint64_t magic = 0x3152414254575557ULL;
 struct Endpoint {
     std::uint64_t signature=magic, cookie=0, window=0;
