@@ -344,7 +344,7 @@ int wmain(int argc,wchar_t** argv){
             check(last(trace).value("sidebarOffset",-1)==sidebarAfter,"Conversation scroll keeps sidebar position");
             check(!last(trace).value("assistantFollow",true),"Reading older messages pauses assistant transcript following");
             clickAction(AuditAction::Latest);check(last(trace).value("assistantFollow",false),"Latest explicitly resumes transcript following");
-            DWORD_PTR bubble=0;check(SendMessageTimeoutW(panel,WM_APP+212,0,0,SMTO_ABORTIFHUNG,2000,&bubble)!=0&&bubble,"The native audit finds a visible text balloon");
+            DWORD_PTR bubble=0;check(SendMessageTimeoutW(panel,WM_APP+212,0,1,SMTO_ABORTIFHUNG,2000,&bubble)!=0&&bubble,"The native audit finds a visible assistant text balloon");
             RECT panelBounds{};GetClientRect(panel,&panelBounds);const double bubbleScale=panelBounds.right/chatlayout::width;
             POINT bubblePoint{static_cast<LONG>(LOWORD(bubble)*bubbleScale),static_cast<LONG>(HIWORD(bubble)*bubbleScale)};ClientToScreen(panel,&bubblePoint);
             SendMessageW(panel,WM_CONTEXTMENU,reinterpret_cast<WPARAM>(panel),MAKELPARAM(bubblePoint.x,bubblePoint.y));

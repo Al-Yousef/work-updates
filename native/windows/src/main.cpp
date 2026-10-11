@@ -391,7 +391,7 @@ struct Renderer {
             sink->EndFigure(D2D1_FIGURE_END_CLOSED);require(sink->Close(),"Close balloon path");canvas->FillGeometry(tail.get(),brush);}
             brush->SetColor(user?chatstyle::inverse():chatstyle::ink());canvas->DrawTextLayout(D2D1::Point2F(bubbleLeft+12,y+6),layout,brush,D2D1_DRAW_TEXT_OPTIONS_ENABLE_COLOR_FONT);
             const auto target=D2D1::RectF(bubbleLeft,std::max(chatlayout::transcriptTop,y),bubbleLeft+bubbleWidth,std::min(transcriptBottom(),y+height));
-            if(target.bottom>target.top)messageTargets.push_back({target,"message",{{"text",content},{"tail",terminal}}});
+            if(target.bottom>target.top)messageTargets.push_back({target,"message",{{"text",content},{"tail",terminal},{"user",user}}});
         }
         return height+(terminal?10:3);
     }
@@ -1617,6 +1617,8 @@ LRESULT CALLBACK panelProc(HWND window, UINT message, WPARAM wp, LPARAM lp) {
             if(!app.auditCapturePath.empty()&&wp<std::size(auditActionNames))for(const auto& hit:app.renderer.hits)if(hit.enabled&&hit.action==auditActionNames[wp])return MAKELRESULT(static_cast<WORD>((hit.box.left+hit.box.right)/2),static_cast<WORD>((hit.box.top+hit.box.bottom)/2));
             return 0;
         case WM_APP+212:
+            if(!app.auditCapturePath.empty()&&lp==1){size_t index=0;for(const auto& target:app.renderer.messageTargets)if(target.action=="message"&&!target.card.value("user",true)){
+                if(index++==wp){auto box=target.box;return MAKELRESULT(static_cast<WORD>((box.left+box.right)/2),static_cast<WORD>((box.top+box.bottom)/2));}}return 0;}
             if(!app.auditCapturePath.empty()&&wp<app.renderer.messageTargets.size()){auto box=app.renderer.messageTargets[wp].box;return MAKELRESULT(static_cast<WORD>((box.left+box.right)/2),static_cast<WORD>((box.top+box.bottom)/2));}return 0;
         case WM_APP+213: return app.auditCapturePath.empty()?0:app.renderer.draws;
         case WM_APP+214: {
