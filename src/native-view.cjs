@@ -2,7 +2,7 @@
 // The native view is a projection, never another queue or writer owner.
 const crypto=require('node:crypto');
 const path=require('node:path');
-const {presentAnswer}=require('./assistant-presentation.cjs');
+const {presentAnswer,presentUpdate}=require('./assistant-presentation.cjs');
 const clipped = (value, limit) => {
   const text = String(value ?? '').toWellFormed();
   let end = Math.min(limit, text.length);
@@ -49,8 +49,9 @@ function nativeView(state) {
     connectionHealth:state.connectionHealth,
     profile:state.profile && {schema:1,id:state.profile.id,displayName:clipped(state.profile.displayName,48),
       avatarStyle:state.profile.avatarStyle,initials:clipped(state.profile.initials,4),reducedMotion:state.profile.reducedMotion===true},
-    assistant: state.assistant && {...state.assistant,messages:state.assistant.messages.slice(-30).map(m=>{const display=presentAnswer(m.answer);return {
+    assistant: state.assistant && {...state.assistant,messages:state.assistant.messages.slice(-30).map(m=>{const display=m.kind==='update'?presentUpdate(m,state.cards):presentAnswer(m.answer);return {
       answer:display.text,answerSpans:display.spans,
+      kind:m.kind==='update'?'update':'reply',
       id:m.id,text:clipped(m.text,4000),status:m.status,error:clipped(m.error,300),at:m.at,images:m.images||[],
       links:(m.links||[]).slice(0,3).map(link=>({index:link.index,chatName:clipped(link.chatName,180),hasDraft:!!link.draft}))
     };})},

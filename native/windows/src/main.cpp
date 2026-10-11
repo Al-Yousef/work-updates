@@ -374,6 +374,11 @@ struct Renderer {
             const auto kind=span.value("kind","");
             if(kind=="bold")layout->SetFontWeight(DWRITE_FONT_WEIGHT_SEMI_BOLD,range);
             else if(kind=="code")layout->SetFontFamilyName(L"Consolas",range);
+            else if(kind=="secondary"){
+                layout->SetFontSize(13*chatlayout::textScale,range);
+                Com<ID2D1SolidColorBrush> statusBrush;require(canvas->CreateSolidColorBrush(chatstyle::secondary(),statusBrush.put()),"Update status brush");
+                layout->SetDrawingEffect(statusBrush.get(),range);
+            }
         }
         bubbleLayouts[key]=std::move(cached);}
         DWRITE_TEXT_METRICS metrics{};layout->GetMetrics(&metrics);const float height=std::max(34.0f,metrics.height+12);
@@ -491,14 +496,15 @@ struct Renderer {
         const auto muted=chatstyle::secondary();const auto ai=model.state.value("assistant",Json::object());
         contactHeader(brush,Json::object(),true);
         auto messages=ai.value("messages",Json::array());const float top=chatlayout::transcriptTop,bottom=transcriptBottom();float total=0;
-        const auto scale=chatlayout::textScale,linkHeight=std::max(40.0f,24*scale+8),welcomeButton=std::max(44.0f,26*scale),actionHeight=std::max(32.0f,22*scale+8);
+        const auto scale=chatlayout::textScale,linkHeight=std::max(32.0f,24*scale+8),welcomeButton=std::max(44.0f,26*scale),actionHeight=std::max(32.0f,22*scale+8);
         if(messages.empty()&&scale>1)total=96*scale+24+2*welcomeButton+8;
         for(const auto& m:messages) {
             total+=chatBubble(brush,m.value("text",""),0,true,false,m.value("images",Json::array()).empty());
             total+=messageImages(brush,m.value("images",Json::array()),0,true,false,top,bottom);
             auto answer=m.value("status","")=="thinking"?"Thinking…":m.value("status","")=="failed"?m.value("error","Could not answer."):m.value("answer","");
-            total+=chatBubble(brush,answer,0,false,false,true,m.value("answerSpans",Json::array()))+m.value("links",Json::array()).size()*(linkHeight+8);
-            if(!model.assistantAnswer(m.value("id","")).empty())total+=actionHeight+8;
+            const bool update=m.value("kind","")=="update";
+            total+=chatBubble(brush,answer,0,false,false,!update,m.value("answerSpans",Json::array()))+m.value("links",Json::array()).size()*(linkHeight+4)+12;
+            if(!update&&!model.assistantAnswer(m.value("id","")).empty())total+=actionHeight-2;
         }
         model.assistantOffset=std::clamp(model.assistantOffset,0,std::max(0,static_cast<int>(total-bottom+top)));
         canvas->PushAxisAlignedClip(D2D1::RectF(CHAT_LEFT,top,WIDTH-28,bottom),D2D1_ANTIALIAS_MODE_PER_PRIMITIVE);
@@ -522,23 +528,27 @@ struct Renderer {
             y+=chatBubble(brush,m.value("text",""),y,true,true,m.value("images",Json::array()).empty());
             y+=messageImages(brush,m.value("images",Json::array()),y,true,true,top,bottom);
             auto answer=m.value("status","")=="thinking"?"Thinking…":m.value("status","")=="failed"?m.value("error","Could not answer."):m.value("answer","");
-            y+=chatBubble(brush,answer,y,false,true,true,m.value("answerSpans",Json::array()));
-            if(!model.assistantAnswer(m.value("id","")).empty()) {
-                const float actionWidth=std::min(110.0f*scale,(WIDTH-CHAT_LEFT-48)/2);
+            const bool update=m.value("kind","")=="update";
+            y+=chatBubble(brush,answer,y,false,true,!update,m.value("answerSpans",Json::array()));
+            if(!update&&!model.assistantAnswer(m.value("id","")).empty()) {
+                y-=6;
+                const float actionWidth=std::min(68.0f*scale,(WIDTH-CHAT_LEFT-48)/2);
                 if(y>=top&&y+actionHeight<=bottom)for(int i=0;i<2;++i){
-                    const float x=CHAT_LEFT+8+i*(actionWidth+8);
+                    const float x=CHAT_LEFT+8+i*(actionWidth+4);
                     button(brush,i?"Quote":"Copy",D2D1::RectF(x,y,x+actionWidth,y+actionHeight),i?"quoteAssistant":"copyAssistant");
                     hits.back().card={{"messageId",m.value("id","")}};
                 }
-                y+=actionHeight+8;
+                y+=actionHeight+4;
             }
             for(const auto& link:m.value("links",Json::array())) {
-                auto box=D2D1::RectF(CHAT_LEFT,y,WIDTH-28,y+linkHeight);
-                if(y>=top&&y+linkHeight<=bottom){button(brush,std::string(link.value("hasDraft",false)?"Use draft · ":"Open update · ")+link.value("chatName",""),box,"assistantUse",!model.pending);
+                auto box=D2D1::RectF(CHAT_LEFT+8,y,WIDTH-28,y+linkHeight);
+                const auto title=link.value("hasDraft",false)?std::string("Use draft · ")+link.value("chatName",""):update?std::string("Open chat ›"):std::string("Open update · ")+link.value("chatName","");
+                if(y>=top&&y+linkHeight<=bottom){button(brush,title,box,"assistantUse",!model.pending);
                     if(!model.pending)hits.back().card={{"messageId",m.value("id","")},{"index",link.value("index",0)}};}
                 else label(link.value("chatName",""),12,box,muted);
-                y+=linkHeight+8;
+                y+=linkHeight+4;
             }
+            y+=12;
         }
         canvas->PopAxisAlignedClip();
 

@@ -72,6 +72,7 @@ class Assistant extends EventEmitter {
         !(card.urgent||card.status==='needs'||card.status==='ready'||card.waitingOn?.kind==='you'||(card.status==='blocked'&&card.waitingOn?.kind!=='other')))continue;
       const source=card.sources?.find(s=>s.id===card.primarySourceId)||card.sources?.[0];
       arrived.push({id:crypto.randomUUID(),text:'',kind:'update',status:'completed',at:Date.now(),
+        update:{title:clip(card.chatName||card.title,180),summary:clip(card.summary,1800),label:clip(card.label,160)},
         answer:clip([...new Set([card.chatName||card.title,card.title,card.summary,card.label].filter(Boolean))].join('\n'),1800),links:source?[{
           id:card.id,taskKey:card.taskKey,sourceId:source.id,ownerId:card.owner?.id||'local',revision:revision(card),
           chatName:clip(card.chatName||card.title,180),draft:''}]:[]});
