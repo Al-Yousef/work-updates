@@ -264,6 +264,7 @@ test('actual provider wiring records only matching thread/turn usage; model cata
   const f = setup(t),
     client = new ProviderFixture(),
     provider = new AssistantProvider({
+      persistent:false,
       directory: f.directory,
       budgets: f.b,
       clientFactory: () => client,
@@ -276,6 +277,7 @@ test('actual provider wiring records only matching thread/turn usage; model cata
   assert.equal(f.b.inspect().hardExecutionTokenCap, false);
   const foreign = new ProviderFixture('foreign');
   await new AssistantProvider({
+      persistent:false,
     directory: f.directory,
     budgets: f.b,
     clientFactory: () => foreign,
@@ -288,6 +290,7 @@ test('exhausted budgets prevent thread/inference creation rather than failing af
   const client = new ProviderFixture();
   await assert.rejects(
     new AssistantProvider({
+      persistent:false,
       directory: f.directory,
       budgets: f.b,
       clientFactory: () => client,

@@ -110,20 +110,22 @@ class FakeClient extends EventEmitter {
   async call(method,params){this.calls.push({method,params});
     if(method==='model/list')return {data:[{model:'gpt-6-luna'}]};
     if(method==='config/read')return {config:{mcp_servers:{danger:{}},plugins:{danger:{}}}};
-    if(method==='thread/start')return {thread:{id:'assistant-session',ephemeral:this.mode!=='persistent'}};
+    if(method==='thread/start')return {thread:{id:'assistant-session',ephemeral:this.mode==='ephemeral'}};
+    if(['thread/read','thread/resume'].includes(method))return {thread:{id:'assistant-session',ephemeral:false,status:{type:'idle'},turns:[]}};
     if(method==='turn/start'){queueMicrotask(()=>{
+      this.emit('notification',{method:'turn/started',params:{threadId:params.threadId,turn:{id:'test'}}});
       if(this.mode==='tool'){this.emit('request',{id:3,method:'item/commandExecution/requestApproval'});return;}
-      this.emit('notification',{method:'item/completed',params:{threadId:params.threadId,item:{type:'agentMessage',text:JSON.stringify({answer:'Hello',links:[]})}}});
-      this.emit('notification',{method:'turn/completed',params:{threadId:params.threadId,turn:{status:'completed'}}});
+      this.emit('notification',{method:'item/completed',params:{threadId:params.threadId,item:{type:'agentMessage',text:params.outputSchema?JSON.stringify({answer:'Hello',links:[]}):'Hello'}}});
+      this.emit('notification',{method:'turn/completed',params:{threadId:params.threadId,turn:{id:'test',status:'completed'}}});
     });return {turn:{id:'test'}};}
   }
   reject(id){this.rejected=id;}
   close(){this.closed=true;}
 }
-test('provider uses an isolated cheap read-only session with all execution and connectors disabled',async t=>{
+test('provider uses a continuing read-only chat with scoped tools and general execution disabled',async t=>{
   const {directory}=fixture(t);const client=new FakeClient();const provider=new AssistantProvider({directory,clientFactory:()=>client});
   assert.equal((await provider.answer({question:'Hello'})).answer,'Hello');assert.equal(client.closed,true);
-  const start=client.calls.find(c=>c.method==='thread/start').params;assert.equal(start.ephemeral,true);assert.equal(start.sandbox,'read-only');
+  const start=client.calls.find(c=>c.method==='thread/start').params;assert.equal(start.ephemeral,false);assert.equal(start.sandbox,'read-only');
   assert.equal(start.config['features.shell_tool'],false);assert.equal(start.config['mcp_servers.danger.enabled'],false);assert.equal(start.config['plugins.danger.enabled'],false);
   assert.ok(!client.calls.some(c=>c.method==='thread/resume'));assert.equal(client.calls.find(c=>c.method==='turn/start').params.model,'gpt-6-luna');
 });
@@ -132,22 +134,22 @@ test('a tool request is rejected and the assistant transport is closed',async t=
   await assert.rejects(provider.answer({question:'Hello'}),/unsupported tool/);assert.equal(client.rejected,3);assert.equal(client.closed,true);
 });
 test('private channel clients retain readable plain-text answers',async t=>{
-  const {directory}=fixture(t);const client=new FakeClient();const provider=new AssistantProvider({directory,clientFactory:()=>client});
+  const {directory}=fixture(t);const client=new FakeClient('ephemeral');const provider=new AssistantProvider({directory,persistent:false,clientFactory:()=>client});
   await provider.answer({question:'Hello',channel:{id:'synthetic-private-client'}});
   const start=client.calls.find(c=>c.method==='thread/start').params;
   assert.ok(start.developerInstructions.endsWith('Return answer as plain text without markdown syntax; keep short paragraphs and readable lists.'));
   assert.equal(start.ephemeral,true);assert.equal(start.sandbox,'read-only');
 });
-test('provider refuses persistence before invoking a model',async t=>{
-  const {directory}=fixture(t);const client=new FakeClient('persistent');const provider=new AssistantProvider({directory,clientFactory:()=>client});
-  await assert.rejects(provider.answer({question:'Hello'}),/private assistant/);assert.ok(!client.calls.some(c=>c.method==='turn/start'));assert.equal(client.closed,true);
+test('provider refuses ephemeral fallback before invoking a model',async t=>{
+  const {directory}=fixture(t);const client=new FakeClient('ephemeral');const provider=new AssistantProvider({directory,clientFactory:()=>client});
+  await assert.rejects(provider.answer({question:'Hello'}),/continuing Codex chat/);assert.ok(!client.calls.some(c=>c.method==='turn/start'));assert.equal(client.closed,true);
 });
 test('provider sends image pixels through localImage input and does not put image paths in text context',async t=>{
   const {directory}=fixture(t),client=new FakeClient(),provider=new AssistantProvider({directory,clientFactory:()=>client});
   await provider.answer({question:'Explain this',images:[{path:'C:/private/image.png',id:'test'}]});
   const turn=client.calls.find(c=>c.method==='turn/start').params;
   assert.deepEqual(turn.input[1],{type:'localImage',path:'C:/private/image.png'});
-  assert.ok(!turn.input[0].text.includes('C:/private'));assert.equal(JSON.parse(turn.input[0].text).attachedImages,1);
+  assert.ok(!turn.input[0].text.includes('C:/private'));assert.equal(turn.input[0].text,'Explain this');assert.equal(JSON.parse(turn.additionalContext.hyphen_state.value).attachedImages,1);
 });
 test('ordinary questions keep the small model and visual questions select an image-capable workhorse',async t=>{
   const {directory}=fixture(t);const create=()=>{const c=new FakeClient(),call=c.call.bind(c);c.call=async(method,params)=>method==='model/list'?{data:[

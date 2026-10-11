@@ -8,7 +8,7 @@ const snapshot={cards:[
   {...base,id:'you',taskKey:'you-v1',chatName:'Release review',title:'Approve a prepared release',summary:'A tested draft is ready for the user to review. It is not published.',status:'needs',urgent:true,waitingOn:{kind:'you'},primarySourceId:'release',sources:[{id:'release',lifecycle:'completed'}]},
   {...base,id:'other',taskKey:'other-v1',chatName:'Design feedback',title:'Await design feedback',summary:'Waiting on Morgan to review the design.',status:'waiting',waitingOn:{kind:'other',name:'Morgan'},primarySourceId:'design',sources:[{id:'design',lifecycle:'completed'}]},
 ],done:[],health:{ok:true},collectedAt:Math.floor(Date.now()/1000),monitoredCount:2};
-const app=new Assistant({directory,snapshot:()=>snapshot});
+const app=new Assistant({directory,persistent:false,snapshot:()=>snapshot});
 (async()=>{try {
   const ask=async text=>{app.ask({messageId:crypto.randomUUID(),text});await app.work;
     const message=app.state.messages.at(-1);if(message.status!=='completed')throw new Error(message.error);return message;};

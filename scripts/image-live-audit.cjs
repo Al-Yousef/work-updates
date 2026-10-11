@@ -11,7 +11,7 @@ const pixels=Buffer.alloc(256*(1+512*3));for(let y=0;y<256;y++)for(let x=0;x<512
 const file=path.join(directory,'sample.png');fs.writeFileSync(file,Buffer.concat([Buffer.from([137,80,78,71,13,10,26,10]),chunk('IHDR',header),chunk('IDAT',zlib.deflateSync(pixels)),chunk('IEND',Buffer.alloc(0))]));
 const attachments=new Attachments(directory),[image]=attachments.import([file]);
 const log=new DiagnosticLog(directory);
-const provider=new AssistantProvider({directory:path.join(directory,'session'),timeoutMs:120000,clientFactory:()=>{
+const provider=new AssistantProvider({directory:path.join(directory,'session'),persistent:false,timeoutMs:120000,clientFactory:()=>{
   const client=new Codex({log,requestTimeoutMs:15000});client.on('notification',m=>log.write('vision.event',{method:m.method,itemType:m.params?.item?.type,status:m.params?.turn?.status,message:m.params?.error?.message}));return client;
 }});
 const assistant=new Assistant({directory,attachments,provider,snapshot:()=>({cards:[],done:[],health:{ok:true},collectedAt:Math.floor(Date.now()/1000)})});

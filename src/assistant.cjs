@@ -24,7 +24,9 @@ const {command:delegationCommand}=require('./delegation-command.cjs');
 const {command:workCommand}=require('./work-command.cjs');
 class Assistant extends EventEmitter {
   constructor(options) {
-    super();this.options=options;this.file=path.join(options.directory,'assistant.json');this.active=false;this.generations=new Set();this.closed=false;this.error='';
+    super();this.options={...options,snapshot:()=>{const value=options.snapshot(),own=this.provider?.session?.state.threadId;
+      if(!own)return value;const keep=c=>!c.sources?.some(s=>s.id===own);return {...value,cards:(value.cards||[]).filter(keep),done:(value.done||[]).filter(keep)};}};
+    this.file=path.join(options.directory,'assistant.json');this.active=false;this.generations=new Set();this.closed=false;this.error='';
     this.state={version:2,messages:[],notes:[],receipts:{},seen:null,focus:null};
     try {if(fs.existsSync(this.file)) {
       if(fs.statSync(this.file).size>32*1024*1024)throw new Error();
@@ -45,7 +47,7 @@ class Assistant extends EventEmitter {
       if(recovered)this.save();
     }}catch{this.error='Assistant history could not be loaded. The original file is preserved.';}
     this.attachments=options.attachments||new Attachments(options.directory);
-    this.provider=options.provider||new AssistantProvider({directory:path.join(options.directory,'assistant-session'),binary:options.binary,budgets:options.budgets});
+    this.provider=options.provider||new AssistantProvider({directory:path.join(options.directory,'assistant-session'),binary:options.binary,persistent:options.persistent,budgets:options.budgets,onSession:options.assistantSessionChanged});
   }
   trim(){const kept=new Set([...this.state.messages.filter(conversation).slice(-500),...this.state.messages.filter(m=>m.kind==='update').slice(-40)]);this.state.messages=this.state.messages.filter(m=>kept.has(m));}
   save(){this.trim();if(Buffer.byteLength(JSON.stringify(this.state))>32*1024*1024)throw new Error('Hyphen history reached its local storage limit.');atomic(this.file,this.state);}
@@ -108,7 +110,8 @@ class Assistant extends EventEmitter {
     if(local===null){this.generations.add(message.id);this.active=true;this.work=this.generate(message);}
     this.emit('change');return {accepted:true,messageId:message.id};
   }
-  local(text) {
+  local(text,providerForgotten=false) {
+    if(this.provider.persistent&&!providerForgotten&&/^\/forget history (?:all|\d+)$/i.test(text))return null;
     if(/^\/memory history$/i.test(text)){
       const exchanges=this.state.messages.filter(m=>m.status==='completed'&&m.kind!=='memory_inspection'&&conversation(m)).slice(-20);
       this.state.historySelection=exchanges.map(m=>m.id);
@@ -158,6 +161,14 @@ class Assistant extends EventEmitter {
   async generate(message) {
     const started=Date.now();
     try {
+      if(this.provider.persistent&&/^\/forget history (?:all|\d+)$/i.test(message.text)){
+        const selected=message.text.match(/^\/forget history (\d+)$/i);
+        if(selected&&!this.state.messages.some(m=>m.id===this.state.historySelection?.[Number(selected[1])-1]&&m.status==='completed'&&conversation(m))){
+          message.answer=this.local(message.text,true);message.status='completed';this.save();return;
+        }
+        await this.provider.forget();message.answer=this.local(message.text,true)+' The previous Hyphen Codex chat was removed; the next question starts a fresh one.';
+        message.status='completed';this.save();return;
+      }
       const profile=message.text.match(/^\/profile (inspect|set)(?: (.+))?$/i);
       if(profile){
         if(!this.options.profile)throw new Error('Profile preferences are unavailable on this client.');
@@ -241,7 +252,8 @@ class Assistant extends EventEmitter {
         message.links=current.data.cards.filter(c=>c.hasChat&&!c.done).slice(0,3).map(c=>({...current.refs.get(c.ref),draft:message.proposal.text}));this.save();return;}
       let images=message.images||[];
       if(!images.length&&/\b(image|photo|picture|screenshot|attachment|shown|left|right|colou?r|previous|earlier|that|this)\b/i.test(message.text)){const prior=message.replyTo?message.replyTo:recent.findLast(m=>m.imageIds.length);if(prior?.imageIds?.length){try{images=this.attachments.resolve(prior.imageIds);}catch{prior.imagesUnavailable=true;}}}
-      const value=await this.provider.answer({question:message.text||'Describe the attached image and help me understand it.',replyTo:message.replyTo?{...message.replyTo,provenance:'selected_assistant_message'}:undefined,images,imagesFromHistory:!(message.images||[]).length&&!!images.length,history:recent,recalledHistory:recalled.recalled,userEvidence:recalled.userEvidence,historyCoverage:recalled.coverage,savedNotes:this.state.notes,
+      const tools=new (require('./assistant-tools.cjs').AssistantTools)({assistant:this,message,current,requested});
+      const value=await this.provider.answer({messageId:message.id,question:message.text||'Describe the attached image and help me understand it.',replyTo:message.replyTo?{...message.replyTo,provenance:'selected_assistant_message'}:undefined,images,imagesFromHistory:!(message.images||[]).length&&!!images.length,history:recent,recalledHistory:recalled.recalled,userEvidence:recalled.userEvidence,historyCoverage:recalled.coverage,savedNotes:this.state.notes,
         savedNotesProvenance:'explicit_pinned_notes',memoryCoverage:{retentionExchanges:500,retentionAlerts:40,pinnedNoteLimit:32,pinnedNoteCharacters:this.state.notes.join('').length},queue:current.data,
         assistantPresentation:this.options.profile?.snapshot(),
         responsibilities:this.options.responsibilities?.snapshot().slice(-8).map(r=>({id:r.id,origin:{text:clip(r.origin.text,600),provenance:'accepted_human_instruction'},instruction:clip(r.instruction,800),revision:r.revision,state:r.state,chatName:r.scope.chatName,ownerId:r.ownerId,stepStatus:r.currentStep.status,wakeReason:r.wakeReason.kind,completionCriteria:r.completionCriteria})),
@@ -255,7 +267,7 @@ class Assistant extends EventEmitter {
         activity:this.options.activity?.context(),
         outcomes:this.options.outcomes?.context(),
         delegations:this.options.delegations?.snapshot().slice(-8).map(e=>({id:e.id,parentId:e.parentId,parentRevision:e.parentRevision,childId:e.childId,chatName:e.scope.chatName,ownerId:e.scope.ownerId,purpose:clip(e.purpose,500),phase:e.phase,limits:e.limits,cancelRequested:e.cancelRequested,review:e.review?{kind:e.review.kind,text:clip(e.review.text,300)}:null,missingEvidence:e.missingEvidence,parentGoalVerification:'Tracked separately on the parent responsibility'})),
-        canRequestChatMessage:!!this.options.dispatch&&!!requestedRef,requestedChatRef:requestedRef,requestedMessage:requested?.proposal||null});
+        canRequestChatMessage:!!this.options.dispatch&&!!requestedRef,requestedChatRef:requestedRef,requestedChatHandle:tools.requestedChatHandle,requestedMessage:requested?.proposal||null},tools);
       if(this.closed)return;
       if(typeof value.answer!=='string'||!value.answer.trim()||value.answer.length>6000||!Array.isArray(value.links)||value.links.length>3)
         throw new Error('Hyphen returned an invalid answer.');
@@ -264,27 +276,11 @@ class Assistant extends EventEmitter {
         if(!ref||seen.has(link.ref)||typeof link.draft!=='string'||link.draft.length>12000||(!ref.sourceId&&link.draft))throw new Error('Hyphen returned an invalid chat reference.');
         seen.add(link.ref);links.push({...ref,draft:link.draft});}
       message.answer=value.answer;message.links=links;message.status='completed';message.model=value.model||'';
-      if(requested&&!value.action){message.proposal=requested.proposal;message.answer='Your message has not been sent or queued. The proposed text is saved:\n'+requested.proposal.text;}
-      if(value.action) {
-        if(!this.options.dispatch||!requestedRef||value.action.ref!==requestedRef)throw new Error('A chat message needs a clear instruction and destination from you. No message was sent.');
-        const ref=current.refs.get(value.action.ref);
-        if(!ref?.sourceId||typeof value.action.text!=='string'||!value.action.text.trim()||value.action.text.length>12000||!['send','queue'].includes(value.action.mode))throw new Error('Hyphen could not identify a valid chat message. No message was sent.');
-        if(coordination.normalize(value.action.text)!==coordination.normalize(requested.proposal.text))throw new Error('The proposed message changed your instruction. No message was sent; your original text is saved.');
-        const latest=this.options.snapshot(),card=[...(latest.cards||[]),...(latest.done||[])].find(c=>c.id===ref.id&&c.taskKey===ref.taskKey&&(c.owner?.id||'local')===ref.ownerId&&revision(c)===ref.revision);
-        const source=card?.sources?.find(s=>s.id===ref.sourceId);
-        const collectedAt=Number(latest.collectedAt||latest.feedCollectedAt||0),age=Date.now()/1000-collectedAt;
-        if(!latest.health?.ok||collectedAt<=0||!Number.isFinite(age)||age< -5||age>30||!card||card.done||card.owner?.online===false||!source||source.deliveryIssue)throw new Error('The source chat changed or is unavailable. No message was sent.');
-        const mode=requested.proposal.mode==='queue'||['working','starting'].includes(source.lifecycle)||['working','starting'].includes(card.status)?'queue':'send';
-        message.status='thinking';message.action={...ref,text:requested.proposal.text,mode,messageId:crypto.randomUUID(),status:'dispatching'};this.save();
-        let receipt;
-        try{const dispatch=()=>this.options.dispatch(mode,{id:ref.id,taskKey:ref.taskKey,sourceId:ref.sourceId,messageId:message.action.messageId,text:message.action.text});
-          receipt=await (this.options.log?.scope?this.options.log.scope({assistantIntentId:message.id,messageId:message.action.messageId,sourceId:ref.sourceId,ownerId:ref.ownerId,taskKey:ref.taskKey},dispatch):dispatch());}
-        catch(error){message.action.status=error.delivery==='not-sent'?'not-sent':'unconfirmed';throw new Error(message.action.status==='not-sent'?'The chat refused the message. It was not sent; your request is saved.':'Delivery is unconfirmed. Check the source chat before sending again.');}
-        if(!coordination.receiptMatches(receipt,message.action)){message.action.status='unconfirmed';throw new Error('A matching delivery receipt is unavailable. Delivery is unconfirmed; check the source chat before sending again.');}
-        message.action.status=receipt.delivery==='sent'?'accepted':'queued';message.action.turnId=receipt.turnId||null;message.action.route=receipt.route||'';
-        message.answer=(receipt.delivery==='queued'?'Locally queued for ':'Accepted by Codex for ')+ref.chatName+':\n'+clip(message.action.text,5200)+(receipt.delivery==='queued'?'\nSay “cancel that queued message” to cancel it.':'\nThis receipt confirms acceptance; the pass has not been verified complete.');message.status='completed';
-        const exact=coordination.sourceFor(this.options.snapshot(),message.action);message.links=[exact?coordination.link(exact.card,ref.sourceId):{...ref,draft:''}];message.links[0].coordinationId=message.id;
-        this.log('chat_message',{assistantIntentId:message.id,messageId:message.action.messageId,sourceId:ref.sourceId,ownerId:ref.ownerId,taskKey:ref.taskKey,turnId:receipt.turnId,delivery:receipt.delivery,route:receipt.route||'',elapsedMs:Date.now()-started});
+      if(requested&&!value.action&&!message.action){message.proposal=requested.proposal;message.answer='Your message has not been sent or queued. The proposed text is saved:\n'+requested.proposal.text;}
+      if(value.action&&!message.action)await this.deliver(message,requested,current,value.action);
+      if(message.action){
+        if(['unconfirmed','not-sent','dispatching'].includes(message.action.status))throw new Error('Delivery is '+message.action.status+'. Check the saved source receipt before retrying.');
+        const exact=coordination.sourceFor(this.options.snapshot(),message.action);if(exact){message.links=[{...coordination.link(exact.card,message.action.sourceId),coordinationId:message.id}];}
       }
       message.contextAt=current.data.capturedAt;this.save();this.log('completed',{messageId:message.id,elapsedMs:Date.now()-started,links:links.length,model:message.model});
     } catch(error) {
@@ -294,6 +290,30 @@ class Assistant extends EventEmitter {
       try {this.save();}catch{this.error='Assistant history could not be saved. Keep the app open.';}
       this.log('failed',{messageId:message.id,elapsedMs:Date.now()-started,code:error.code||'ASSISTANT_FAILED'});
     } finally {this.generations.delete(message.id);this.active=this.generations.size>0;this.emit('change');}
+  }
+  async deliver(message,requested,current,action) {
+    const started=Date.now();
+    if(!this.options.dispatch||!requested?.ref||action.ref!==requested.ref)throw new Error('A chat message needs a clear instruction and destination from you. No message was sent.');
+    const ref=current.refs.get(action.ref);
+    if(!ref?.sourceId||typeof action.text!=='string'||!action.text.trim()||action.text.length>12000||!['send','queue'].includes(action.mode))throw new Error('Hyphen could not identify a valid chat message. No message was sent.');
+    if(coordination.normalize(action.text)!==coordination.normalize(requested.proposal.text))throw new Error('The proposed message changed your instruction. No message was sent; your original text is saved.');
+    const latest=this.options.snapshot(),card=[...(latest.cards||[]),...(latest.done||[])].find(c=>c.id===ref.id&&c.taskKey===ref.taskKey&&(c.owner?.id||'local')===ref.ownerId&&revision(c)===ref.revision);
+    const source=card?.sources?.find(s=>s.id===ref.sourceId);
+    const collectedAt=Number(latest.collectedAt||latest.feedCollectedAt||0),age=Date.now()/1000-collectedAt;
+    if(!latest.health?.ok||collectedAt<=0||!Number.isFinite(age)||age< -5||age>30||!card||card.done||card.owner?.online===false||!source||source.deliveryIssue)throw new Error('The source chat changed or is unavailable. No message was sent.');
+    const mode=requested.proposal.mode==='queue'||['working','starting'].includes(source.lifecycle)||['working','starting'].includes(card.status)?'queue':'send';
+    message.status='thinking';message.action={...ref,text:requested.proposal.text,mode,messageId:crypto.randomUUID(),status:'dispatching'};this.save();
+    let receipt;
+    try{const dispatch=()=>this.options.dispatch(mode,{id:ref.id,taskKey:ref.taskKey,sourceId:ref.sourceId,messageId:message.action.messageId,text:message.action.text});
+      receipt=await (this.options.log?.scope?this.options.log.scope({assistantIntentId:message.id,messageId:message.action.messageId,sourceId:ref.sourceId,ownerId:ref.ownerId,taskKey:ref.taskKey},dispatch):dispatch());}
+    catch(error){message.action.status=error.delivery==='not-sent'?'not-sent':'unconfirmed';throw new Error(message.action.status==='not-sent'?'The chat refused the message. It was not sent; your request is saved.':'Delivery is unconfirmed. Check the source chat before sending again.');}
+    if(!coordination.receiptMatches(receipt,message.action)){message.action.status='unconfirmed';throw new Error('A matching delivery receipt is unavailable. Delivery is unconfirmed; check the source chat before sending again.');}
+    message.action.status=receipt.delivery==='sent'?'accepted':'queued';message.action.turnId=receipt.turnId||null;message.action.route=receipt.route||'';
+    message.answer=(receipt.delivery==='queued'?'Locally queued for ':'Accepted by Codex for ')+ref.chatName+':\n'+clip(message.action.text,5200)+(receipt.delivery==='queued'?'\nSay “cancel that queued message” to cancel it.':'\nThis receipt confirms acceptance; the pass has not been verified complete.');message.status='completed';
+    const exact=coordination.sourceFor(this.options.snapshot(),message.action);message.links=[exact?coordination.link(exact.card,ref.sourceId):{...ref,draft:''}];message.links[0].coordinationId=message.id;
+    this.log('chat_message',{assistantIntentId:message.id,messageId:message.action.messageId,sourceId:ref.sourceId,ownerId:ref.ownerId,taskKey:ref.taskKey,turnId:receipt.turnId,delivery:receipt.delivery,route:receipt.route||'',elapsedMs:Date.now()-started});
+    this.save();
+    return message.action;
   }
   use(input) {
     const message=this.state.messages.find(m=>m.id===input.messageId&&m.status==='completed');
