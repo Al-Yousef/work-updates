@@ -62,7 +62,13 @@ void disablePanel(const std::filesystem::path& dll) {
     taskbar::Endpoint endpoint;
     if(!taskbar::readEndpoint(taskbar::endpointPath(dll),endpoint))return;
     Handle panel(OpenProcess(SYNCHRONIZE|PROCESS_QUERY_LIMITED_INFORMATION,FALSE,endpoint.pid));
-    if(!panel.value||WaitForSingleObject(panel.value,0)!=WAIT_TIMEOUT)return;
+    if(!panel.value) {
+        if(GetLastError()==ERROR_INVALID_PARAMETER)return;
+        throw std::runtime_error("Cannot verify panel liveness before detaching");
+    }
+    const auto liveness=WaitForSingleObject(panel.value,0);
+    if(liveness==WAIT_OBJECT_0)return;
+    if(liveness!=WAIT_TIMEOUT)throw std::runtime_error("Cannot verify panel liveness before detaching");
     wchar_t path[32768]{};DWORD size=32768;
     const auto expected=dll.parent_path()/L"Native Hover.exe";std::error_code error;
     const auto window=reinterpret_cast<HWND>(static_cast<std::uintptr_t>(endpoint.window));DWORD pid=0;GetWindowThreadProcessId(window,&pid);

@@ -798,6 +798,7 @@ struct App {
     bool weatherAvailable=false, weatherInside=false, hoverTimer=false;
     bool taskbarAdapter=true, adapterReady=false,allowAdapterAttach=true;
     HANDLE adapterControl=nullptr;
+    DWORD adapterShellPid=0;
     taskbar::Recovery adapterRecovery;
     taskbar::Endpoint adapterEndpoint{};
     HWINEVENTHOOK foregroundHook=nullptr, reorderHook=nullptr;
@@ -862,6 +863,7 @@ struct App {
             << ",\"weatherGuard\":" << (input.hook?"true":"false") << ",\"weatherCommands\":" << weatherCommands
             << ",\"taskbarAdapter\":" << (taskbarAdapter?"true":"false") << ",\"adapterReady\":" << (adapterReady?"true":"false")
             << ",\"adapterRetryAttempts\":" << adapterRecovery.attempts << ",\"adapterRetryPending\":" << (adapterRecovery.pending?"true":"false")
+            << ",\"adapterShellPid\":" << adapterShellPid
             << ",\"weatherAvailable\":" << (weatherAvailable?"true":"false")
             << ",\"adapterAutoAttach\":" << (allowAdapterAttach?"true":"false")
             << ",\"panelVisible\":" << (IsWindowVisible(panel)?"true":"false")
@@ -1709,6 +1711,7 @@ LRESULT CALLBACK triggerProc(HWND window, UINT message, WPARAM wp, LPARAM lp) {
                 app.log("adapter-disabled");return 1;
             case taskbar::Command::Ready:
                 app.adapterReady=true;app.adapterRecovery.ready();KillTimer(window,TIMER_ADAPTER_RETRY);
+                GetWindowThreadProcessId(GetShellWindow(),&app.adapterShellPid);
                 if(app.allowAdapterAttach)SetTimer(window,TIMER_ADAPTER_STABLE,taskbar::Recovery::stableMs,nullptr);
                 if(app.renderer.model.message=="Weather shortcut unavailable. Use the tray icon."||
                     app.renderer.model.message=="Weather shortcut unavailable. Open the queue from its tray icon.") {
@@ -1734,6 +1737,10 @@ LRESULT CALLBACK triggerProc(HWND window, UINT message, WPARAM wp, LPARAM lp) {
         if(message==app.taskbarCreated && app.taskbarCreated) {
             app.addTray(); app.moveHome();
             if(app.taskbarAdapter&&app.allowAdapterAttach) {
+                DWORD shellPid=0;GetWindowThreadProcessId(GetShellWindow(),&shellPid);
+                // Explorer can broadcast again without replacing its process.
+                // An already active adapter will not send a second Ready.
+                if(app.adapterReady&&shellPid&&shellPid==app.adapterShellPid)return 0;
                 app.adapterReady=false;KillTimer(window,TIMER_ADAPTER_STABLE);KillTimer(window,TIMER_ADAPTER_RETRY);
                 app.adapterRecovery.restarted();app.retryAdapter();app.log("explorer-restarted");
             }
