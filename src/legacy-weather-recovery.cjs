@@ -23,7 +23,8 @@ function readState(directory) {
   for(let i=lines.length-1;i>=0;--i){
     let frame;try{frame=JSON.parse(lines[i]);}catch{continue;}
     if(frame.pid!==pid||typeof frame.adapterReady!=='boolean')continue;
-    const settled=frame.seconds>=12||['adapter-stopped','adapter-failed','adapter-attach-failed','adapter-controller-finished'].includes(frame.event);
+    // Native trace seconds are system uptime, not this native session's age.
+    const settled=frame.adapterReady||Date.now()-st.mtimeMs>=12000||['adapter-stopped','adapter-failed','adapter-attach-failed','adapter-controller-finished'].includes(frame.event);
     return {session:pid+':'+bytes.readBigUInt64LE(8).toString(16),ready:frame.adapterReady,
       eligible:settled&&frame.taskbarAdapter===true&&frame.adapterAutoAttach===true&&frame.cornerCoordinated===true,
       nativeRecovery:Number.isSafeInteger(frame.adapterRetryAttempts)};

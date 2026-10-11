@@ -56,11 +56,15 @@ test('bounded trace read requires a complete live endpoint, matching PID and the
   const root=fs.mkdtempSync(path.join(os.tmpdir(),'hyphen-weather-state-'));t.after(()=>fs.rmSync(root,{recursive:true,force:true}));fs.mkdirSync(path.join(root,'artifacts'));
   const endpoint=path.join(root,'artifacts/taskbar-adapter.info'),trace=path.join(root,'artifacts/native-hover.jsonl');const bytes=Buffer.alloc(32);
   bytes.writeBigUInt64LE(0x3152414254575557n,0);bytes.writeBigUInt64LE(123n,8);bytes.writeBigUInt64LE(456n,16);bytes.writeUInt32LE(process.pid,24);bytes.writeUInt32LE(1,28);fs.writeFileSync(endpoint,bytes);
-  const frame={pid:process.pid,seconds:13,adapterReady:false,taskbarAdapter:true,adapterAutoAttach:true,cornerCoordinated:true};
+  fs.utimesSync(endpoint,new Date(Date.now()-13000),new Date(Date.now()-13000));
+  const frame={pid:process.pid,seconds:90000,adapterReady:false,taskbarAdapter:true,adapterAutoAttach:true,cornerCoordinated:true};
   fs.writeFileSync(trace,'x'.repeat(100000)+'\n'+JSON.stringify({...frame,pid:process.pid+1})+'\n'+JSON.stringify(frame)+'\n');
   assert.equal(readState(root).eligible,true);assert.equal(readState(root).nativeRecovery,false);
   fs.appendFileSync(trace,JSON.stringify({...frame,adapterAutoAttach:false,adapterRetryAttempts:0})+'\n');assert.equal(readState(root).eligible,false);assert.equal(readState(root).nativeRecovery,true);
-  fs.appendFileSync(trace,JSON.stringify({...frame,seconds:1,event:'started'})+'\n');assert.equal(readState(root).eligible,false);
+  fs.utimesSync(endpoint,new Date(),new Date());
+  fs.appendFileSync(trace,JSON.stringify({...frame,event:'started'})+'\n');assert.equal(readState(root).eligible,false);
+  fs.appendFileSync(trace,JSON.stringify({...frame,event:'adapter-failed'})+'\n');assert.equal(readState(root).eligible,true);
+  fs.appendFileSync(trace,JSON.stringify({...frame,event:'adapter-ready',adapterReady:true})+'\n');assert.equal(readState(root).eligible,true);
   fs.appendFileSync(endpoint,'x');assert.throws(()=>readState(root),/Invalid weather endpoint/);
 });
 test('Windows file notifications trigger recovery and closing releases the watcher and pending timers',{skip:process.platform!=='win32'?'Compatibility recovery only starts on Windows':false},async t=>{
