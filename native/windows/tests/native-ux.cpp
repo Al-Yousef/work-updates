@@ -202,6 +202,7 @@ try {
     saveCapture((L"ux-update-"+std::to_wstring(dpi)+L".png").c_str());
     const auto keptDraft=draft();const auto quoteReplies=state().value("commandReplies",0U);
     accessible->accDoDefaultAction(child(named(L"Quote assistant reply")));
+    wait([]{return draft().find(L"> Ready for your review")!=std::wstring::npos;},"Accessible Quote activation reaches the native composer");
     check(draft().find(keptDraft)==0&&draft().find(L"> Ready for your review")!=std::wstring::npos,"Quote appends the selected readable answer to the existing draft");
     check(state().value("commandReplies",0U)==quoteReplies&&!state().value("pending",true),"Quote does not submit a command or send a message");
     check(focus()==editor,"Quote focuses the native composer for a follow-up question");setDraft(keptDraft.c_str());

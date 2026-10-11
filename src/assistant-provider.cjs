@@ -48,8 +48,9 @@ class AssistantProvider {
       fs.mkdirSync(this.options.directory,{recursive:true});
       if(this.options.budgets)reservation=this.options.budgets.reserve({id:require('node:crypto').randomUUID(),kind:'model',provider:'codex-app-server',model:this.model,
         estimate:{tokens:Math.ceil(Buffer.byteLength(JSON.stringify(input))/3)+6000,costMicros:null}});
+      const presentationInstructions=input.channel?' This private channel client displays plain text. Return answer as plain text without markdown syntax; keep short paragraphs and readable lists.':'';
       const started=await client.call('thread/start',{ephemeral:true,model:this.model,cwd:this.options.directory,
-        approvalPolicy:'never',sandbox:'read-only',baseInstructions:instructions+coordinationInstructions,developerInstructions:instructions+coordinationInstructions,config,serviceName:'hyphen_assistant'});
+        approvalPolicy:'never',sandbox:'read-only',baseInstructions:instructions+coordinationInstructions+presentationInstructions,developerInstructions:instructions+coordinationInstructions+presentationInstructions,config,serviceName:'hyphen_assistant'});
       if(started.thread.ephemeral!==true)throw new Error('Hyphen could not create a private assistant session.');
       const threadId=started.thread.id;
       return await new Promise((resolve,reject)=>{
