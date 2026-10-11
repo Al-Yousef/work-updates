@@ -72,7 +72,8 @@ int main(int argc,char** argv){
     model.draft("Edited after submission");
     model.response({{"ok",true},{"command","send"},{"input",submitted},{"value",{{"taskId","owned"}}}});
     assert(model.draft()=="Edited after submission");
-    model.draft("Keep this reply");model.pending=true;model.pendingSend=submitted;
+    model.draft("Keep this reply");model.acceptedDraft(model.sourceId,submitted);assert(model.draft()=="Keep this reply");
+    model.intentIds[model.sourceId]="fresh-retry-identity";submitted=model.replyInput();model.pending=true;model.pendingSend=submitted;
     auto adopted=first;adopted["id"]="owned";adopted["taskKey"]="owned";
     adopted["sources"]=Json::array({{{"id","chat-a"}}});state["cards"]=Json::array({adopted});
     model.update(state);assert(model.selectedId=="owned");assert(model.sourceId=="chat-a");

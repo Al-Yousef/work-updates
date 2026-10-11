@@ -89,6 +89,16 @@ test('reply context remains attached in later history and forgetting the parent 
   const disk=JSON.parse(fs.readFileSync(path.join(f.directory,'assistant.json')));
   assert(!disk.messages.some(m=>m.replyTo?.id===parent.id));
 });
+test('reply image references use the selected message rather than an unrelated later image',async t=>{
+  const f=fixture(t),first=f.parent('First image',{images:[{id:'first-image',path:'first.png'}]});
+  f.parent('Second image',{images:[{id:'second-image',path:'second.png'}]});
+  f.app.attachments.resolve=ids=>ids.map(id=>({id,path:id+'.png'}));
+  f.app.ask(input('What is shown in this image?',first.id));await f.app.work;
+  assert.deepEqual(f.calls.at(-1).images.map(i=>i.id),['first-image']);
+  const plain=f.parent('An answer without an image');
+  f.app.ask(input('Explain this',plain.id));await f.app.work;
+  assert.deepEqual(f.calls.at(-1).images,[]);
+});
 test('optional reply metadata validates without migrating existing draft or history formats',t=>{
   const f=fixture(t),parent=f.parent('Answer'),reply={id:parent.id,text:'Original',answer:'Answer',kind:'reply'};
   const legacy={version:3,drafts:{},intentIds:{},attachments:{}};
