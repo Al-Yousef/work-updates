@@ -52,7 +52,7 @@ test('bounded trace read requires a complete live endpoint, matching PID and the
   fs.appendFileSync(trace,JSON.stringify({...frame,seconds:1,event:'started'})+'\n');assert.equal(readState(root).eligible,false);
   fs.appendFileSync(endpoint,'x');assert.throws(()=>readState(root),/Invalid weather endpoint/);
 });
-test('actual file notifications trigger recovery and closing releases the watcher and pending timers',async t=>{
+test('Windows file notifications trigger recovery and closing releases the watcher and pending timers',{skip:process.platform!=='win32'?'Compatibility recovery only starts on Windows':false},async t=>{
   const root=fs.mkdtempSync(path.join(os.tmpdir(),'hyphen-weather-watch-'));t.after(()=>fs.rmSync(root,{recursive:true,force:true}));
   fs.writeFileSync(path.join(root,'Native Hover.exe'),'fixture');fs.writeFileSync(path.join(root,'Taskbar Adapter Control.exe'),'fixture');
   let state={session:'fixture',ready:true,eligible:true,nativeRecovery:false},calls=0,finish;
