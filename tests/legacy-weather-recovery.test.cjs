@@ -1,6 +1,7 @@
 'use strict';
 const test=require('node:test'),assert=require('node:assert/strict'),fs=require('node:fs'),path=require('node:path'),os=require('node:os');
 const {LegacyWeatherRecovery,installedDirectory,readState}=require('../src/legacy-weather-recovery.cjs');
+const {DiagnosticLog}=require('../src/diagnostics.cjs');
 function fixture(){
   let current={session:'first',ready:false,eligible:true,nativeRecovery:false},claimed=true,calls=[],jobs=[],serial=0,now=0;
   const timers={set(fn,ms){const job={id:++serial,at:now+ms,fn};jobs.push(job);return job;},clear(job){jobs=jobs.filter(j=>j!==job);}};
@@ -23,6 +24,16 @@ test('ready/failure flapping retains the budget, while stable readiness renews i
   f.set({ready:false});f.recovery.refresh();assert.equal(f.recovery.attempts,3);
   f.set({ready:true});f.recovery.refresh();await f.advance(30000);assert.equal(f.recovery.attempts,0);
   f.set({ready:false});f.recovery.refresh();assert.equal(f.recovery.attempts,1);await f.recovery.closeAndWait();
+});
+
+test('real diagnostic logs distinguish recovery failure and completion without retaining weather session metadata',async t=>{
+  const root=fs.mkdtempSync(path.join(os.tmpdir(),'hyphen-weather-log-'));t.after(()=>fs.rmSync(root,{recursive:true,force:true}));
+  const f=fixture(),log=new DiagnosticLog(root);f.recovery.log=log;
+  f.set({session:'private-cookie-never-log'});f.recovery.refresh();await f.advance(1000);
+  f.recovery.run=async()=>f.set({ready:true});await f.advance(2000);await f.recovery.closeAndWait();
+  const text=fs.readFileSync(log.file,'utf8'),records=text.trim().split('\n').map(JSON.parse);
+  assert.deepEqual(records.map(r=>r.event),['native.weather.recovery.started','native.weather.recovery.failed','native.weather.recovery.started','native.weather.recovery.completed']);
+  assert.deepEqual(records.map(r=>r.count),[1,1,2,2]);assert.equal(text.includes('private-cookie-never-log'),false);
 });
 test('new native recovery, lost ownership, disabled attachment and changed sessions cannot borrow a scheduled attempt',async()=>{
   for(const update of [{nativeRecovery:true},{eligible:false},{session:'replacement'}]){

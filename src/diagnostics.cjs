@@ -110,6 +110,7 @@ EVENTS.add('schedule.recovery_failed');
 EVENTS.add('authorization.recovery_failed');
 EVENTS.add('research.recovery_failed');
 EVENTS.add('delegation.recovery_failed');
+for(const event of ['started','completed','failed','watch-failed','shutdown-failed'])EVENTS.add('native.weather.recovery.'+event);
 const FLAGS = new Set(['demo', 'intentional', 'truncated', 'local', 'connected', 'noResend']);
 const methods = new Set([
   'initialize',
