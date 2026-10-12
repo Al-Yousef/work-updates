@@ -32,7 +32,7 @@ test('structured response rejects missing version, wrong actions and oversized t
 });
 test('project catalogue uses existing absolute workspaces and stable handles',t=>{const f=fixture(t),p=work.projects({cards:[{title:'Hyphen',sources:[{cwd:f.options.directory}]}]},[f.options.directory,'missing']);assert.equal(p.length,1);assert.match(p[0].id,/^project_/);assert.equal(p[0].cwd,fs.realpathSync(f.options.directory));});
 test('selected workspace survives a large catalogue and a generated mismatch cannot start work',async t=>{
- const f=fixture(t),cwd=f.options.directory,focus={id:'focused-card',taskKey:'focused-key',chatName:'Hyphen',title:'Hyphen',status:'ready',owner:{id:'local'},sources:[{id:'focused-source',cwd,lifecycle:'ready',contextLoaded:true}]};f.snapshot.cards=[focus];f.assistant.focus(focus,'focused-source');
+ const f=fixture(t),cwd=fs.realpathSync(f.options.directory),focus={id:'focused-card',taskKey:'focused-key',chatName:'Hyphen',title:'Hyphen',status:'ready',owner:{id:'local'},sources:[{id:'focused-source',cwd,lifecycle:'ready',contextLoaded:true}]};f.snapshot.cards=[focus];f.assistant.focus(focus,'focused-source');
  const catalog=Array.from({length:70},(_,i)=>({id:'other_'+i,title:'Other',cwd:path.join(cwd,'missing'+i)}));catalog.push({id:'project_one',title:'Hyphen',cwd});
  assert.deepEqual(work.visibleProjects(catalog,{focus:f.assistant.state.focus},f.snapshot).map(p=>p.id),['project_one']);
  f.assistant.options.workProjects=()=>catalog;f.assistant.provider.answer=async()=>({answer:'Starting',links:[],work:{kind:'project',target:'other_0',request:'Implement update button'}});
