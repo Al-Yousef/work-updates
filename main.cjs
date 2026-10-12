@@ -198,6 +198,14 @@ const documents=new (require('./src/documents.cjs').Documents)({directory:dataDi
 responsibilities.options.outcomeRequired=entry=>outcomes.required(entry);
 responsibilities.options.outcomeAdmission=(entry,human)=>outcomes.admission(entry,human);
 const assistant = new Assistant({directory:dataDir,snapshot:()=>devices.snapshot(),attachments,
+  workProjects:()=>require('./src/assistant-work.cjs').projects({cards:queue.cards()},queue.state.settings.projects||[]),
+  workTask:id=>queue.state.tasks.find(t=>t.id===id),
+  startWork:async(input,checkpoint)=>{
+    if(quitting||maintenanceActive(dataDir)||privacy?.activeRemoval||workControls.closed||workControls.storageFailed||workControls.active('all','all'))throw new Error('Work is paused. No new task was started.');
+    const projects=require('./src/assistant-work.cjs').projects({cards:queue.cards()},queue.state.settings.projects||[]);
+    if(!projects.some(p=>p.cwd===input.cwd))throw new Error('The workspace is no longer connected.');
+    const task=queue.create(input);queue.patch(task.id,{hyphenOrigin:{messageId:input.messageId}});checkpoint(task.id);return controller.start(task.id);
+  },
   assistantSessionChanged:()=>observer?.ignore?.(assistantIgnoredSources()),
   budgets,
   profile:assistantProfile,capabilities:()=>profileCapabilities({assistant,executors,documents,voice:assistant.options.voice,browsers:assistant.options.browsers,peerContract:require('./src/peer-contract.cjs').capabilities(),helper:client.status?.(),privateChannels:assistantChannels}),

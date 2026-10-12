@@ -115,7 +115,7 @@ class FakeClient extends EventEmitter {
     if(method==='turn/start'){queueMicrotask(()=>{
       this.emit('notification',{method:'turn/started',params:{threadId:params.threadId,turn:{id:'test'}}});
       if(this.mode==='tool'){this.emit('request',{id:3,method:'item/commandExecution/requestApproval'});return;}
-      this.emit('notification',{method:'item/completed',params:{threadId:params.threadId,item:{type:'agentMessage',text:params.outputSchema?JSON.stringify({answer:'Hello',links:[]}):'Hello'}}});
+      this.emit('notification',{method:'item/completed',params:{threadId:params.threadId,item:{type:'agentMessage',text:params.outputSchema?JSON.stringify(params.outputSchema.properties.schema?{schema:1,answer:'Hello',work:null}:{answer:'Hello',links:[],action:null}):'Hello'}}});
       this.emit('notification',{method:'turn/completed',params:{threadId:params.threadId,turn:{id:'test',status:'completed'}}});
     });return {turn:{id:'test'}};}
   }

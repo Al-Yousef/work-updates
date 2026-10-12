@@ -45,6 +45,8 @@ function nativeView(state) {
     monitoredCount: state.monitoredCount, ready: state.ready, working: state.working,
     health: state.health && {ok:state.health.ok, message:state.health.message},
     aiSummary: state.aiSummary, undo: !!state.undo,
+    workRequests:(state.approvals||[]).filter(a=>a&&typeof a==='object'&&(state.cards||[]).some(c=>c.kind==='local'&&c.hyphenOrigin&&c.id===a.taskId)).slice(0,30).map(a=>({
+      id:clipped(a.id,100),taskId:clipped(a.taskId,100),kind:clipped(a.kind,30),title:clipped(a.title,180),reason:clipped(a.reason,4000),command:clipped(a.command,12000),cwd:clipped(a.cwd,1024),questions:a.questions||[],permissions:a.permissions||{},grantRoot:clipped(a.grantRoot,1024)})),
     settings: {queueSince: state.settings?.queueSince || 0},
     connection: state.connection, version: state.version,
     connectionHealth:state.connectionHealth,
@@ -53,6 +55,7 @@ function nativeView(state) {
     assistant: state.assistant && {...state.assistant,messages:state.assistant.messages.slice(-30).map(m=>{const display=m.kind==='update'?presentUpdate(m,state.cards):presentAnswer(m.answer);return {
       answer:display.text,answerSpans:display.spans,
       kind:m.kind==='update'?'update':'reply',
+      response:m.response||null,
       replyTo:replies.preview(m.replyTo),
       id:m.id,text:clipped(m.text,4000),status:m.status,error:clipped(m.error,300),at:m.at,images:m.images||[],
       links:(m.links||[]).slice(0,3).map(link=>({index:link.index,chatName:clipped(link.chatName,180),hasDraft:!!link.draft}))

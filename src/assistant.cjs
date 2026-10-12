@@ -10,6 +10,7 @@ const hash=value=>crypto.createHash('sha256').update(value).digest('hex');
 const clip=(value,n)=>String(value??'').toWellFormed().slice(0,n);
 const coordination=require('./assistant-coordination.cjs');
 const replies=require('./assistant-replies.cjs');
+const work=require('./assistant-work.cjs');
 const {command:responsibilityCommand}=require('./responsibility-command.cjs');
 const {currentScope}=require('./responsibility-target.cjs');
 const {command:authorizationCommand}=require('./authorization-command.cjs');
@@ -60,6 +61,7 @@ class Assistant extends EventEmitter {
     messages:this.state.messages.filter(m=>visible.has(m)).map(m=>({...m,focus:undefined,action:undefined,links:m.links.map(({chatName,draft},index)=>({chatName,draft:clip(draft,12000),index}))}))};}
   log(event,details){this.options.log?.write('assistant.'+event,details);}
   observe(snapshot) {
+    this.observeWork(snapshot);
     if(this.closed||this.error||!coordination.fresh(snapshot))return;
     const cards=(snapshot.cards||[]).slice(0,2048),seen=Object.fromEntries(cards.map(c=>[c.id,hash(JSON.stringify([c.fingerprint,c.status,c.sources?.map(s=>[s.id,s.lifecycle])]))]));
     const progress=this.state.messages.filter(m=>m.action&&['queued','accepted','unconfirmed'].includes(m.action.status)).map(message=>({message,next:coordination.outcome(snapshot,message.action)})).filter(x=>x.next);
@@ -67,9 +69,9 @@ class Assistant extends EventEmitter {
     const baseline=this.state.seen===null,prior=structuredClone(this.state),arrived=[];
     for(const {message,next}of progress){message.action.status=next.status;message.action.turnId=next.turnId;message.links=[next.link];
       const descriptions={accepted:'Codex accepted the queued message for',completed:'The requested pass completed in',failed:'The requested pass failed or was stopped in',cancelled:'Cancelled the queued message for','not-sent':'The queued message was not sent to',unconfirmed:'Delivery is unconfirmed for'};
-      next.link.coordinationId=message.id;arrived.push({id:crypto.randomUUID(),text:'',kind:'update',status:'completed',at:Date.now(),coordinationId:message.id,answer:descriptions[next.status]+' '+message.action.chatName+'.',links:[next.link]});}
+      next.link.coordinationId=message.id;const matched=coordination.sourceFor(snapshot,message.action);const resultText=message.action.relayResult&&next.status==='completed'?clip(matched?.source.body||matched?.source.conversation?.filter(m=>m.role==='assistant').at(-1)?.text,5000):'';arrived.push({id:crypto.randomUUID(),text:'',kind:'update',status:'completed',at:Date.now(),coordinationId:message.id,answer:resultText||descriptions[next.status]+' '+message.action.chatName+'.',response:{schema:1,kind:resultText?'result':'receipt',receipt:{...message.action},result:resultText?{summary:resultText}:null},links:[next.link]});}
     if(!baseline)for(const card of cards) {
-      if(progress.some(p=>p.next.link.id===card.id)||this.options.triage?.managedCard(card))continue;
+      if(progress.some(p=>p.next.link.id===card.id)||this.state.messages.some(m=>m.work?.taskId===card.id)||this.options.triage?.managedCard(card))continue;
       if(this.state.seen[card.id]===seen[card.id]||card.done||card.reviewed||card.snoozed||card.owner?.online===false||
         (card.at||0)<(snapshot.settings?.queueSince||0)||!['needs','ready','blocked','waiting'].includes(card.status)||
         !(card.urgent||card.status==='needs'||card.status==='ready'||card.waitingOn?.kind==='you'||(card.status==='blocked'&&card.waitingOn?.kind!=='other')))continue;
@@ -218,7 +220,7 @@ class Assistant extends EventEmitter {
         }
         message.status='completed';this.save();return;
       }
-      const work=workCommand(message.text);if(work){await require('./work-control.cjs').manage(this.options.workControls,message,work);this.save();return;}
+      const control=workCommand(message.text);if(control){await require('./work-control.cjs').manage(this.options.workControls,message,control);this.save();return;}
       const reflection=reflectionCommand(message.text);if(reflection){require('./reflection-control.cjs').manage(this.options.reflections,message,reflection);this.save();return;}
       const activity=activityControl.command(message.text);if(activity){activityControl.manage(this.options.activity,message,activity);this.save();return;}
       const outcome=outcomeControl.command(message.text);if(outcome){await outcomeControl.manage(this.options.outcomes,message,outcome);this.save();return;}
@@ -255,6 +257,8 @@ class Assistant extends EventEmitter {
       const tools=new (require('./assistant-tools.cjs').AssistantTools)({assistant:this,message,current,requested});
       const value=await this.provider.answer({messageId:message.id,question:message.text||'Describe the attached image and help me understand it.',replyTo:message.replyTo?{...message.replyTo,provenance:'selected_assistant_message'}:undefined,images,imagesFromHistory:!(message.images||[]).length&&!!images.length,history:recent,recalledHistory:recalled.recalled,userEvidence:recalled.userEvidence,historyCoverage:recalled.coverage,savedNotes:this.state.notes,
         savedNotesProvenance:'explicit_pinned_notes',memoryCoverage:{retentionExchanges:500,retentionAlerts:40,pinnedNoteLimit:32,pinnedNoteCharacters:this.state.notes.join('').length},queue:current.data,
+        workProjects:work.visibleProjects(this.options.workProjects?.()||[],message,this.options.snapshot()),
+        pendingWork:this.state.messages.filter(m=>m.work).slice(-8).map(m=>({request:m.text,receipt:m.work,result:m.response?.result||null})),
         assistantPresentation:this.options.profile?.snapshot(),
         responsibilities:this.options.responsibilities?.snapshot().slice(-8).map(r=>({id:r.id,origin:{text:clip(r.origin.text,600),provenance:'accepted_human_instruction'},instruction:clip(r.instruction,800),revision:r.revision,state:r.state,chatName:r.scope.chatName,ownerId:r.ownerId,stepStatus:r.currentStep.status,wakeReason:r.wakeReason.kind,completionCriteria:r.completionCriteria})),
         schedules:this.options.schedules?.snapshot().slice(-8).map(s=>({id:s.id,responsibilityId:s.responsibilityId,state:s.state,reason:s.reason,timeZone:s.schedule.timeZone,endAt:s.schedule.endAt,nextWake:s.nextWake,lastActualRun:s.lastActualRun,lastRun:s.runs.at(-1)?.status})),
@@ -276,6 +280,8 @@ class Assistant extends EventEmitter {
         if(!ref||seen.has(link.ref)||typeof link.draft!=='string'||link.draft.length>12000||(!ref.sourceId&&link.draft))throw new Error('Hyphen returned an invalid chat reference.');
         seen.add(link.ref);links.push({...ref,draft:link.draft});}
       message.answer=value.answer;message.links=links;message.status='completed';message.model=value.model||'';
+      message.response={schema:1,kind:'answer',answer:value.answer,receipt:null,result:null};
+      if(value.work){message.status='thinking';await this.handoff(message,value.work,current,recalled.messages);message.status='completed';}
       if(requested&&!value.action&&!message.action){message.proposal=requested.proposal;message.answer='Your message has not been sent or queued. The proposed text is saved:\n'+requested.proposal.text;}
       if(value.action&&!message.action)await this.deliver(message,requested,current,value.action);
       if(message.action){
@@ -290,6 +296,59 @@ class Assistant extends EventEmitter {
       try {this.save();}catch{this.error='Assistant history could not be saved. Keep the app open.';}
       this.log('failed',{messageId:message.id,elapsedMs:Date.now()-started,code:error.code||'ASSISTANT_FAILED'});
     } finally {this.generations.delete(message.id);this.active=this.generations.size>0;this.emit('change');}
+  }
+  async handoff(message,intent,current,history) {
+    if(message.work||message.action)throw new Error('This request already has a dispatch checkpoint. Check its status before retrying.');
+    if(!work.directive(message.text))throw new Error('Work needs a current human request to act. Nothing was sent.');
+    if(intent.kind==='chat'){
+      const route=[...current.refs].find(([,r])=>require('./assistant-tools.cjs').handle(r)===intent.target);
+      if(!route)throw new Error('That chat is no longer available. Choose its current source.');
+      const proposed={ref:route[0],proposal:{text:work.prompt(message,history,intent.request),mode:'send',provenance:'human_instruction'}};
+      await this.deliver(message,proposed,current,{ref:route[0],text:proposed.proposal.text,mode:'send'});
+      message.action.relayResult=true;message.response={schema:1,kind:'work',answer:message.answer,receipt:{...message.action},result:null};this.save();return;
+    }
+    const catalog=this.options.workProjects?.()||[],focused=work.focusedProject(catalog,message,this.options.snapshot());
+    if(focused&&intent.target!==focused.id)throw new Error('The requested workspace does not match your selected chat. Nothing was started.');
+    const project=catalog.find(p=>p.id===intent.target);
+    if(this.state.messages.some(m=>m.id!==message.id&&m.work?.projectId===intent.target&&!m.work.relayed&&['preparing','dispatching','unconfirmed'].includes(m.work.status)))throw new Error('Earlier work in this workspace has an unconfirmed receipt. Check its task before starting another pass.');
+    if(!project||!this.options.startWork)throw new Error('That project is no longer connected. Choose its current workspace.');
+    const receipt={schema:1,projectId:project.id,taskId:null,threadId:null,turnId:null,status:'preparing'};
+    message.work=receipt;this.save();
+    try{
+      const task=await this.options.startWork({cwd:project.cwd,title:intent.request.slice(0,100),prompt:work.prompt(message,history,intent.request),messageId:message.id},taskId=>{
+        receipt.taskId=taskId;receipt.status='dispatching';this.save();
+      });
+      if(!task.threadId||!task.turnId)throw new Error('Codex did not return its work receipt.');
+      Object.assign(receipt,{threadId:task.threadId,turnId:task.turnId,...(!receipt.relayed?{status:'working'}:{})});
+      message.answer='Codex is working on this. I’ll bring the result back here when the pass finishes.';
+      const card=[...(this.options.snapshot().cards||[]),...(this.options.snapshot().done||[])].find(c=>c.id===task.id);
+      if(card)message.links=[{...coordination.link(card,task.threadId),workMessageId:message.id}];
+    }catch(error){receipt.status=receipt.taskId?'unconfirmed':'not-sent';message.answer='The work request is '+receipt.status+'. Check its saved task before retrying.';receipt.error=clip(error.message,300);}
+    message.response={schema:1,kind:'work',answer:message.answer,receipt:{...receipt},result:message.response?.result||null};this.save();
+  }
+  observeWork(snapshot){
+    if(this.closed||this.error||!this.options.workTask)return;
+    let changed=false;
+    for(const message of this.state.messages){
+      const receipt=message.work;if(!receipt?.taskId||receipt.relayed)continue;
+      const task=this.options.workTask(receipt.taskId);
+      if(!task||task.hyphenOrigin?.messageId!==message.id)continue;
+      if(!receipt.threadId&&task.threadId){receipt.threadId=task.threadId;changed=true;}
+      if(!receipt.turnId&&task.turnId){receipt.turnId=task.turnId;changed=true;}
+      if(task.threadId!==receipt.threadId||task.turnId!==receipt.turnId||!receipt.turnId)continue;
+      const terminal=task.notificationVersion===receipt.turnId&&['completed','failed','interrupted'].includes(task.turnOutcome);
+      if(!terminal){const status=task.status==='needs'?'needs_input':task.status==='blocked'?'unconfirmed':'working';if(receipt.status!==status){
+        receipt.status=status;message.answer=status==='needs_input'?'Codex needs your input to continue. Open the work chat below.':status==='unconfirmed'?'Codex progress is unconfirmed. Check the work chat before retrying.':'Codex is working on this. I’ll bring the result back here when the pass finishes.';
+        message.response={schema:1,kind:'work',answer:message.answer,receipt:{...receipt},result:null};changed=true;}continue;}
+      const result=task.turnOutcome==='completed'?work.result(task.messages.filter(m=>m.role==='assistant').at(-1)?.text||''):
+        {schema:1,status:'blocked',summary:task.error||'Codex could not finish this pass.',changes:[],checks:[],artifacts:[]};
+      const card=[...(snapshot.cards||[]),...(snapshot.done||[])].find(c=>c.id===task.id);
+      const update={id:crypto.randomUUID(),text:'',kind:'update',status:'completed',at:Date.now(),coordinationId:message.id,
+        answer:work.readable(result),response:{schema:1,kind:'result',answer:work.readable(result),receipt:{...receipt,status:result.status},result},links:card?[{...coordination.link(card,receipt.threadId),workMessageId:message.id}]:[]};
+      receipt.status=result.status;receipt.relayed=update.id;message.response={schema:1,kind:'work',answer:message.answer,receipt:{...receipt},result};
+      this.state.messages.push(update);changed=true;
+    }
+    if(changed){try{this.save();}catch{this.error='Hyphen could not save the work result. Keep the app open.';}this.emit('change');}
   }
   async deliver(message,requested,current,action) {
     const started=Date.now();
@@ -319,6 +378,7 @@ class Assistant extends EventEmitter {
     const message=this.state.messages.find(m=>m.id===input.messageId&&m.status==='completed');
     if(!Number.isInteger(input.index)||input.index<0)throw new Error('Choose a related update from Hyphen’s answer.');
     const link=message?.links[input.index];if(!link)throw new Error('That related update is unavailable.');
+    if(link.workMessageId){const work=this.state.messages.find(m=>m.id===link.workMessageId)?.work,task=work&&this.options.workTask?.(work.taskId);const card=[...(this.options.snapshot().cards||[]),...(this.options.snapshot().done||[])].find(c=>c.id===work?.taskId&&(c.owner?.id||'local')===link.ownerId&&c.sources?.some(s=>s.id===work.threadId));if(!task||task.hyphenOrigin?.messageId!==link.workMessageId||task.threadId!==work.threadId||!card)throw new Error('The work chat is unavailable on its original device.');return {card,sourceId:work.threadId,draft:''};}
     if(link.responsibilityId){const entry=this.options.responsibilities?.entry(link.responsibilityId),match=entry&&coordination.sourceFor(this.options.snapshot(),entry.scope);if(!match)throw new Error('The responsibility source is unavailable on its original device.');return {card:match.card,sourceId:entry.scope.sourceId,draft:''};}
     if(link.coordinationId){const action=this.state.messages.find(m=>m.id===link.coordinationId)?.action;const match=action&&coordination.sourceFor(this.options.snapshot(),action);if(!match)throw new Error('The source chat is unavailable on its original device.');return {card:match.card,sourceId:action.sourceId,draft:''};}
     const state=this.options.snapshot();const card=[...(state.cards||[]),...(state.done||[])].find(c=>c.id===link.id&&c.taskKey===link.taskKey&&
