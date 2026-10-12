@@ -281,7 +281,7 @@ class Assistant extends EventEmitter {
         seen.add(link.ref);links.push({...ref,draft:link.draft});}
       message.answer=value.answer;message.links=links;message.status='completed';message.model=value.model||'';
       message.response={schema:1,kind:'answer',answer:value.answer,receipt:null,result:null};
-      if(value.work)await this.handoff(message,value.work,current,recalled.messages);
+      if(value.work){message.status='thinking';await this.handoff(message,value.work,current,recalled.messages);message.status='completed';}
       if(requested&&!value.action&&!message.action){message.proposal=requested.proposal;message.answer='Your message has not been sent or queued. The proposed text is saved:\n'+requested.proposal.text;}
       if(value.action&&!message.action)await this.deliver(message,requested,current,value.action);
       if(message.action){
@@ -310,6 +310,7 @@ class Assistant extends EventEmitter {
     const catalog=this.options.workProjects?.()||[],focused=work.focusedProject(catalog,message,this.options.snapshot());
     if(focused&&intent.target!==focused.id)throw new Error('The requested workspace does not match your selected chat. Nothing was started.');
     const project=catalog.find(p=>p.id===intent.target);
+    if(this.state.messages.some(m=>m.id!==message.id&&m.work?.projectId===intent.target&&!m.work.relayed&&['preparing','dispatching','unconfirmed'].includes(m.work.status)))throw new Error('Earlier work in this workspace has an unconfirmed receipt. Check its task before starting another pass.');
     if(!project||!this.options.startWork)throw new Error('That project is no longer connected. Choose its current workspace.');
     const receipt={schema:1,projectId:project.id,taskId:null,threadId:null,turnId:null,status:'preparing'};
     message.work=receipt;this.save();
