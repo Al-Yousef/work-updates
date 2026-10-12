@@ -257,7 +257,7 @@ class Assistant extends EventEmitter {
       const tools=new (require('./assistant-tools.cjs').AssistantTools)({assistant:this,message,current,requested});
       const value=await this.provider.answer({messageId:message.id,question:message.text||'Describe the attached image and help me understand it.',replyTo:message.replyTo?{...message.replyTo,provenance:'selected_assistant_message'}:undefined,images,imagesFromHistory:!(message.images||[]).length&&!!images.length,history:recent,recalledHistory:recalled.recalled,userEvidence:recalled.userEvidence,historyCoverage:recalled.coverage,savedNotes:this.state.notes,
         savedNotesProvenance:'explicit_pinned_notes',memoryCoverage:{retentionExchanges:500,retentionAlerts:40,pinnedNoteLimit:32,pinnedNoteCharacters:this.state.notes.join('').length},queue:current.data,
-        workProjects:(this.options.workProjects?.()||[]).map(({id,title,cwd})=>({id,title,workspace:cwd})),
+        workProjects:(this.options.workProjects?.()||[]).map(({id,title,cwd})=>({id,title,workspace:cwd,focused:!!message.focus&&this.options.snapshot().cards?.some(c=>c.sources?.some(s=>s.id===message.focus.sourceId&&s.cwd===cwd))})),
         pendingWork:this.state.messages.filter(m=>m.work).slice(-8).map(m=>({request:m.text,receipt:m.work,result:m.response?.result||null})),
         assistantPresentation:this.options.profile?.snapshot(),
         responsibilities:this.options.responsibilities?.snapshot().slice(-8).map(r=>({id:r.id,origin:{text:clip(r.origin.text,600),provenance:'accepted_human_instruction'},instruction:clip(r.instruction,800),revision:r.revision,state:r.state,chatName:r.scope.chatName,ownerId:r.ownerId,stepStatus:r.currentStep.status,wakeReason:r.wakeReason.kind,completionCriteria:r.completionCriteria})),

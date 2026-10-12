@@ -33,12 +33,14 @@ class Client extends EventEmitter {
 test('one named thread survives provider replacement; user input stays readable and context stays separate',async t=>{
   const directory=fixture(t),state={turns:[],starts:0},clients=[];
   const create=()=>{const c=new Client(state);clients.push(c);return c;};
-  const first=new AssistantProvider({directory,clientFactory:create});await first.answer({messageId:crypto.randomUUID(),question:'First question',savedNotes:['Synthetic note']});
+  const first=new AssistantProvider({directory,clientFactory:create});await first.answer({messageId:crypto.randomUUID(),question:'First question',savedNotes:['Synthetic note'],workProjects:[{id:'project_one',title:'Hyphen',workspace:directory,focused:true}]});
   first.close();
   const second=new AssistantProvider({directory,clientFactory:create});await second.answer({messageId:crypto.randomUUID(),question:'Follow up'});
   assert.equal(state.starts,1);assert.equal(second.session.state.threadId,first.session.state.threadId);assert.equal(second.session.state.pending,null);
   const turn=clients[0].calls.find(c=>c.method==='turn/start').params;assert.equal(turn.input[0].text,'First question');assert.equal(turn.outputSchema.properties.schema.enum[0],1);
   assert.equal(JSON.parse(turn.additionalContext.hyphen_state.value).savedNotes[0],'Synthetic note');
+  assert.equal(turn.additionalContext.hyphen_work_contract.kind,'application');assert.ok(turn.additionalContext.hyphen_work_contract.value.length<3500);
+  assert.equal(JSON.parse(turn.additionalContext.hyphen_project_0.value).id,'project_one');assert.equal(JSON.parse(turn.additionalContext.hyphen_project_0.value).focused,true);
   assert.ok(clients[0].calls.some(c=>c.method==='thread/name/set'&&c.params.name==='Hyphen'));
   assert.ok(clients[1].calls.some(c=>c.method==='thread/resume'));assert.equal(clients[1].closed,undefined);second.close();assert.ok(clients.every(c=>c.closed));
 });
