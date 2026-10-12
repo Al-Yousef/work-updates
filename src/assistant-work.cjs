@@ -12,11 +12,18 @@ function projects(snapshot,selected=[]){
   const add=(cwd,title)=>{try{if(!path.isAbsolute(cwd)||!fs.statSync(cwd).isDirectory())return;cwd=fs.realpathSync(cwd);if(!found.has(cwd))found.set(cwd,{id:id(cwd),cwd,title:String(title||path.basename(cwd)).slice(0,180)});}catch{}};
   selected.forEach(cwd=>add(cwd,path.basename(cwd)));
   for(const card of all)if(card.owner?.kind!=='remote'&&card.owner?.online!==false)for(const source of card.sources||[])if(source.device!=='remote')add(source.cwd,card.chatName||card.title);
-  return [...found.values()].slice(0,60);
+  return [...found.values()];
 }
 // A generated intent never promotes source text, quotations or an old request
 // to authority. Work is admitted only on a current human directive. The model
 // resolves meaning; the worker receives the original human wording as well.
+function focusedProject(catalog,message,snapshot){
+  if(!message.focus)return null;
+  const card=[...(snapshot.cards||[]),...(snapshot.done||[])].find(c=>(c.owner?.id||'local')===message.focus.ownerId&&c.sources?.some(s=>s.id===message.focus.sourceId));
+  const cwd=card?.sources.find(s=>s.id===message.focus.sourceId)?.cwd;
+  try{return catalog.find(p=>p.cwd===fs.realpathSync(cwd))||null;}catch{return null;}
+}
+function visibleProjects(catalog,message,snapshot){const focus=focusedProject(catalog,message,snapshot);return (focus?[focus]:catalog.slice(0,12)).map(p=>({id:p.id,title:p.title,workspace:p.cwd,focused:!!focus}));}
 function directive(text){
   if(typeof text!=='string'||/^\s*(?:[>"“]|(?:he|she|they|it|the bot) (?:said|says)|(?:quote|summarize|explain|what|why|how|is|does|did)\b)/i.test(text))return false;
   if(/^\s*(?:(?:can|could|would) you\s+)?(?:please\s+)?(?:explain|summarize|quote|draft|describe|tell me)\b/i.test(text))return false;
@@ -39,4 +46,4 @@ function result(text){
   }catch{return {schema:1,status:'blocked',summary:'Codex finished this pass, but its result did not match the expected format. Open the source chat to review it.',changes:[],checks:[],artifacts:[]};}
 }
 function readable(r){return [r.summary,r.changes.length?'Changes:\n'+r.changes.map(x=>'• '+x).join('\n'):'',r.checks.length?'Checks:\n'+r.checks.map(c=>`• ${c.name}: ${c.status}${c.detail?' — '+c.detail:''}`).join('\n'):''].filter(Boolean).join('\n\n').slice(0,6000);}
-module.exports={responseSchema,resultSchema,projects,directive,validateResponse,prompt,result,readable};
+module.exports={focusedProject,visibleProjects,responseSchema,resultSchema,projects,directive,validateResponse,prompt,result,readable};

@@ -45,6 +45,7 @@ function nativeView(state) {
     monitoredCount: state.monitoredCount, ready: state.ready, working: state.working,
     health: state.health && {ok:state.health.ok, message:state.health.message},
     aiSummary: state.aiSummary, undo: !!state.undo,
+    approvals:(state.approvals||[]).slice(0,30),
     settings: {queueSince: state.settings?.queueSince || 0},
     connection: state.connection, version: state.version,
     connectionHealth:state.connectionHealth,

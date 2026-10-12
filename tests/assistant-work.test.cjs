@@ -23,7 +23,7 @@ test('lost start receipt is durable and observation never creates or starts anot
  const f=fixture(t);f.options.startWork=async(input,checkpoint)=>{checkpoint('unknown-task');throw new Error('Receipt lost');};f.assistant.options.startWork=f.options.startWork;const m=await ask(f.assistant,'Please implement the update button');assert.equal(m.work.status,'unconfirmed');assert.equal(m.work.taskId,'unknown-task');f.assistant.observe(f.snapshot);assert.equal(f.starts,0);
 });
 test('approval state, failed pass and malformed result stay distinct from completed work',async t=>{
- const f=fixture(t),m=await ask(f.assistant,'Please fix the update button');f.task.status='needs';f.assistant.observe(f.snapshot);assert.equal(m.work.status,'needs_input');assert.equal(m.work.relayed,undefined);
+ const f=fixture(t),m=await ask(f.assistant,'Please fix the update button');f.task.status='needs';f.assistant.observe(f.snapshot);assert.equal(m.work.status,'needs_input');assert.equal(m.response.receipt.status,'needs_input');assert.match(m.answer,/needs your input/);assert.equal(m.work.relayed,undefined);
  f.task.turnOutcome='completed';f.task.notificationVersion='turn-one';f.task.messages=[{role:'assistant',text:'not JSON'}];f.assistant.observe(f.snapshot);assert.equal(m.work.status,'blocked');assert.equal(m.response.result.status,'blocked');
 });
 test('structured response rejects missing version, wrong actions and oversized tasks',()=>{
@@ -31,3 +31,15 @@ test('structured response rejects missing version, wrong actions and oversized t
  assert.equal(work.validateResponse({schema:1,answer:'hi',work:null}).schema,1);
 });
 test('project catalogue uses existing absolute workspaces and stable handles',t=>{const f=fixture(t),p=work.projects({cards:[{title:'Hyphen',sources:[{cwd:f.options.directory}]}]},[f.options.directory,'missing']);assert.equal(p.length,1);assert.match(p[0].id,/^project_/);assert.equal(p[0].cwd,fs.realpathSync(f.options.directory));});
+test('selected workspace survives a large catalogue and a generated mismatch cannot start work',async t=>{
+ const f=fixture(t),cwd=f.options.directory,focus={id:'focused-card',taskKey:'focused-key',chatName:'Hyphen',title:'Hyphen',status:'ready',owner:{id:'local'},sources:[{id:'focused-source',cwd,lifecycle:'ready',contextLoaded:true}]};f.snapshot.cards=[focus];f.assistant.focus(focus,'focused-source');
+ const catalog=Array.from({length:70},(_,i)=>({id:'other_'+i,title:'Other',cwd:path.join(cwd,'missing'+i)}));catalog.push({id:'project_one',title:'Hyphen',cwd});
+ assert.deepEqual(work.visibleProjects(catalog,{focus:f.assistant.state.focus},f.snapshot).map(p=>p.id),['project_one']);
+ f.assistant.options.workProjects=()=>catalog;f.assistant.provider.answer=async()=>({answer:'Starting',links:[],work:{kind:'project',target:'other_0',request:'Implement update button'}});
+ const m=await ask(f.assistant,'Please add the update button');assert.equal(m.status,'failed');assert.match(m.error,/selected chat/);assert.equal(f.starts,0);
+});
+test('work links open their current exact task after progress changes and reject a moved source',async t=>{
+ const f=fixture(t),m=await ask(f.assistant,'Please add the update button');const card={id:f.task.id,taskKey:f.task.id,chatName:'Hyphen worker',status:'working',owner:{id:'local'},sources:[{id:f.task.threadId}]};f.snapshot.cards=[card];
+ m.links=[{id:card.id,taskKey:card.taskKey,sourceId:f.task.threadId,ownerId:'local',chatName:card.chatName,draft:'',workMessageId:m.id,revision:'old'}];card.status='needs';
+ assert.equal(f.assistant.use({messageId:m.id,index:0}).sourceId,f.task.threadId);card.sources[0].id='another-source';assert.throws(()=>f.assistant.use({messageId:m.id,index:0}),/original device/);
+});

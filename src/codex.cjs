@@ -354,7 +354,7 @@ class Codex extends EventEmitter {
         cwd,
         sandbox: 'workspace-write',
         approvalPolicy: 'on-request',
-        approvalsReviewer: 'user',
+        ...(task.hyphenOrigin?{}:{approvalsReviewer:'user'}),
         ...(tools?{dynamicTools:tools.specs}:{}),
         developerInstructions:
           'This task is shown in Work Updates, a compact task queue. Keep progress concise. When input or an external dependency prevents completion, clearly state what is needed and whether the task is blocked or waiting. A completed pass means ready for review; the user decides when the overall task is Done.',

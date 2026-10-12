@@ -220,7 +220,7 @@ class Assistant extends EventEmitter {
         }
         message.status='completed';this.save();return;
       }
-      const work=workCommand(message.text);if(work){await require('./work-control.cjs').manage(this.options.workControls,message,work);this.save();return;}
+      const control=workCommand(message.text);if(control){await require('./work-control.cjs').manage(this.options.workControls,message,control);this.save();return;}
       const reflection=reflectionCommand(message.text);if(reflection){require('./reflection-control.cjs').manage(this.options.reflections,message,reflection);this.save();return;}
       const activity=activityControl.command(message.text);if(activity){activityControl.manage(this.options.activity,message,activity);this.save();return;}
       const outcome=outcomeControl.command(message.text);if(outcome){await outcomeControl.manage(this.options.outcomes,message,outcome);this.save();return;}
@@ -257,7 +257,7 @@ class Assistant extends EventEmitter {
       const tools=new (require('./assistant-tools.cjs').AssistantTools)({assistant:this,message,current,requested});
       const value=await this.provider.answer({messageId:message.id,question:message.text||'Describe the attached image and help me understand it.',replyTo:message.replyTo?{...message.replyTo,provenance:'selected_assistant_message'}:undefined,images,imagesFromHistory:!(message.images||[]).length&&!!images.length,history:recent,recalledHistory:recalled.recalled,userEvidence:recalled.userEvidence,historyCoverage:recalled.coverage,savedNotes:this.state.notes,
         savedNotesProvenance:'explicit_pinned_notes',memoryCoverage:{retentionExchanges:500,retentionAlerts:40,pinnedNoteLimit:32,pinnedNoteCharacters:this.state.notes.join('').length},queue:current.data,
-        workProjects:(this.options.workProjects?.()||[]).map(({id,title,cwd})=>({id,title,workspace:cwd,focused:!!message.focus&&this.options.snapshot().cards?.some(c=>c.sources?.some(s=>s.id===message.focus.sourceId&&s.cwd===cwd))})),
+        workProjects:work.visibleProjects(this.options.workProjects?.()||[],message,this.options.snapshot()),
         pendingWork:this.state.messages.filter(m=>m.work).slice(-8).map(m=>({request:m.text,receipt:m.work,result:m.response?.result||null})),
         assistantPresentation:this.options.profile?.snapshot(),
         responsibilities:this.options.responsibilities?.snapshot().slice(-8).map(r=>({id:r.id,origin:{text:clip(r.origin.text,600),provenance:'accepted_human_instruction'},instruction:clip(r.instruction,800),revision:r.revision,state:r.state,chatName:r.scope.chatName,ownerId:r.ownerId,stepStatus:r.currentStep.status,wakeReason:r.wakeReason.kind,completionCriteria:r.completionCriteria})),
@@ -307,7 +307,9 @@ class Assistant extends EventEmitter {
       await this.deliver(message,proposed,current,{ref:route[0],text:proposed.proposal.text,mode:'send'});
       message.action.relayResult=true;message.response={schema:1,kind:'work',answer:message.answer,receipt:{...message.action},result:null};this.save();return;
     }
-    const project=this.options.workProjects?.().find(p=>p.id===intent.target);
+    const catalog=this.options.workProjects?.()||[],focused=work.focusedProject(catalog,message,this.options.snapshot());
+    if(focused&&intent.target!==focused.id)throw new Error('The requested workspace does not match your selected chat. Nothing was started.');
+    const project=catalog.find(p=>p.id===intent.target);
     if(!project||!this.options.startWork)throw new Error('That project is no longer connected. Choose its current workspace.');
     const receipt={schema:1,projectId:project.id,taskId:null,threadId:null,turnId:null,status:'preparing'};
     message.work=receipt;this.save();
@@ -319,7 +321,7 @@ class Assistant extends EventEmitter {
       Object.assign(receipt,{threadId:task.threadId,turnId:task.turnId,...(!receipt.relayed?{status:'working'}:{})});
       message.answer='Codex is working on this. I’ll bring the result back here when the pass finishes.';
       const card=[...(this.options.snapshot().cards||[]),...(this.options.snapshot().done||[])].find(c=>c.id===task.id);
-      if(card)message.links=[coordination.link(card,task.threadId)];
+      if(card)message.links=[{...coordination.link(card,task.threadId),workMessageId:message.id}];
     }catch(error){receipt.status=receipt.taskId?'unconfirmed':'not-sent';message.answer='The work request is '+receipt.status+'. Check its saved task before retrying.';receipt.error=clip(error.message,300);}
     message.response={schema:1,kind:'work',answer:message.answer,receipt:{...receipt},result:message.response?.result||null};this.save();
   }
@@ -334,12 +336,14 @@ class Assistant extends EventEmitter {
       if(!receipt.turnId&&task.turnId){receipt.turnId=task.turnId;changed=true;}
       if(task.threadId!==receipt.threadId||task.turnId!==receipt.turnId||!receipt.turnId)continue;
       const terminal=task.notificationVersion===receipt.turnId&&['completed','failed','interrupted'].includes(task.turnOutcome);
-      if(!terminal){const status=task.status==='needs'?'needs_input':task.status==='blocked'?'unconfirmed':'working';if(receipt.status!==status){receipt.status=status;changed=true;}continue;}
+      if(!terminal){const status=task.status==='needs'?'needs_input':task.status==='blocked'?'unconfirmed':'working';if(receipt.status!==status){
+        receipt.status=status;message.answer=status==='needs_input'?'Codex needs your input to continue. Open the work chat below.':status==='unconfirmed'?'Codex progress is unconfirmed. Check the work chat before retrying.':'Codex is working on this. I’ll bring the result back here when the pass finishes.';
+        message.response={schema:1,kind:'work',answer:message.answer,receipt:{...receipt},result:null};changed=true;}continue;}
       const result=task.turnOutcome==='completed'?work.result(task.messages.filter(m=>m.role==='assistant').at(-1)?.text||''):
         {schema:1,status:'blocked',summary:task.error||'Codex could not finish this pass.',changes:[],checks:[],artifacts:[]};
       const card=[...(snapshot.cards||[]),...(snapshot.done||[])].find(c=>c.id===task.id);
       const update={id:crypto.randomUUID(),text:'',kind:'update',status:'completed',at:Date.now(),coordinationId:message.id,
-        answer:work.readable(result),response:{schema:1,kind:'result',answer:work.readable(result),receipt:{...receipt,status:result.status},result},links:card?[coordination.link(card,receipt.threadId)]:[]};
+        answer:work.readable(result),response:{schema:1,kind:'result',answer:work.readable(result),receipt:{...receipt,status:result.status},result},links:card?[{...coordination.link(card,receipt.threadId),workMessageId:message.id}]:[]};
       receipt.status=result.status;receipt.relayed=update.id;message.response={schema:1,kind:'work',answer:message.answer,receipt:{...receipt},result};
       this.state.messages.push(update);changed=true;
     }
@@ -373,6 +377,7 @@ class Assistant extends EventEmitter {
     const message=this.state.messages.find(m=>m.id===input.messageId&&m.status==='completed');
     if(!Number.isInteger(input.index)||input.index<0)throw new Error('Choose a related update from Hyphen’s answer.');
     const link=message?.links[input.index];if(!link)throw new Error('That related update is unavailable.');
+    if(link.workMessageId){const work=this.state.messages.find(m=>m.id===link.workMessageId)?.work,task=work&&this.options.workTask?.(work.taskId);const card=[...(this.options.snapshot().cards||[]),...(this.options.snapshot().done||[])].find(c=>c.id===work?.taskId&&(c.owner?.id||'local')===link.ownerId&&c.sources?.some(s=>s.id===work.threadId));if(!task||task.hyphenOrigin?.messageId!==link.workMessageId||task.threadId!==work.threadId||!card)throw new Error('The work chat is unavailable on its original device.');return {card,sourceId:work.threadId,draft:''};}
     if(link.responsibilityId){const entry=this.options.responsibilities?.entry(link.responsibilityId),match=entry&&coordination.sourceFor(this.options.snapshot(),entry.scope);if(!match)throw new Error('The responsibility source is unavailable on its original device.');return {card:match.card,sourceId:entry.scope.sourceId,draft:''};}
     if(link.coordinationId){const action=this.state.messages.find(m=>m.id===link.coordinationId)?.action;const match=action&&coordination.sourceFor(this.options.snapshot(),action);if(!match)throw new Error('The source chat is unavailable on its original device.');return {card:match.card,sourceId:action.sourceId,draft:''};}
     const state=this.options.snapshot();const card=[...(state.cards||[]),...(state.done||[])].find(c=>c.id===link.id&&c.taskKey===link.taskKey&&
