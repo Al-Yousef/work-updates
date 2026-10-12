@@ -45,7 +45,8 @@ function nativeView(state) {
     monitoredCount: state.monitoredCount, ready: state.ready, working: state.working,
     health: state.health && {ok:state.health.ok, message:state.health.message},
     aiSummary: state.aiSummary, undo: !!state.undo,
-    approvals:(state.approvals||[]).slice(0,30),
+    workRequests:(state.approvals||[]).filter(a=>a&&typeof a==='object'&&(state.cards||[]).some(c=>c.kind==='local'&&c.hyphenOrigin&&c.id===a.taskId)).slice(0,30).map(a=>({
+      id:clipped(a.id,100),taskId:clipped(a.taskId,100),kind:clipped(a.kind,30),title:clipped(a.title,180),reason:clipped(a.reason,4000),command:clipped(a.command,12000),cwd:clipped(a.cwd,1024),questions:a.questions||[],permissions:a.permissions||{},grantRoot:clipped(a.grantRoot,1024)})),
     settings: {queueSince: state.settings?.queueSince || 0},
     connection: state.connection, version: state.version,
     connectionHealth:state.connectionHealth,
